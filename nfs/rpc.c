@@ -355,7 +355,6 @@ timeout_service_thread (void *arg)
 {
   (void) arg;
 
-  pthread_setname_np (pthread_self (), "timeout");
 
   while (1)
     {
@@ -377,7 +376,6 @@ rpc_receive_thread (void *arg)
 
   (void) arg;
 
-  pthread_setname_np (pthread_self (), "rpc_receive");
 
   /* Allocate a receive buffer.  */
   buf = malloc (1024 + read_size);

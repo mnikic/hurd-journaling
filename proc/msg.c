@@ -39,7 +39,6 @@ check_message_return (struct proc *p, void *availpaddr)
 static void *
 tickle_startup (void *startupport)
 {
-  pthread_setname_np (pthread_self (), "startup");
 
   startup_essential_task ((mach_port_t) (uintptr_t) startupport,
 			  mach_task_self (), MACH_PORT_NULL,

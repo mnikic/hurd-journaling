@@ -293,7 +293,6 @@ input_loop (void *unused)
   fd_set rfds;
   int w_escaped = 0;
 
-  pthread_setname_np (pthread_self (), "input");
 
   FD_ZERO (&rfds);
   FD_SET (fd, &rfds);

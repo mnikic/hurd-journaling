@@ -544,7 +544,6 @@ hurdethif_device_init (struct netif *netif)
 static void *
 hurdethif_input_thread (void *arg)
 {
-  pthread_setname_np (pthread_self (), "input");
 
   ports_manage_port_operations_one_thread (etherport_bucket,
 					   hurdethif_demuxer, 0);

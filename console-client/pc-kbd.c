@@ -785,7 +785,6 @@ read_keycode (void)
 static void *
 input_loop (void *unused)
 {
-  pthread_setname_np (pthread_self (), "kbd_input");
 
 #ifdef XKB_SUPPORT
   /* XXX: until conversion from scancode to keycode is properly implemented

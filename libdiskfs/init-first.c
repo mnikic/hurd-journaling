@@ -33,7 +33,6 @@ master_thread_function (void *demuxer)
 {
   error_t err;
 
-  pthread_setname_np (pthread_self (), "diskfs");
 
   do
     {

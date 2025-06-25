@@ -60,7 +60,6 @@ sock_demuxer (mach_msg_header_t *inp, mach_msg_header_t *outp)
 static void *
 handle_sock_requests (void *unused)
 {
-  pthread_setname_np (pthread_self (), "sock_requests");
 
   while (ports_count_bucket (sock_port_bucket) > 0)
     {

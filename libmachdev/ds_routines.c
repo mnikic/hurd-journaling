@@ -368,7 +368,6 @@ machdev_register (struct machdev_device_emulation_ops *ops)
 void *
 machdev_server(void *arg)
 {
-  pthread_setname_np (pthread_self (), "machdev_server");
 
   /* Launch.  */
   do

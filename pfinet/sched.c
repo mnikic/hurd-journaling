@@ -60,7 +60,6 @@ sock_wake_async (struct socket *sock, int how)
 void *
 net_bh_worker (void *arg)
 {
-  pthread_setname_np (pthread_self (), "net_bh");
 
   pthread_mutex_lock (&net_bh_lock);
   while (1)

@@ -555,7 +555,6 @@ machdev_trivfs_server_startup(mach_port_t bootstrap)
 void *
 machdev_trivfs_server_loop(void *arg)
 {
-  pthread_setname_np (pthread_self (), "machdev_trivfs");
   /* Launch.  */
   do
     {
@@ -568,7 +567,6 @@ machdev_trivfs_server_loop(void *arg)
 void *
 machdev_trivfs_server_loop_forever(void *arg)
 {
-  pthread_setname_np (pthread_self (), "machdev_trivfs");
   /* Launch.  */
   do
     {

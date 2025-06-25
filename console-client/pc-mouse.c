@@ -247,7 +247,6 @@ input_loop (void *unused)
   vm_offset_t buf;
   mach_msg_type_number_t buf_size;
 
-  pthread_setname_np (pthread_self (), "mouse_input");
 
   while (1)
     {
