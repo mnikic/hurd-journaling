@@ -477,7 +477,6 @@ service_notifications (void *arg)
   struct port_bucket *notify_bucket = arg;
   extern int notify_server (mach_msg_header_t *inp, mach_msg_header_t *outp);
 
-  pthread_setname_np (pthread_self (), "notifications");
 
   for (;;)
     ports_manage_port_operations_one_thread (notify_bucket,

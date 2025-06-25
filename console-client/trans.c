@@ -784,7 +784,6 @@ console_client_translator (void *unused)
 {
   error_t err;
 
-  pthread_setname_np (pthread_self (), "netfs");
 
   do
     {
