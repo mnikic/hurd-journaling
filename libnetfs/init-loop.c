@@ -29,7 +29,6 @@ netfs_server_loop (void)
 {
   error_t err;
 
-  pthread_setname_np (pthread_self (), "netfs");
 
   do 
     {
