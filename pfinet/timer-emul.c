@@ -41,7 +41,6 @@ timer_function (void *this_is_a_pointless_variable_with_a_rather_long_name)
   mach_port_t recv;
   int wait = 0;
 
-  pthread_setname_np (pthread_self (), "timer");
 
   recv = mach_reply_port ();
 
