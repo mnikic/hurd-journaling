@@ -2956,7 +2956,6 @@ default_pager_thread(void *arg)
 	mach_port_t pset;
 	kern_return_t kr;
 
-	pthread_setname_np (pthread_self (), "default_pager");
 
 	dpt = (default_pager_thread_t *) arg;
 

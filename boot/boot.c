@@ -778,7 +778,6 @@ main (int argc, char **argv, char **envp)
 void * __attribute__ ((noreturn))
 msg_thread (void *arg)
 {
-  pthread_setname_np (pthread_self (), "msg");
   while (1)
     mach_msg_server (boot_demuxer, 0, receive_set);
 }

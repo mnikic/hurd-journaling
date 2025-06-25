@@ -117,7 +117,6 @@ static int rumpdisk_demuxer (mach_msg_header_t *inp, mach_msg_header_t *outp)
 static void *
 rumpdisk_multithread_server(void *arg)
 {
-  pthread_setname_np (pthread_self (), "server");
 
   do
     {

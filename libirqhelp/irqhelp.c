@@ -178,7 +178,6 @@ irqhelp_server_loop(void *arg)
   mach_port_t pset, psetcntl;
   error_t err;
 
-  pthread_setname_np (pthread_self (), "irqhelp_server");
 
   if (!irq)
     {

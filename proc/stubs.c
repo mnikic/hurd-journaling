@@ -47,7 +47,6 @@ blocking_message_send (void *arg)
   struct msg_sig_post_request *const req = arg;
   error_t err;
 
-  pthread_setname_np (pthread_self (), "message_send");
 
   err = mach_msg (&req->head, MACH_SEND_MSG, sizeof *req, 0,
 		  MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);

@@ -200,7 +200,6 @@ hurdio_reader_loop (void *arg)
   mach_msg_type_number_t datalen;
   error_t err;
 
-  pthread_setname_np (pthread_self (), "reader");
 
   pthread_mutex_lock (&global_lock);
   reader_thread = mach_thread_self ();
@@ -256,7 +255,6 @@ hurdio_writer_loop (void *arg)
   int npending_output_copy;
   mach_port_t ioport_copy;
 
-  pthread_setname_np (pthread_self (), "writer");
 
   pthread_mutex_lock (&global_lock);
   writer_thread = mach_thread_self ();

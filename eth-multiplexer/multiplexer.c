@@ -95,7 +95,6 @@ multiplexer_demuxer (mach_msg_header_t *inp,
 static void *
 multiplexer_thread (void *arg)
 {
-  pthread_setname_np (pthread_self (), "demuxer");
 
   ports_manage_port_operations_one_thread (port_bucket,
 					   multiplexer_demuxer,

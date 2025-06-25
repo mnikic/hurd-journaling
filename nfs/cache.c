@@ -107,7 +107,6 @@ forked_node_delete (void *arg)
 {
   struct fnd *args = arg;
 
-  pthread_setname_np (pthread_self (), "node_delete");
   
   pthread_mutex_lock (&args->dir->lock);
   netfs_attempt_unlink ((struct iouser *)-1, args->dir, args->name);

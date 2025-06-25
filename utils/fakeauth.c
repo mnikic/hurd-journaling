@@ -321,7 +321,6 @@ auth_demuxer (mach_msg_header_t *inp, mach_msg_header_t *outp)
 static void *
 handle_auth_requests (void *ignored)
 {
-  pthread_setname_np (pthread_self (), "auth");
 
   while (1)
     ports_manage_port_operations_multithread (auth_bucket, auth_demuxer,
