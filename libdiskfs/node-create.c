@@ -16,7 +16,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "priv.h"
-
+#include <libdiskfs/journal.h>
 /* This enables SysV style group behaviour.  New nodes inherit the GID
    of the user creating them unless the SGID bit is set of the parent
    directory.  */
@@ -59,6 +59,13 @@ diskfs_create_node (struct node *dir,
     }
 
   np = *newnode;
+
+  struct journal_entry_info info = {
+    .action = "create",
+    .name = name,
+    .parent_ino = dir->dn_stat.st_ino
+  };
+  journal_log_metadata(np, &info);
 
   /* Initialize the on-disk fields. */
   if (cred->user->uids->num)
