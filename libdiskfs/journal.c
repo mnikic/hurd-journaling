@@ -53,6 +53,7 @@ static pthread_mutex_t journal_lock = PTHREAD_MUTEX_INITIALIZER;
 static char journal_buf[JOURNAL_BUF_SIZE];
 static size_t journal_buf_used = 0;
 static uint64_t journal_tx_id = 1;
+static uint64_t dropped_tx_num = 0;
 
 static void get_current_time_string(char *buf, size_t bufsize)
 {
@@ -110,14 +111,16 @@ static void journal_log_tx(const char *body)
 
     // If transaction bigger than buffer, drop it
     if (total_len >= JOURNAL_BUF_SIZE) {
+        dropped_tx_num++;
         pthread_mutex_unlock(&journal_lock);
-	fprintf(stderr, "Toy journaling: tx %" PRIu64 " too large (%zu bytes), dropping\n", tx_id, total_len);
+	fprintf(stderr, "Toy journaling: tx is too large (%zu bytes), Tx num %" PRIu64 " that has been dropped.\n", total_len, dropped_tx_num);
         return;
     }
 
     if (journal_buf_used + total_len >= JOURNAL_BUF_SIZE) {
+        dropped_tx_num++;
         pthread_mutex_unlock(&journal_lock);
-	fprintf(stderr, "Toy journaling: tx %" PRIu64 " could not be written - buffer full and flush disabled\n", tx_id);
+	fprintf(stderr, "Toy journaling: tx could not be written - buffer full and flush disabled. Tx num %" PRIu64 " that has been dropped.\n", dropped_tx_num);
         return;
     }
 
