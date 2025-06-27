@@ -101,7 +101,7 @@ static void journal_log_tx(const char *body)
 
     // Lock scope to get tx_id and prepare header/footer lengths
     pthread_mutex_lock(&journal_lock);
-    tx_id = journal_tx_id++;
+    tx_id = journal_tx_id + 1;
 
     header_len = snprintf(header, sizeof(header), "=== BEGIN TX %" PRIu64 " === [%s]", tx_id, time_str);
     footer_len = snprintf(footer, sizeof(footer), "=== END TX %" PRIu64 " ===", tx_id);
@@ -111,30 +111,21 @@ static void journal_log_tx(const char *body)
     // If transaction bigger than buffer, drop it
     if (total_len >= JOURNAL_BUF_SIZE) {
         pthread_mutex_unlock(&journal_lock);
-        fprintf(stderr, "Toy journaling: transaction too large, dropping (%zu bytes)\n", total_len);
+	fprintf(stderr, "Toy journaling: tx %" PRIu64 " too large (%zu bytes), dropping\n", tx_id, total_len);
         return;
     }
 
-    // If not enough space, unlock, flush, then re-lock and re-check
     if (journal_buf_used + total_len >= JOURNAL_BUF_SIZE) {
         pthread_mutex_unlock(&journal_lock);
-        if (!flush_journal_to_file()) {
-            fprintf(stderr, "Toy journaling: flush failed, dropping transaction\n");
-            return;
-        }
-        pthread_mutex_lock(&journal_lock);
-        // Re-check space after flush, someone else could have logged
-        if (journal_buf_used + total_len >= JOURNAL_BUF_SIZE) {
-            pthread_mutex_unlock(&journal_lock);
-            fprintf(stderr, "Toy journaling: still no space after flush, dropping transaction\n");
-            return;
-        }
+	fprintf(stderr, "Toy journaling: tx %" PRIu64 " could not be written - buffer full and flush disabled\n", tx_id);
+        return;
     }
 
     try_add_to_buffer(header, header_len);
     try_add_to_buffer(body, body_len);
     try_add_to_buffer(footer, footer_len);
 
+    journal_tx_id = tx_id;
     pthread_mutex_unlock(&journal_lock);
 }
 
