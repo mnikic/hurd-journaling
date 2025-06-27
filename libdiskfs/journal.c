@@ -216,17 +216,25 @@ journal_log_metadata(void *node_ptr, const struct journal_entry_info *info)
         fprintf(stderr, "Toy journaling: Null node passed. Skipping.\n");
         return;
     }
-
     const struct stat *st = &np->dn_stat;
+    if (info) {
+       	const char *action = info->action ? info->action : "unknown";
+	const char *name = info->name ? info->name : "(unknown)";
+	const char *old_name = info->old_name ? info->old_name : "(unknown)";
+	const char *new_name = info->new_name ? info->new_name : "(unknown)";
+	ino_t parent_ino = info->parent_ino ? info->parent_ino : 0;
+	ino_t src_parent_ino = info->src_parent_ino ? info->src_parent_ino : 0;
+	ino_t dst_parent_ino = info->dst_parent_ino ? info->dst_parent_ino : 0;
 
-    const char *action = info && info->action ? info->action : "unknown";
-    const char *name = info && info->name ? info->name : "(unknown)";
-    ino_t parent_ino = info ? info->parent_ino : 0;
-
-    tx_printf(&tx, "action: %s\n", action);
-    tx_printf(&tx, "name: %s\n", name);
-    tx_printf(&tx, "parent inode: %" PRIuMAX "\n", (uintmax_t)parent_ino);
-    tx_printf(&tx, "inode:        %" PRIuMAX "\n", (uintmax_t) st->st_ino);
+	tx_printf(&tx, "action: %s\n", action);
+	tx_printf(&tx, "name: %s\n", name);
+	tx_printf(&tx, "old_name: %s\n", old_name);
+	tx_printf(&tx, "new_name: %s\n", new_name);
+	tx_printf(&tx, "parent inode: %" PRIuMAX "\n", (uintmax_t)parent_ino);
+	tx_printf(&tx, "src_parent inode: %" PRIuMAX "\n", (uintmax_t)src_parent_ino);
+	tx_printf(&tx, "dst_parent inode: %" PRIuMAX "\n", (uintmax_t)dst_parent_ino);
+	tx_printf(&tx, "inode:        %" PRIuMAX "\n", (uintmax_t) st->st_ino);
+    }
 
     if (st->st_mode == 0)
         tx_printf(&tx, "mode:         (unset)\n");

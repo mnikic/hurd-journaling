@@ -5,10 +5,15 @@
 #include <sys/types.h>
 
 struct journal_entry_info {
-    const char *action;      // "sync", "create", "unlink", etc.
-    const char *name;        // filename if available
-    ino_t parent_ino;        // parent inode if known
-    // Future: uid, gid, device, flags, etc.
+    const char *action;            // "create", "unlink", "rename", etc.
+    const char *name;              // Affected file name
+    ino_t parent_ino;              // For actions involving directories
+    const char *old_name;          // For rename
+    const char *new_name;          // For rename
+    ino_t src_parent_ino;          // For rename
+    ino_t dst_parent_ino;          // For rename
+    const char *extra;             // Optional free-form field (e.g. "chmod mode=0755")
+    // Future: maybe uid/gid/mode/time deltas for richer logs
 };
 
 void journal_init(void);
