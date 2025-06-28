@@ -30,6 +30,7 @@ static char journal_buf[JOURNAL_BUF_SIZE];
 static size_t journal_buf_used = 0;
 static uint64_t journal_tx_id = 1;
 static uint64_t dropped_tx_num = 0;
+static ino_t journal_log_ino = 0;
 
 static void get_current_time_string(char *buf, size_t bufsize)
 {
@@ -143,7 +144,12 @@ bool flush_journal_to_file(void)
     if (!success) {
         fprintf(stderr, "Toy journaling: fwrite to %s failed: %s\n", JOURNAL_LOG_PATH, strerror(errno));
     }
-
+    // Let's set the log inode so we can skip caring about it completely!
+    if (journal_log_ino == 0) {
+	struct stat st;
+	if (stat(JOURNAL_LOG_PATH, &st) == 0)
+	    journal_log_ino = st.st_ino;
+    }
     if (fclose(f) != 0) {
         fprintf(stderr, "Toy journaling: fclose failed: %s\n", strerror(errno));
     }
@@ -203,6 +209,9 @@ journal_log_metadata(void *node_ptr, const struct journal_entry_info *info)
         fprintf(stderr, "Toy journaling: Null node passed. Skipping.\n");
         return;
     }
+    // Lets ignore the updates to the log file itself.
+    if (journal_log_ino && np->dn_stat.st_ino == journal_log_ino)
+        return;
     const struct stat *st = &np->dn_stat;
     if (IGNORE_INODE(st->st_ino))
         return;
