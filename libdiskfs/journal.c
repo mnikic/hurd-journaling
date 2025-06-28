@@ -1,29 +1,4 @@
-/*
- * journal.c - Experimental journaling layer for Hurd's ext2fs/libdiskfs
- *
- * This is a work-in-progress implementation of a toy journaling layer
- * intended for exploration and learning purposes. It logs basic metadata
- * about file changes into a shared in-memory buffer, which is periodically
- * flushed to a file (/tmp/journal.log).
- *
- * Features:
- *   - Logs inode metadata (mode, size, nlink, mtime, ctime, etc.)
- *   - Each log entry is wrapped in a transaction with a unique ID and timestamp
- *   - Uses a fixed-size in-memory buffer with auto-flushing on overflow
- *   - Timestamp includes millisecond precision
- *   - Thread-safe using a mutex
- *
- * Missing / Not Implemented Yet:
- *   - Write barriers or guarantees of ordering with actual FS operations
- *   - Integration at a lower level to capture all metadata changes (not just sync hooks)
- *   - Actual recovery mechanisms or replays from the journal
- *   - Logging of inode or block bitmap changes
- *   - File name resolution (only available if passed manually)
- *   - UID/GID or finer-grained permission changes
- *   - Disk-backed circular journal buffer for continuous logging
- *   - Atomicity guarantees across flush boundaries (currently only soft protection)
- *
- * Warning:
+/* Warning:
  *   This code is experimental and not suitable for production.
  *   It is designed to support incremental development and learning.
  *
@@ -48,7 +23,7 @@
 #define JOURNAL_BUF_SIZE (64 * 1024) 
 #define MAX_REASONABLE_TIME 4102444800  /* Jan 1, 2100 */
 #define MIN_REASONABLE_TIME 946684800   /* Jan 1, 2000 */
-#define IGNORE_INODE(inode) ((inode) == 48803 || (inode) == 49144 || (inode) == 49142)
+#define IGNORE_INODE(inode) ((inode) == 48803 || (inode) == 49144 || (inode) == 49142 || (inode) == 48795 || (inode) == 48794)
 
 static pthread_mutex_t journal_lock = PTHREAD_MUTEX_INITIALIZER;
 static char journal_buf[JOURNAL_BUF_SIZE];
@@ -74,17 +49,11 @@ static void get_current_time_string(char *buf, size_t bufsize)
              (long)tv.tv_usec / 1000); // convert microseconds to milliseconds
 }
 
-static inline bool try_add_to_buffer(const char *msg, size_t msg_len)
+static inline void add_to_buffer(const char *msg, size_t msg_len)
 {
-    size_t total_len = msg_len + 1; // +1 for newline
-
-    if (journal_buf_used + total_len < JOURNAL_BUF_SIZE) {
-        memcpy(&journal_buf[journal_buf_used], msg, msg_len);
-        journal_buf_used += msg_len;
-        journal_buf[journal_buf_used++] = '\n';
-	return true;
-    } 
-    return false;
+    memcpy(&journal_buf[journal_buf_used], msg, msg_len);
+    journal_buf_used += msg_len;
+    journal_buf[journal_buf_used++] = '\n';
 }
 
 static void journal_log_tx(const char *body)
@@ -125,9 +94,9 @@ static void journal_log_tx(const char *body)
         return;
     }
 
-    try_add_to_buffer(header, header_len);
-    try_add_to_buffer(body, body_len);
-    try_add_to_buffer(footer, footer_len);
+    add_to_buffer(header, header_len);
+    add_to_buffer(body, body_len);
+    add_to_buffer(footer, footer_len);
 
     journal_tx_id = tx_id;
     pthread_mutex_unlock(&journal_lock);
@@ -135,35 +104,52 @@ static void journal_log_tx(const char *body)
 
 bool flush_journal_to_file(void)
 {
+     // Temporary buffer to copy journal data
+    char temp_buf[JOURNAL_BUF_SIZE];
+    size_t temp_buf_len = 0;
+
+    pthread_mutex_lock(&journal_lock);
+
     if (journal_buf_used == 0) {
         fprintf(stderr, "Toy journaling: Nothing to flush. Skipping.\n");
-	return false;
+        pthread_mutex_unlock(&journal_lock);
+        return false;
     }
+
+    // Copy buffer under lock
+    memcpy(temp_buf, journal_buf, journal_buf_used);
+    temp_buf_len = journal_buf_used;
+    journal_buf_used = 0;
+
+    pthread_mutex_unlock(&journal_lock);
+
+    // File and directory checks happen *after* unlock
     struct stat st;
     if (stat(JOURNAL_DIR_PATH, &st) != 0 || !S_ISDIR(st.st_mode)) {
         fprintf(stderr, "Toy journaling: %s not accessible or not a directory. Skipping flush.\n", JOURNAL_DIR_PATH);
         return false;
     }
-    FILE *f = fopen(JOURNAL_LOG_PATH, "a");
-    if (f) {
-        fprintf(stderr, "Toy journaling: Writing to %zu chars to %s file.\n", journal_buf_used, JOURNAL_LOG_PATH);
-	size_t written = fwrite(journal_buf, 1, journal_buf_used, f);
-	bool success = written == journal_buf_used;
-	if (!success) {
-	    fprintf(stderr, "Toy journaling: fwrite to %s failed: %s\n", JOURNAL_LOG_PATH, strerror(errno));
-	}
-	if (fclose(f) != 0) {
-	    fprintf(stderr, "Toy journaling: fclose failed: %s\n", strerror(errno));
-	}
-        journal_buf_used = 0;
-	return success;
-    } else {
-	fprintf(stderr, "Toy journaling: Failed to open %s: %s. Skipping flush.\n",
-                JOURNAL_LOG_PATH, strerror(errno));
-	return false;
-    }
-}
 
+    FILE *f = fopen(JOURNAL_LOG_PATH, "a");
+    if (!f) {
+        fprintf(stderr, "Toy journaling: Failed to open %s: %s. Skipping flush.\n",
+                JOURNAL_LOG_PATH, strerror(errno));
+        return false;
+    }
+
+    fprintf(stderr, "Toy journaling: Writing %zu chars to %s file.\n", temp_buf_len, JOURNAL_LOG_PATH);
+    size_t written = fwrite(temp_buf, 1, temp_buf_len, f);
+    bool success = (written == temp_buf_len);
+    if (!success) {
+        fprintf(stderr, "Toy journaling: fwrite to %s failed: %s\n", JOURNAL_LOG_PATH, strerror(errno));
+    }
+
+    if (fclose(f) != 0) {
+        fprintf(stderr, "Toy journaling: fclose failed: %s\n", strerror(errno));
+    }
+
+    return success;
+}
 void journal_init(void)
 {
     fprintf(stderr, "Toy journaling: journal_init() called\n");
