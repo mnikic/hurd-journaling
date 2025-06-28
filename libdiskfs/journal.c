@@ -48,6 +48,7 @@
 #define JOURNAL_BUF_SIZE (64 * 1024) 
 #define MAX_REASONABLE_TIME 4102444800  /* Jan 1, 2100 */
 #define MIN_REASONABLE_TIME 946684800   /* Jan 1, 2000 */
+#define IGNORE_INODE(inode) ((inode) == 48803 || (inode) == 49144 || (inode) == 49142)
 
 static pthread_mutex_t journal_lock = PTHREAD_MUTEX_INITIALIZER;
 static char journal_buf[JOURNAL_BUF_SIZE];
@@ -217,6 +218,8 @@ journal_log_metadata(void *node_ptr, const struct journal_entry_info *info)
         return;
     }
     const struct stat *st = &np->dn_stat;
+    if (IGNORE_INODE(st->st_ino))
+        return;
     if (info) {
        	const char *action = info->action ? info->action : "unknown";
 	const char *name = info->name ? info->name : "(unknown)";

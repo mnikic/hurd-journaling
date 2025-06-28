@@ -80,12 +80,15 @@ diskfs_S_file_utimens (struct protid *cred,
 			   }
 			 
 			 np->dn_set_ctime = 1;
-			  struct journal_entry_info info = {
-  				.name = "(utimes)",
-  				.parent_ino = 0,
-  				.action = "utimes",
-			 };
-			 journal_log_metadata(np, &info);
+
+			 if (!S_ISCHR(np->dn_stat.st_mode) && !S_ISBLK(np->dn_stat.st_mode)) {
+			     struct journal_entry_info info = {
+  			       	 .name = "(utimes)",
+  				 .parent_ino = 0,
+  			         .action = "utimes",
+			     };
+			     journal_log_metadata(np, &info);
+			 }
 
 			 if (np->filemod_reqs)
 			   diskfs_notice_filechange (np,
