@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement file_utimes as described in <hurd/fs.defs>. */
 kern_return_t
@@ -79,6 +80,12 @@ diskfs_S_file_utimens (struct protid *cred,
 			   }
 			 
 			 np->dn_set_ctime = 1;
+			  struct journal_entry_info info = {
+  				.name = "(utimes)",
+  				.parent_ino = 0,
+  				.action = "utimes",
+			 };
+			 journal_log_metadata(np, &info);
 
 			 if (np->filemod_reqs)
 			   diskfs_notice_filechange (np,
