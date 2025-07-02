@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement dir_mkdir as found in <hurd/fs.defs>. */
 kern_return_t
@@ -55,7 +56,17 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   mode |= S_IFDIR;
 
   error = diskfs_create_node (dnp, name, mode, &np, dircred, ds);
-
+  if (!error) 
+    {
+      struct journal_entry_info info = {
+        .action = JOURNAL_ACTION_MKDIR,
+        .name = name,
+        .parent_ino = dnp->dn_stat.st_ino,
+        .mode = mode,
+	.has_mode = true
+      };
+      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+    }
   if (diskfs_synchronous)
     {
       diskfs_file_update (dnp, 1);

@@ -16,7 +16,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "priv.h"
-
+#include <libdiskfs/journal.h>
 
 /* Check if source directory is in the path of the target directory.
    We get target locked, source unlocked but with a reference.  When
@@ -229,6 +229,20 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   ds = 0;
   fnp->dn_stat.st_nlink--;
   fnp->dn_set_ctime = 1;
+
+  struct journal_entry_info info = {
+    .action = JOURNAL_ACTION_RENAME,
+    .old_name = fromname,
+    .new_name = toname,
+    .src_parent_ino = fdp->dn_stat.st_ino,
+    .dst_parent_ino = tdp->dn_stat.st_ino,
+    .parent_ino = tdp->dn_stat.st_ino,
+    .name = toname,
+    .has_mode = true,
+    .mode = fnp->dn_stat.st_mode
+  };
+  journal_log_metadata(fnp, &info, JOURNAL_DURABILITY_SYNC);
+
   if (diskfs_synchronous)
     {
       diskfs_file_update (fdp, 1);
