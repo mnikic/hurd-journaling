@@ -18,6 +18,7 @@
 #include "priv.h"
 #include "fs_S.h"
 #include <hurd/fsys.h>
+#include <libdiskfs/journal.h>
 
 /* Implement dir_unlink as described in <hurd/fs.defs>. */
 kern_return_t
@@ -74,6 +75,14 @@ diskfs_S_dir_unlink (struct protid *dircred,
 
   np->dn_stat.st_nlink--;
   np->dn_set_ctime = 1;
+
+  struct journal_entry_info info = {
+    .action = "unlink",
+    .name = name,
+    .parent_ino = dnp->dn_stat.st_ino
+  };
+  journal_log_metadata(np, &info); 
+
   if (diskfs_synchronous)
     diskfs_node_update (np, 1);
 

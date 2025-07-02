@@ -25,6 +25,7 @@
 #include <inttypes.h>
 #include <hurd/store.h>
 #include "ext2fs.h"
+#include <libdiskfs/journal.h>
 
 /* XXX */
 #include "../libpager/priv.h"
@@ -1437,6 +1438,8 @@ diskfs_shutdown_pager (void)
 void
 diskfs_sync_everything (int wait)
 {
+  flush_journal_to_file();
+
   error_t sync_one (void *v_p)
     {
       struct pager *p = v_p;

@@ -32,7 +32,7 @@ IOSRCS= io-async-icky.c io-async.c io-duplicate.c io-get-conch.c io-revoke.c \
 	io-modes-on.c io-modes-set.c io-owner-mod.c io-owner-get.c \
 	io-pathconf.c io-prenotify.c io-read.c io-readable.c io-identity.c \
 	io-reauthenticate.c io-rel-conch.c io-restrict-auth.c io-seek.c \
-	io-select.c io-stat.c io-stubs.c io-write.c io-version.c io-sigio.c
+	io-select.c io-stat.c io-stubs.c io-write.c io-version.c io-sigio.c journal.c journal_queue.c crc32.c journal_writer.c
 FSYSSRCS=fsys-getroot.c fsys-goaway.c fsys-startup.c fsys-getfile.c \
 	fsys-options.c fsys-syncfs.c fsys-forward.c \
 	fsys-get-children.c fsys-get-source.c
@@ -54,7 +54,7 @@ OTHERSRCS = conch-fetch.c conch-set.c dir-clear.c dir-init.c dir-renamed.c \
 	validate-mode.c validate-group.c validate-author.c validate-flags.c \
 	validate-rdev.c validate-owner.c priv.c get-source.c
 SRCS = $(OTHERSRCS) $(FSSRCS) $(IOSRCS) $(FSYSSRCS) $(IFSOCKSRCS)
-installhdrs = diskfs.h diskfs-pager.h
+installhdrs = diskfs.h diskfs-pager.h journal.h
 
 MIGSTUBS = fsServer.o ioServer.o fsysServer.o exec_startupServer.o \
 	fsys_replyUser.o fs_notifyUser.o ifsockServer.o \

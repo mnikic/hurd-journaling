@@ -28,6 +28,7 @@
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 #include <sys/xattr.h>
+#include <libdiskfs/journal.h>
 
 /* these flags aren't actually defined by a header file yet, so temporarily
    disable them if necessary.  */
@@ -524,6 +525,8 @@ write_all_disknodes (void)
 void
 diskfs_write_disknode (struct node *np, int wait)
 {
+
+  journal_log_metadata(np, &(struct journal_entry_info){ .action = "write_disknode" });
   struct ext2_inode *di = write_node (np);
   if (di)
     {

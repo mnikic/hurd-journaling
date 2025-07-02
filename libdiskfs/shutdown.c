@@ -21,6 +21,7 @@
 
 #include "priv.h"
 #include <hurd/fsys.h>
+#include <libdiskfs/journal.h>
 
 struct args
 {
@@ -43,6 +44,7 @@ helper (void *cookie, const char *name, mach_port_t control)
 error_t
 diskfs_shutdown (int flags)
 {
+  journal_shutdown();
   int nports = -1;
   error_t err;
   struct args args = { flags };
