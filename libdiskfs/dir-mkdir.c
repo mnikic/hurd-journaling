@@ -65,7 +65,8 @@ diskfs_S_dir_mkdir (struct protid *dircred,
         .action = "mkdir",
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino,
-        .mode = mode
+        .mode = mode,
+	.has_mode = true
       };
       journal_log_metadata (np, &info, dur);
     }

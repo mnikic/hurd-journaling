@@ -49,7 +49,9 @@ diskfs_S_file_chown (struct protid *cred,
 			     struct journal_entry_info info = {
 			       .action = "chown",
 			       .uid = uid,
-			       .gid = gid
+			       .gid = gid,
+			       .has_uid = uid,
+			       .has_gid = gid
 			     };
 
 			     journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);

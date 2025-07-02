@@ -72,7 +72,8 @@ diskfs_S_dir_mkfile (struct protid *cred,
   struct journal_entry_info info = {
     .action = "mkfile",
     .parent_ino = dnp->dn_stat.st_ino,
-    .mode = mode
+    .mode = mode,
+    .has_mode = true
   };
   journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
 

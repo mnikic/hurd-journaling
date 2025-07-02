@@ -48,11 +48,9 @@ diskfs_S_file_chmod (struct protid *cred,
 			     {
                                struct journal_entry_info info = {
                                  .action = "chmod",
-                                 .parent_ino = 0 
+				 .mode = mode,
+				 .has_mode = true
                                };
-                               char extra_buf[64];
-                               snprintf (extra_buf, sizeof extra_buf, "mode=0%o", mode);
-                               info.extra = extra_buf;
                                journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);
 
 			       np->dn_stat.st_mode = mode;

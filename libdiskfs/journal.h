@@ -34,9 +34,13 @@ struct journal_entry_info
 	const char *new_name;         /* For rename */
 	ino_t src_parent_ino;         /* For rename */
 	ino_t dst_parent_ino;         /* For rename */
+	bool has_uid;
 	uid_t uid;		      /* For chown */
+	bool has_gid;
 	uid_t gid;		      /* For chown */
+	bool has_size;
 	off_t size;                   /* For truncate, extend */
+	bool has_mode;
 	mode_t mode;	              /* For mkdir */
 	const char *target;	      /* for symlinks */
 	const char *extra;            /* Optional free-form field (e.g. "chmod mode=0755") */

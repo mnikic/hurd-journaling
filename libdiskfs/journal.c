@@ -108,6 +108,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   const char *extra = info->extra ? : "";
   const char *old_name = info->old_name ? : "";
   const char *new_name = info->new_name ? : "";
+  const char *target = info->target ? info->target : "";
 
   size_t total_size = sizeof (struct journal_entry_bin);
   if (total_size > JOURNAL_ENTRY_SIZE)
@@ -143,17 +144,40 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->ctime = (st->st_ctime > MIN_REASONABLE_TIME
 		  && st->st_ctime < MAX_REASONABLE_TIME) ? st->st_ctime : -1;
 
+  if (info->has_mode)
+    {
+      entry->st_mode = info->mode;
+      entry->has_mode = true;
+    }
+  if (info->has_size)
+    {
+      entry->st_size = info->size;
+      entry->has_size = true;
+    }
+  if (info->has_uid)
+    {
+      entry->uid = info->uid;
+      entry->has_uid = true;
+    }
+  if (info->has_gid)
+    {
+      entry->gid = info->gid;
+      entry->has_gid = true;
+    }
+
   strncpy (entry->action, action, sizeof (entry->action) - 1);
   strncpy (entry->name, name, sizeof (entry->name) - 1);
   strncpy (entry->extra, extra, sizeof (entry->extra) - 1);
   strncpy (entry->old_name, old_name, sizeof (entry->old_name) - 1);
   strncpy (entry->new_name, new_name, sizeof (entry->new_name) - 1);
+  strncpy (entry->target, target, sizeof (entry->target) - 1);
 
   entry->action[sizeof (entry->action) - 1] = '\0';
   entry->name[sizeof (entry->name) - 1] = '\0';
   entry->extra[sizeof (entry->extra) - 1] = '\0';
   entry->old_name[sizeof (entry->old_name) - 1] = '\0';
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
+  entry->target[sizeof (entry->target) - 1] = '\0';
 
   entry->crc32 = 0;
   journal_enqueue (buf, total_size);

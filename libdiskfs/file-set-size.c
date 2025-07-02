@@ -36,7 +36,8 @@ diskfs_S_file_set_size (struct protid *cred,
 			    {
 			      struct journal_entry_info info = {
 			        .action = "truncate",
-				.size = size
+				.size = size,
+				.has_size = size
 			      };
 			      journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);
 
@@ -53,7 +54,8 @@ diskfs_S_file_set_size (struct protid *cred,
 			     {
 			       struct journal_entry_info info = {
 				 .action = "grow",
-			         .size = size
+			         .size = size,
+				 .has_size = true
 			       };
 			       journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);
 			       np->dn_stat.st_size = size;

@@ -207,7 +207,8 @@ diskfs_S_dir_lookup (struct protid *dircred,
 		    .action = "create",
 		    .name = filename,
 		    .parent_ino = dnp->dn_stat.st_ino,
-		    .mode = mode
+		    .mode = mode,
+		    .has_mode = true
 		  };
 		  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
 		}

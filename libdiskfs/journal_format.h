@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <stdbool.h>
 
 #define JOURNAL_MAGIC        0x4A4E4C30  /* "JNL0" */
 #define JOURNAL_VERSION      1
@@ -46,10 +47,17 @@ struct journal_entry_bin
   uint64_t st_blocks;
   int64_t mtime;
   int64_t ctime;
+  uid_t uid;
+  uid_t gid;
+  bool has_mode;
+  bool has_size;
+  bool has_uid;
+  bool has_gid;
   char action[MAX_FIELD_LEN];
   char name[MAX_FIELD_LEN];
   char old_name[MAX_FIELD_LEN];
   char new_name[MAX_FIELD_LEN];
+  char target[MAX_FIELD_LEN];
   char extra[MAX_FIELD_LEN];
   uint32_t crc32;
 };
