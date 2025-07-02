@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement dir_link as described in <hurd/fs.defs>. */
 kern_return_t
@@ -120,6 +121,14 @@ diskfs_S_dir_link (struct protid *dircred,
     }
   else
     err = diskfs_direnter (dnp, name, np, ds, dircred);
+
+  journal_entry_info_t info = {
+    .action = JOURNAL_ACTION_LINK,
+    .name = name,
+    .parent_ino = dnp->dn_stat.st_ino,
+    .path = JOURNAL_PATH_FROM_CRED(dircred)
+  };
+  journal_log_metadata (np, &info);
 
   if (diskfs_synchronous)
     diskfs_node_update (dnp, 1);

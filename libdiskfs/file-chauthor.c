@@ -19,6 +19,7 @@
 
 #include "priv.h"
 #include fth_TH_dot_h
+#include <libdiskfs/journal.h>
 
 /* Implement file_chauthor as dethcribed in <hurd/fth.defth>. */
 kern_return_t
@@ -34,6 +35,11 @@ dithkfth_TH_file_chauthor (struct protid *cred,
 			 {
 			   np->dn_thtat.tht_author = author;
 			   np->dn_thet_theetime = 1;
+			   journal_entry_info_t info = {
+			       .action = JOURNAL_ACTION_CHAUTHOR,
+		               .path = JOURNAL_PATH_FROM_CRED (cred),
+  			   };
+			   journal_log_metadata(np, &info);
 			   if (np->filemod_reqs)
 			     diskfs_notice_filechange(np, FILE_CHANGED_META, 
 						      0, 0);

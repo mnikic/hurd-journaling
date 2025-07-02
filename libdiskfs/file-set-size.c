@@ -18,6 +18,7 @@
 #include "priv.h"
 #include "fs_S.h"
 #include <fcntl.h>
+#include <libdiskfs/journal.h>
 
 /* Implement file_set_size as described in <hurd/fs.defs>. */
 kern_return_t
@@ -31,10 +32,20 @@ diskfs_S_file_set_size (struct protid *cred,
 		       else if (size < np->dn_stat.st_size)
 			 {
 			   err = diskfs_truncate (np, size);
-			   if (!err && np->filemod_reqs)
+			   if (!err)
+			    {
+			      journal_entry_info_t info = {
+			          .action = JOURNAL_ACTION_TRUNCATE,
+			          .path = JOURNAL_PATH_FROM_CRED (cred),
+			          .parent_ino = np->dn_stat.st_ino
+			      };
+			      journal_log_metadata (np, &info);
+
+			   if (np->filemod_reqs)
 			     diskfs_notice_filechange (np, 
 						       FILE_CHANGED_TRUNCATE, 
 						       0, size);
+			   }
 			 }
 		       else if (size > np->dn_stat.st_size)
 			 {
@@ -43,6 +54,12 @@ diskfs_S_file_set_size (struct protid *cred,
 			     {
 			       np->dn_stat.st_size = size;
 			       np->dn_set_ctime = np->dn_set_mtime = 1;
+
+			       journal_entry_info_t info = {
+				   .action = JOURNAL_ACTION_GROW,
+				   .path = JOURNAL_PATH_FROM_CRED (cred)
+			       };
+			       journal_log_metadata (np, &info);
 			       if (np->filemod_reqs)
 				 diskfs_notice_filechange (np, 
 							   FILE_CHANGED_EXTEND,

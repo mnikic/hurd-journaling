@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement file_chown as described in <hurd/fs.defs>. */
 kern_return_t
@@ -53,6 +54,12 @@ diskfs_S_file_chown (struct protid *cred,
 			       }
 			     if (gid != (gid_t) -1)
 			       np->dn_stat.st_gid = gid;
+			     journal_entry_info_t info = {
+			       .action = JOURNAL_ACTION_CHOWN,
+			       .path = JOURNAL_PATH_FROM_CRED (cred)
+			     };
+
+			     journal_log_metadata (np, &info);
 			     np->dn_set_ctime = 1;
 			     if (np->filemod_reqs)
 			       diskfs_notice_filechange(np,

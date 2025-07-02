@@ -18,6 +18,7 @@
 #include "priv.h"
 #include "io_S.h"
 #include <fcntl.h>
+#include <libdiskfs/journal.h>
 
 /* Implement io_write as described in <hurd/io.defs>. */
 kern_return_t
@@ -87,6 +88,16 @@ diskfs_S_io_write (struct protid *cred,
   if (!err && offset == -1)
     cred->po->filepointer += nwritten;
 
+  if (!err && !diskfs_check_readonly () &&
+    !S_ISDIR(np->dn_stat.st_mode) &&
+    atime_should_update (np))
+  {
+    journal_entry_info_t info = {
+      .action = JOURNAL_ACTION_WRITE,
+      .path = JOURNAL_PATH_FROM_CRED (cred)
+    };
+    journal_log_metadata (np, &info);
+  }
   if (!err
       && ((cred->po->openstat & O_FSYNC) || diskfs_synchronous))
     diskfs_file_update (np, 1);
