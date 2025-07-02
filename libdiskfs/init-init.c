@@ -108,3 +108,4 @@ _diskfs_control_clean (void *arg __attribute__ ((unused)))
   _diskfs_ncontrol_ports--;
   pthread_spin_unlock (&_diskfs_control_lock);
 }
+

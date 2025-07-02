@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <device/device.h>
+#include <libdiskfs/journal.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -229,7 +230,6 @@ main (int argc, char **argv)
      This starts the first diskfs thread for us.  */
   store = diskfs_init_main (&startup_argp, argc, argv,
 			    &store_parsed, &bootstrap);
-
   if (store->size < SBLOCK_OFFS + SBLOCK_SIZE)
     ext2_panic ("device too small for superblock (%" PRIi64 " bytes)", store->size);
   if (store->log2_blocks_per_page < 0)
@@ -250,6 +250,19 @@ main (int argc, char **argv)
   else if ((diskfs_root_node->dn_stat.st_mode & S_IFMT) == 0)
     ext2_panic ("no root node!");
   pthread_mutex_unlock (&diskfs_root_node->lock);
+
+  // extract fields from sblock->journal_hint
+  if (sblock->journal_hint.magic == EXT2_JNL_MAGIC) {
+    struct journal_config config;
+    memset(&config, 0, sizeof(config));
+    config.start_block = sblock->journal_hint.start_block;
+    config.block_count = sblock->journal_hint.block_count;
+
+    /* Has to happen after the root is unlocked, and before RPCs are unleashed. */
+    journal_init (store, config);
+  } else
+    fprintf(stderr, "[EXT2FS] journaling disabled: invalid magic 0x%x\n", sblock->journal_hint.magic);
+
 
   /* Now that we are all set up to handle requests, and diskfs_root_node is
      set properly, it is safe to export our fsys control port to the
@@ -282,3 +295,4 @@ diskfs_reload_global_state (void)
 
   return 0;
 }
+

@@ -18,6 +18,7 @@
 #include "priv.h"
 #include "io_S.h"
 #include <fcntl.h>
+#include <libdiskfs/journal.h>
 
 /* Implement io_read as described in <hurd/io.defs>. */
 kern_return_t
@@ -96,6 +97,14 @@ diskfs_S_io_read (struct protid *cred,
     err = _diskfs_rdwr_internal (np, buf, off, datalen, 0,
 				 cred->po->openstat & O_NOATIME);
 
+  if (!diskfs_check_readonly () && !S_ISDIR(np->dn_stat.st_mode) && atime_should_update (np))
+    {
+      journal_entry_info_t info = {
+        .action = JOURNAL_ACTION_ATIME,
+        .path = JOURNAL_PATH_FROM_CRED (cred)
+      };
+      journal_log_metadata (np, &info);
+    }
   if (diskfs_synchronous)
     diskfs_node_update (np, 1);	/* atime! */
 

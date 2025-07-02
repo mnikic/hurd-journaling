@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement file_chflags as described in <hurd/fs.defs>. */
 kern_return_t
@@ -39,6 +40,11 @@ diskfs_S_file_chflags (struct protid *cred,
 		       {
 			 np->dn_stat.st_flags = flags;
 			 np->dn_set_ctime = 1;
+ 			 journal_entry_info_t info = {
+			   .action = JOURNAL_ACTION_CHFLAGS,
+			   .path = JOURNAL_PATH_FROM_CRED (cred)
+			 };
+			 journal_log_metadata(np, &info);
 		       }
 		     if (!err && np->filemod_reqs)
 		       diskfs_notice_filechange(np, FILE_CHANGED_META, 
