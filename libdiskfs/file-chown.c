@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement file_chown as described in <hurd/fs.defs>. */
 kern_return_t
@@ -45,6 +46,13 @@ diskfs_S_file_chown (struct protid *cred,
 			   err = diskfs_validate_group_change (np, gid);
 			 if (!err)
 			   {
+			     struct journal_entry_info info = {
+			       .action = "chown",
+			       .uid = uid,
+			       .gid = gid
+			     };
+
+			     journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);
 			     if (uid != (uid_t) -1)
 			       {
 				 np->dn_stat.st_uid = uid;

@@ -34,6 +34,8 @@ struct journal_entry_info
 	const char *new_name;         /* For rename */
 	ino_t src_parent_ino;         /* For rename */
 	ino_t dst_parent_ino;         /* For rename */
+	uid_t uid;		      /* For chown */
+	uid_t gid;		      /* For chown */
 	const char *extra;            /* Optional free-form field (e.g. "chmod mode=0755") */
 };
 
