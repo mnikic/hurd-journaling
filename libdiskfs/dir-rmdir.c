@@ -18,6 +18,7 @@
 #include "priv.h"
 #include "fs_S.h"
 #include <hurd/fsys.h>
+#include <libdiskfs/journal.h>
 
 /* Implement dir_rmdir as described in <hurd/fs.defs>. */
 kern_return_t
@@ -81,6 +82,13 @@ diskfs_S_dir_rmdir (struct protid *dircred,
 
   if (!error)
     {
+      struct journal_entry_info info = {
+        .action = "rmdir",
+        .name = name,
+        .parent_ino = dnp->dn_stat.st_ino
+      };
+      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+
       np->dn_stat.st_nlink--;
       np->dn_set_ctime = 1;
       diskfs_clear_directory (np, dnp, dircred);
