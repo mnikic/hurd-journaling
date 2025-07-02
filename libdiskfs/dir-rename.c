@@ -235,7 +235,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       .name = toname, 
       .parent_ino = tdp->dn_stat.st_ino
   };
-  journal_log_metadata (fnp, &info);
+  journal_log_metadata (fnp, &info, JOURNAL_DURABILITY_SYNC);
 
   if (diskfs_synchronous)
     diskfs_node_update (fnp, 1);

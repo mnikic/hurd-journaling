@@ -34,8 +34,8 @@
 #include <sys/stat.h>
 #include <pthread.h>
 
-#define MAX_REASONABLE_TIME 4102444800  /* Jan 1, 2100 */
-#define MIN_REASONABLE_TIME 946684800   /* Jan 1, 2000 */
+#define MAX_REASONABLE_TIME 4102444800	/* Jan 1, 2100 */
+#define MIN_REASONABLE_TIME 946684800	/* Jan 1, 2000 */
 #define IGNORE_INODE(inode) \
   ((inode) == 82814 || (inode) == 48803 || (inode) == 49144 \
    || (inode) == 49142 || (inode) == 48795 || (inode) == 48794)
@@ -57,9 +57,11 @@ journal_init (void)
 {
   fprintf (stderr, "Toy journaling: journal_init() called\n");
   journal_queue_init ();
-  if (pthread_create (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
+  if (pthread_create
+      (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
     {
-      fprintf (stderr, "Toy journaling: failed to create a flusher thread.\n");
+      fprintf (stderr,
+	       "Toy journaling: failed to create a flusher thread.\n");
       journal_shutting_down = true;
     }
   fprintf (stderr, "Toy journaling: done initializing.\n");
@@ -81,16 +83,19 @@ flush_journal_to_file (void)
 }
 
 void
-journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
+journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
+		      journal_durability_t durability)
 {
   if (!node_ptr)
     {
-      fprintf (stderr, "Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.\n");
+      fprintf (stderr,
+	       "Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.\n");
       return;
     }
   if (!info)
     {
-      fprintf (stderr, "Toy journaling: NULL info pointer received in journal_log_metadata, skipping.\n");
+      fprintf (stderr,
+	       "Toy journaling: NULL info pointer received in journal_log_metadata, skipping.\n");
       return;
     }
 
@@ -98,11 +103,11 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   if (IGNORE_INODE (st->st_ino))
     return;
 
-  const char *action = info->action ?: "";
-  const char *name = info->name ?: "";
-  const char *extra = info->extra ?: "";
-  const char *old_name = info->old_name ?: "";
-  const char *new_name = info->new_name ?: "";
+  const char *action = info->action ? : "";
+  const char *name = info->name ? : "";
+  const char *extra = info->extra ? : "";
+  const char *old_name = info->old_name ? : "";
+  const char *new_name = info->new_name ? : "";
 
   size_t total_size = sizeof (struct journal_entry_bin);
   if (total_size > JOURNAL_ENTRY_SIZE)
@@ -134,9 +139,9 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->st_blocks = st->st_blocks;
 
   entry->mtime = (st->st_mtime > MIN_REASONABLE_TIME
-                  && st->st_mtime < MAX_REASONABLE_TIME) ? st->st_mtime : -1;
+		  && st->st_mtime < MAX_REASONABLE_TIME) ? st->st_mtime : -1;
   entry->ctime = (st->st_ctime > MIN_REASONABLE_TIME
-                  && st->st_ctime < MAX_REASONABLE_TIME) ? st->st_ctime : -1;
+		  && st->st_ctime < MAX_REASONABLE_TIME) ? st->st_ctime : -1;
 
   strncpy (entry->action, action, sizeof (entry->action) - 1);
   strncpy (entry->name, name, sizeof (entry->name) - 1);
@@ -154,4 +159,3 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   journal_enqueue (buf, total_size);
   free (buf);
 }
-

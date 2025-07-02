@@ -81,7 +81,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     .name = name,
     .parent_ino = dnp->dn_stat.st_ino
   };
-  journal_log_metadata(np, &info); 
+  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC); 
 
   if (diskfs_synchronous)
     diskfs_node_update (np, 1);

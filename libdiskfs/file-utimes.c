@@ -87,7 +87,7 @@ diskfs_S_file_utimens (struct protid *cred,
   				 .parent_ino = 0,
   			         .action = "utimes",
 			     };
-			     journal_log_metadata(np, &info);
+			     journal_log_metadata(np, &info, JOURNAL_DURABILITY_ASYNC);
 			 }
 
 			 if (np->filemod_reqs)

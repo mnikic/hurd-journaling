@@ -65,7 +65,7 @@ diskfs_create_node (struct node *dir,
     .name = name,
     .parent_ino = dir->dn_stat.st_ino
   };
-  journal_log_metadata(np, &info);
+  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
 
   /* Initialize the on-disk fields. */
   if (cred->user->uids->num)

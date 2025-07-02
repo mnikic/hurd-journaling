@@ -525,8 +525,9 @@ write_all_disknodes (void)
 void
 diskfs_write_disknode (struct node *np, int wait)
 {
-
-  journal_log_metadata(np, &(struct journal_entry_info){ .action = "write_disknode" });
+  journal_log_metadata (np, &(struct journal_entry_info)
+			{.action =
+			"write_disknode" }, JOURNAL_DURABILITY_ASYNC);
   struct ext2_inode *di = write_node (np);
   if (di)
     {
