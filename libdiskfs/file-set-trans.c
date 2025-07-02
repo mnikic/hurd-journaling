@@ -21,6 +21,7 @@
 #include <sys/sysmacros.h>
 #include <hurd/paths.h>
 #include <hurd/fsys.h>
+#include <libdiskfs/journal.h>
 
 /* Implement file_set_translator as described in <hurd/fs.defs>. */
 kern_return_t
@@ -210,6 +211,14 @@ diskfs_S_file_set_translator (struct protid *cred,
 	      err = diskfs_validate_mode_change (np, newmode);
 	      if (!err)
 		{
+	  	  struct journal_entry_info info = {
+	    	    .action = "symlink",
+	    	    .name = cred->po->path, 
+	            .parent_ino = np->dn_stat.st_ino,
+	    	    .target = passive + strlen(passive) + 1,
+	  	  };
+	  	  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
+
 		  np->dn_stat.st_mode = newmode;
 		  diskfs_node_update (np, diskfs_synchronous);
 		}
