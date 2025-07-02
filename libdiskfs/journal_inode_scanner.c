@@ -111,6 +111,7 @@ journal_scan_path_for_inos (const char *root_path,
 	 strerror (err));
       goto cleanup_creds;
     }
+
   if (!S_ISDIR (start_np->dn_stat.st_mode))
     {
       JOURNAL_LOG_DEBUG
@@ -155,6 +156,7 @@ journal_scan_path_for_inos (const char *root_path,
 	  diskfs_nput (start_np);
 	  continue;
 	}
+
       struct dirent *entry = (struct dirent *) data;
       char *end = data + datacnt;
 

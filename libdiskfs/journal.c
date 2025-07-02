@@ -90,8 +90,6 @@ denylist_init (void)
   for (int i = 0; journal_excluded_prefixes[i]; i++)
     journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
 
-
-
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
 

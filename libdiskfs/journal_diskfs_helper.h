@@ -14,6 +14,7 @@
 
 #include <stdbool.h>
 
+
 /* Create protid credentials suitable for use with the given node.
    Flags may control things like O_WRITE. */
 error_t

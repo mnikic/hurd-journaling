@@ -274,6 +274,7 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred)
   diskfs_nput (root);
   return 0;
 }
+<<<<<<< HEAD
 
 /* Return true if NP appears to be a live, allocated inode.
    This does not acquire a new reference; caller must hold NP->lock

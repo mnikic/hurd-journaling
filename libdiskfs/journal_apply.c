@@ -422,3 +422,4 @@ apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
   diskfs_nput (np);
   return 0;
 }
+

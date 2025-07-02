@@ -406,6 +406,7 @@ journal_replay (journal_inode_denylist_t * denylist)
     }
 
   replay_main_pass (arena, denylist);
+
   if (diskfs_set_readonly (1))
     JOURNAL_LOG_ERROR ("Failed to enable readonly mode.");
   else
