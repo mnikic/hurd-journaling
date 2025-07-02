@@ -17,6 +17,7 @@
 
 #include "priv.h"
 #include "fs_S.h"
+#include <libdiskfs/journal.h>
 
 /* Implement file_chmod as described in <hurd/fs.defs>. */
 kern_return_t
@@ -45,6 +46,13 @@ diskfs_S_file_chmod (struct protid *cred,
 			   err = diskfs_validate_mode_change (np, mode);
 			   if (!err)
 			     {
+                               struct journal_entry_info info = {
+                                 .action = "chmod",
+				 .mode = mode,
+				 .has_mode = true
+                               };
+                               journal_log_metadata (np, &info, JOURNAL_DURABILITY_ASYNC);
+
 			       np->dn_stat.st_mode = mode;
 			       np->dn_set_ctime = 1;
 			       if (np->filemod_reqs)
