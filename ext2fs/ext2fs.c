@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <device/device.h>
+#include <libdiskfs/journal.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -251,6 +252,7 @@ main (int argc, char **argv)
     ext2_panic ("no root node!");
   pthread_mutex_unlock (&diskfs_root_node->lock);
 
+  journal_restore();
   /* Now that we are all set up to handle requests, and diskfs_root_node is
      set properly, it is safe to export our fsys control port to the
      outside world.  */

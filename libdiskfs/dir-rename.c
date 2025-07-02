@@ -20,6 +20,7 @@
 #include "priv.h"
 #include "fs_S.h"
 #include <string.h>
+#include <libdiskfs/journal.h>
 
 /* To avoid races in checkpath, and to prevent a directory from being
    simultaneously renamed by two processes, we serialize all renames of
@@ -225,7 +226,19 @@ diskfs_S_dir_rename (struct protid *fromcred,
 
   fnp->dn_stat.st_nlink--;
   fnp->dn_set_ctime = 1;
-  
+  struct journal_entry_info info = {
+      .action = JOURNAL_ACTION_RENAME,
+      .old_name = fromname,
+      .new_name = toname,
+      .src_parent_ino = fdp->dn_stat.st_ino,
+      .dst_parent_ino = tdp->dn_stat.st_ino,
+      .name = toname, 
+      .parent_ino = tdp->dn_stat.st_ino,
+      .has_mode = true,
+      .mode = fnp->dn_stat.st_mode
+  };
+  journal_log_metadata (fnp, &info, JOURNAL_DURABILITY_SYNC);
+
   if (diskfs_synchronous)
     diskfs_node_update (fnp, 1);
   
