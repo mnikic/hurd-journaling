@@ -36,6 +36,8 @@ struct journal_entry_info
 	ino_t dst_parent_ino;         /* For rename */
 	uid_t uid;		      /* For chown */
 	uid_t gid;		      /* For chown */
+	off_t size;                   /* For truncate, extend */
+	mode_t mode;	              /* For mkdir */
 	const char *extra;            /* Optional free-form field (e.g. "chmod mode=0755") */
 };
 
