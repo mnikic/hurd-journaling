@@ -23,6 +23,7 @@
 #include <hurd/fshelp.h>
 #include <hurd/fsys.h>
 #include <hurd/paths.h>
+#include <libdiskfs/journal.h>
 
 #include "priv.h"
 #include "fs_S.h"
@@ -200,6 +201,16 @@ diskfs_S_dir_lookup (struct protid *dircred,
 	      mode &= ~(S_IFMT | S_ISPARE | S_ISVTX | S_ITRANS);
 	      mode |= S_IFREG;
 	      err = diskfs_create_node (dnp, filename, mode, &np, dircred, ds);
+	      if (!err)
+		{
+		  struct journal_entry_info info = {
+		    .action = "create",
+		    .name = filename,
+		    .parent_ino = dnp->dn_stat.st_ino,
+		    .mode = mode
+		  };
+		  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
+		}
 	      if (diskfs_synchronous)
 		{
 		  diskfs_file_update (dnp, 1);

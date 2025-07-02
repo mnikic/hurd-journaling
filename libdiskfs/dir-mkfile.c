@@ -22,6 +22,7 @@
 #include "priv.h"
 #include "fs_S.h"
 #include <fcntl.h>
+#include <libdiskfs/journal.h>
 
 /* Implement dir_mkfile as described in <hurd/fs.defs>. */
 kern_return_t
@@ -67,6 +68,13 @@ diskfs_S_dir_mkfile (struct protid *cred,
 
   if (err)
     return err;
+
+  struct journal_entry_info info = {
+    .action = "mkfile",
+    .parent_ino = dnp->dn_stat.st_ino,
+    .mode = mode
+  };
+  journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
 
   flags &= ~OPENONLY_STATE_MODES; /* These bits are all meaningless here.  */
 
