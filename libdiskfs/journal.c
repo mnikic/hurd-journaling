@@ -22,6 +22,7 @@
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal.h>
+#include <libdiskfs/journal_writer.h>
 #include <diskfs.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -34,8 +35,8 @@
 #include <sys/stat.h>
 #include <pthread.h>
 
-#define MAX_REASONABLE_TIME 16725229200 /* Jan 1, 2500 */
-#define MIN_REASONABLE_TIME 315536400   /* Jan 1, 1980 */
+#define MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
+#define MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 #define IGNORE_INODE(inode) \
   ((inode) == 82814 || (inode) == 48803 || (inode) == 49144 \
    || (inode) == 49142 || (inode) == 48795 || (inode) == 48794)
@@ -176,6 +177,14 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  journal_enqueue (buf, total_size);
+  if (durability == JOURNAL_DURABILITY_SYNC)
+    {
+      if (!journal_write_raw_sync (entry))
+	fprintf (stderr, "Failed to write sync.\n");
+    }
+  else
+    {
+      journal_enqueue (buf, total_size);
+    }
   free (buf);
 }
