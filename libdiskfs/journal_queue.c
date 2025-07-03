@@ -39,11 +39,11 @@
 #define JOURNAL_QUEUE_MAX 256
 #define RAW_DEVICE_PATH "/tmp/journal-pipe"
 #define JOURNAL_ENTRY_SIZE 4096
-#define RAW_DEVICE_SIZE (8 * 1024 * 1024) /* 8MB */
+#define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
 
 struct journal_queue_entry
 {
-  char data[JOURNAL_ENTRY_SIZE];
+  char data[sizeof (struct journal_payload_bin)];
   size_t len;
   bool used;
 };
@@ -78,7 +78,7 @@ journal_queue_shutdown (void)
 bool
 journal_enqueue (const char *data, size_t len)
 {
-  if (len >= JOURNAL_ENTRY_SIZE)
+  if (len != sizeof (struct journal_payload_bin))
     return false;
 
   pthread_mutex_lock (&queue_lock);
@@ -119,42 +119,44 @@ journal_flusher_thread (void *arg)
       pthread_mutex_lock (&queue_lock);
 
       while (count == 0 && !shutdown_in_progress)
-        pthread_cond_wait (&queue_cond, &queue_lock);
+	pthread_cond_wait (&queue_cond, &queue_lock);
 
       if (shutdown_in_progress && count == 0)
-        {
-          pthread_mutex_unlock (&queue_lock);
-          break;
-        }
+	{
+	  pthread_mutex_unlock (&queue_lock);
+	  break;
+	}
 
       struct timespec start;
       clock_gettime (CLOCK_REALTIME, &start);
 
       struct timespec deadline = start;
       deadline.tv_nsec += (JOURNAL_FLUSH_TIMEOUT_MS % 1000) * 1000000;
-      deadline.tv_sec += JOURNAL_FLUSH_TIMEOUT_MS / 1000 + deadline.tv_nsec / 1000000000;
+      deadline.tv_sec +=
+	JOURNAL_FLUSH_TIMEOUT_MS / 1000 + deadline.tv_nsec / 1000000000;
       deadline.tv_nsec %= 1000000000;
 
       while (count < JOURNAL_QUEUE_MAX && !shutdown_in_progress)
-        {
-          struct timespec now;
-          clock_gettime (CLOCK_REALTIME, &now);
-          if (now.tv_sec > deadline.tv_sec
-              || (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec))
-            break;
-          pthread_cond_timedwait (&queue_cond, &queue_lock, &deadline);
-        }
+	{
+	  struct timespec now;
+	  clock_gettime (CLOCK_REALTIME, &now);
+	  if (now.tv_sec > deadline.tv_sec
+	      || (now.tv_sec == deadline.tv_sec
+		  && now.tv_nsec >= deadline.tv_nsec))
+	    break;
+	  pthread_cond_timedwait (&queue_cond, &queue_lock, &deadline);
+	}
 
       size_t batch_count = count;
       struct journal_payload batch[JOURNAL_QUEUE_MAX];
 
       for (size_t i = 0; i < batch_count; i++)
-        {
-          batch[i].data = journal_queue[head].data;
-          batch[i].len = journal_queue[head].len;
-          journal_queue[head].used = false;
-          head = (head + 1) % JOURNAL_QUEUE_MAX;
-        }
+	{
+	  batch[i].data = journal_queue[head].data;
+	  batch[i].len = journal_queue[head].len;
+	  journal_queue[head].used = false;
+	  head = (head + 1) % JOURNAL_QUEUE_MAX;
+	}
       count = 0;
 
       pthread_mutex_unlock (&queue_lock);
@@ -162,4 +164,3 @@ journal_flusher_thread (void *arg)
     }
   return NULL;
 }
-

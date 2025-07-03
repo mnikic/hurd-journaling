@@ -31,41 +31,38 @@
 #define MAX_FIELD_LEN        256
 #define JOURNAL_ENTRY_SIZE   4096
 
-struct journal_entry_bin
+struct __attribute__((__packed__)) journal_payload_bin
 {
-  uint32_t magic;
-  uint32_t version;
-  uint64_t tx_id;
-  uint64_t timestamp_ms;
-  ino_t parent_ino;
-  ino_t src_parent_ino;
-  ino_t dst_parent_ino;
-  ino_t ino;
-  uint32_t st_mode;
-  uint64_t st_size;
-  uint64_t st_nlink;
-  uint64_t st_blocks;
-  int64_t mtime;
-  int64_t ctime;
-  uid_t uid;
-  uid_t gid;
-  bool has_mode;
-  bool has_size;
-  bool has_uid;
-  bool has_gid;
-  char action[MAX_FIELD_LEN];
-  char name[MAX_FIELD_LEN];
-  char old_name[MAX_FIELD_LEN];
-  char new_name[MAX_FIELD_LEN];
-  char target[MAX_FIELD_LEN];
-  char extra[MAX_FIELD_LEN];
-  uint32_t crc32;
+	uint64_t tx_id;
+	uint64_t timestamp_ms;
+	ino_t parent_ino;
+	ino_t src_parent_ino;
+	ino_t dst_parent_ino;
+	ino_t ino;
+	uint32_t st_mode;
+	uint64_t st_size;
+	uint64_t st_nlink;
+	uint64_t st_blocks;
+	int64_t mtime;
+	int64_t ctime;
+	uid_t uid;
+	uid_t gid;
+	bool has_mode;
+	bool has_size;
+	bool has_uid;
+	bool has_gid;
+	char action[MAX_FIELD_LEN];
+	char name[MAX_FIELD_LEN];
+	char old_name[MAX_FIELD_LEN];
+	char new_name[MAX_FIELD_LEN];
+	char target[MAX_FIELD_LEN];
+	char extra[MAX_FIELD_LEN];
 };
 
 struct journal_payload
 {
-  const char *data;
-  size_t len;
+	const char *data;
+	size_t len;
 };
 
 #endif /* JOURNAL_FORMAT_H */

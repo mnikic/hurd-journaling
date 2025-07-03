@@ -110,7 +110,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   const char *new_name = info->new_name ? : "";
   const char *target = info->target ? info->target : "";
 
-  size_t total_size = sizeof (struct journal_entry_bin);
+  size_t total_size = sizeof (struct journal_payload_bin);
   if (total_size > JOURNAL_ENTRY_SIZE)
     {
       fprintf (stderr, "Toy journaling: entry too large, dropped.\n");
@@ -121,11 +121,8 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   if (!buf)
     return;
 
-  struct journal_entry_bin *entry = (struct journal_entry_bin *) buf;
-  memset (entry, 0, sizeof (*entry));
+  struct journal_payload_bin *entry = (struct journal_payload_bin *) buf;
 
-  entry->magic = JOURNAL_MAGIC;
-  entry->version = JOURNAL_VERSION;
   entry->tx_id = ++journal_tx_id;
   entry->timestamp_ms = current_time_ms ();
 
@@ -179,7 +176,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  entry->crc32 = 0;
   journal_enqueue (buf, total_size);
   free (buf);
 }
