@@ -27,6 +27,7 @@
 #include <stddef.h>
 
 bool journal_write_raw (const struct journal_payload *entries, size_t count);
+bool journal_write_raw_sync (struct journal_payload_bin *payload);
 
 #endif /* JOURNAL_WRITER_H */
 

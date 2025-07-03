@@ -62,6 +62,32 @@ struct __attribute__((__packed__)) journal_entry_bin
 
 static size_t dropped_txs = 0;
 static bool replayed_once = false;
+static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
+static int sync_fd = -1;
+
+static int
+get_sync_fd (void)
+{
+  fprintf (stderr, "In get_sync_id\n");
+  if (sync_fd >= 0)
+    {
+      // Check if fd is still valid
+      if (fcntl (sync_fd, F_GETFL) != -1)
+	return sync_fd;
+
+      // Stale or broken fd, close and reset
+      close (sync_fd);
+      sync_fd = -1;
+    }
+
+  fprintf (stderr, "About to open raw.\n");
+  sync_fd = open (RAW_DEVICE_PATH, O_RDWR);
+  fprintf (stderr, "Got %i as fd.\n", sync_fd);
+  if (sync_fd < 0)
+    fprintf (stderr, "get_sync_fd: open failed: %s\n", strerror (errno));
+
+  return sync_fd;
+}
 
 static off_t
 index_to_offset (uint64_t index)
@@ -140,7 +166,8 @@ journal_replay_and_validate (void)
 
       if (entry->version != JOURNAL_VERSION)
 	{
-	  fprintf (stderr, "journal replay: version mismatch at offset %ld\n",
+	  fprintf (stderr,
+		   "journal replay: version mismatch at offset %ld\n",
 		   (long) offset);
 	  all_good = false;
 	  break;
@@ -183,9 +210,9 @@ journal_replay_and_validate (void)
 	      fprintf (stderr,
 		       "journal replay: timestamp skew too large at offset %ld (index=%"
 		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64
-		       "\n", (long) offset, index, payload->tx_id, last_tx_id,
-		       payload->timestamp_ms, last_timestamp);
+		       ", timestamp=%" PRIu64 ", previous_timestamp=%"
+		       PRIu64 "\n", (long) offset, index, payload->tx_id,
+		       last_tx_id, payload->timestamp_ms, last_timestamp);
 	      all_good = false;
 	      break;
 	    }
@@ -194,9 +221,9 @@ journal_replay_and_validate (void)
 	      fprintf (stderr,
 		       "journal replay: WARNING: non-monotonic tx_id or timestamp at offset %ld (index=%"
 		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64
-		       "\n", (long) offset, index, payload->tx_id, last_tx_id,
-		       payload->timestamp_ms, last_timestamp);
+		       ", timestamp=%" PRIu64 ", previous_timestamp=%"
+		       PRIu64 "\n", (long) offset, index, payload->tx_id,
+		       last_tx_id, payload->timestamp_ms, last_timestamp);
 	    }
 	}
 
@@ -354,50 +381,118 @@ journal_write_indexed (int fd, const char *data, size_t len,
 }
 
 bool
+journal_write_raw_sync (struct journal_payload_bin *payload)
+{
+  pthread_mutex_lock (&sync_write_lock);
+  // Dirty hack to avoid blocking in the early boot
+  if (!replayed_once)
+    {
+      fprintf (stderr, "Device not ready yet. Aborting.\n");
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+  int fd = get_sync_fd ();
+  if (fd < 0)
+    {
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+
+  uint64_t start_index = 0, end_index = 0;
+  if (!initialize_indices (fd, &start_index, &end_index))
+    {
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+
+  char buf[JOURNAL_ENTRY_SIZE] = { 0 };
+  struct journal_entry_bin *entry = (struct journal_entry_bin *) buf;
+
+  entry->magic = JOURNAL_MAGIC;
+  entry->version = JOURNAL_VERSION;
+  memcpy (&entry->payload, payload, sizeof (struct journal_payload_bin));
+  entry->crc32 = 0;
+  entry->crc32 =
+    crc32 ((const char *) &entry->payload,
+	   sizeof (struct journal_payload_bin));
+
+  off_t offset = index_to_offset (end_index);
+  if (lseek (fd, offset, SEEK_SET) == (off_t) - 1)
+    {
+      fprintf (stderr, "journal_write_direct_sync: lseek failed: %s",
+	       strerror (errno));
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+
+  if (write (fd, buf, JOURNAL_ENTRY_SIZE) != JOURNAL_ENTRY_SIZE)
+    {
+      fprintf (stderr, "journal_write_direct_sync: write failed: %s",
+	       strerror (errno));
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+
+  fsync (fd);
+
+  uint64_t next_index = (end_index + 1) % JOURNAL_NUM_ENTRIES;
+  if (next_index == start_index)
+    start_index = (start_index + 1) % JOURNAL_NUM_ENTRIES;
+  if (!persist_header_with_retry (fd, start_index, next_index, 3))
+    {
+      fprintf (stderr, "journal_write_direct_sync: failed to persist header");
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+  fsync (fd);
+
+  pthread_mutex_unlock (&sync_write_lock);
+  return true;
+}
+
+bool
 journal_write_raw (const struct journal_payload *entries, size_t count)
 {
-  static uint64_t end_index = 0;
-  static uint64_t start_index = 0;
-  static bool offset_initialized = false;
+  pthread_mutex_lock (&sync_write_lock);
+
+  uint64_t end_index = 0;
+  uint64_t start_index = 0;
   const size_t expected_len = sizeof (struct journal_payload_bin);
 
-  int fd = open (RAW_DEVICE_PATH, O_RDWR);
+  int fd = get_sync_fd ();
   if (fd < 0)
     {
       dropped_txs += count;
       fprintf (stderr,
-	       "journal_write_raw: open failed: %s. Dropped %zu txs now and %zu since the start.\n",
-	       strerror (errno), count, dropped_txs);
+	       "journal_write_raw: failed to get fd. Dropped %zu txs now and %zu since the start.",
+	       count, dropped_txs);
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+  if (!initialize_indices (fd, &start_index, &end_index))
+    {
+      dropped_txs += count;
+      fprintf (stderr,
+	       "journal_write_raw: initialization failed. Dropped %zu txs now and %zu since the start.",
+	       count, dropped_txs);
+      pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
 
-  if (!offset_initialized)
+  if (!replayed_once)
     {
-      if (!initialize_indices (fd, &start_index, &end_index))
-	{
-	  dropped_txs += count;
-	  fprintf (stderr,
-		   "journal_write_raw: initialization failed. Dropped %zu txs now and %zu since the start.\n",
-		   count, dropped_txs);
-	  close (fd);
-	  return false;
-	}
-
-      if (!replayed_once)
-	{
-	  journal_replay_and_validate ();
-	  replayed_once = true;
-	}
+      journal_replay_and_validate ();
+      replayed_once = true;
     }
 
   for (size_t i = 0; i < count; ++i)
     {
       if (entries[i].len != expected_len)
 	{
-	  fprintf (stderr, "journal_write_raw: unexpected payload size %zu\n",
+	  fprintf (stderr, "journal_write_raw: unexpected payload size %zu",
 		   entries[i].len);
 	  dropped_txs += count;
-	  close (fd);
+	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
 	}
 
@@ -406,18 +501,19 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 	{
 	  dropped_txs += count;
 	  fprintf (stderr,
-		   "journal_write_raw: failed to write entry. Dropped %zu txs now and %zu since the start.\n",
+		   "journal_write_raw: failed to write entry. Dropped %zu txs now and %zu since the start.",
 		   count, dropped_txs);
-	  close (fd);
+	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
 	}
     }
 
   if (!persist_header_with_retry (fd, start_index, end_index, 3))
     fprintf (stderr,
-	     "journal_write_raw: failed to persist updated header after retries.\n");
+	     "journal_write_raw: failed to persist updated header after retries.");
 
-  fprintf (stderr, "Toy journaling: wrote %zu entries to raw disk.\n", count);
-  close (fd);
+  fprintf (stderr, "Toy journaling: wrote %zu entries to raw disk.", count);
+
+  pthread_mutex_unlock (&sync_write_lock);
   return true;
 }
