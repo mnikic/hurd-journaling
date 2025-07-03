@@ -34,8 +34,8 @@
 #include <sys/stat.h>
 #include <pthread.h>
 
-#define MAX_REASONABLE_TIME 4102444800	/* Jan 1, 2100 */
-#define MIN_REASONABLE_TIME 946684800	/* Jan 1, 2000 */
+#define MAX_REASONABLE_TIME 16725229200 /* Jan 1, 2500 */
+#define MIN_REASONABLE_TIME 315536400   /* Jan 1, 1980 */
 #define IGNORE_INODE(inode) \
   ((inode) == 82814 || (inode) == 48803 || (inode) == 49144 \
    || (inode) == 49142 || (inode) == 48795 || (inode) == 48794)
