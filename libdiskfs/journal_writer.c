@@ -315,7 +315,7 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
   *end_index = hdr.end_index;
 
   LOG_DEBUG ("journal_write_raw: start_index=%llu, end_index=%llu",
-		     *start_index, *end_index);
+	     *start_index, *end_index);
 
   return true;
 }
@@ -465,10 +465,11 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
       return false;
     }
 
-  if (!journal_device_ready)
+  static bool validation_done = false;
+  if (!validation_done)
     {
       journal_replay_and_validate ();
-      journal_device_ready = true;
+      validation_done = true;
     }
 
   for (size_t i = 0; i < count; ++i)
