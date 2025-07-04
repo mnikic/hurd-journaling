@@ -1,4 +1,4 @@
-/* journal.c - Core metadata logger for toy journaling in GNU Hurd
+/* journal.c - Core metadata logger/coordinator for journaling in GNU Hurd
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -45,6 +45,7 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
 static pthread_t journal_flusher_tid;
+static pthread_t monitor_tid;
 
 static uint64_t
 current_time_ms (void)
@@ -54,17 +55,76 @@ current_time_ms (void)
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
 
+static void *
+journal_device_monitor_thread (void *arg)
+{
+  (void) arg;
+  while (1)
+    {
+      int fd = open (RAW_DEVICE_PATH, O_RDWR);
+      if (fd >= 0)
+	{
+	  if (!journal_device_ready)
+	    {
+	      fsync (fd);
+	      char test_buf[1];
+	      ssize_t n = pread (fd, test_buf, sizeof (test_buf), 0);
+
+	      if (n == 1)
+		{
+		  journal_device_ready = true;
+		  LOG_DEBUG ("All checks worked. Journal device is ready!");
+		  pthread_mutex_lock (&queue_lock);
+		  pthread_cond_signal (&queue_cond);	// Wake queue flusher
+		  pthread_mutex_unlock (&queue_lock);
+		}
+	      else
+		{
+		  LOG_DEBUG ("pread returned %zd, still not ready", n);
+		}
+	    }
+	}
+      else
+	{
+	  if (journal_device_ready)
+	    {
+	      journal_device_ready = false;
+	      LOG_DEBUG ("Journal device is not ready.");
+	    }
+	}
+
+      if (fd >= 0)
+	close (fd);
+
+      int sleep_ms = journal_device_ready ? 1000 : 100;	// 1s if ready, 100ms if not
+      usleep (sleep_ms * 1000);
+    }
+  return NULL;
+}
+
 void
 journal_init (void)
 {
   LOG_DEBUG ("Toy journaling: journal_init() called.");
+
   journal_queue_init ();
   if (pthread_create
       (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
     {
-      LOG_ERROR("Toy journaling: failed to create a flusher thread.");
+      LOG_ERROR ("Toy journaling: failed to create a flusher thread.");
       journal_shutting_down = true;
     }
+
+  if (pthread_create (&monitor_tid, NULL, journal_device_monitor_thread, NULL)
+      != 0)
+    {
+      LOG_ERROR ("Failed to start journal device monitor thread");
+    }
+  else
+    {
+      LOG_DEBUG ("Started journal device monitor thread");
+    }
+
   LOG_DEBUG ("Toy journaling: done initializing.");
 }
 
@@ -89,13 +149,15 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 {
   if (!node_ptr)
     {
-      LOG_ERROR ("Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.");
+      LOG_ERROR
+	("Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.");
       return;
     }
   if (!info)
     {
-     
-      LOG_ERROR ("Toy journaling: NULL info pointer received in journal_log_metadata, skipping.");
+
+      LOG_ERROR
+	("Toy journaling: NULL info pointer received in journal_log_metadata, skipping.");
       return;
     }
 
@@ -176,7 +238,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  if (durability == JOURNAL_DURABILITY_SYNC)
+  if (journal_device_ready && durability == JOURNAL_DURABILITY_SYNC)
     {
       if (!journal_write_raw_sync (entry))
 	LOG_ERROR ("Failed to write sync.");

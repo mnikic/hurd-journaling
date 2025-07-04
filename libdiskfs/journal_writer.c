@@ -36,7 +36,6 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-#define RAW_DEVICE_PATH "/tmp/journal-pipe"
 #define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
 #define JOURNAL_RESERVED_SPACE 4096	/* Leave room for future header growth */
 #define JOURNAL_DATA_CAPACITY (RAW_DEVICE_SIZE - JOURNAL_RESERVED_SPACE)
@@ -69,7 +68,6 @@ static int sync_fd = -1;
 static int
 get_sync_fd (void)
 {
-  LOG_DEBUG ("In get_sync_id");
   if (sync_fd >= 0)
     {
       // Check if fd is still valid

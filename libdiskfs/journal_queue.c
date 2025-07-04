@@ -36,10 +36,7 @@
 #include <errno.h>
 
 #define JOURNAL_FLUSH_TIMEOUT_MS 500
-#define JOURNAL_QUEUE_MAX 256
-#define RAW_DEVICE_PATH "/tmp/journal-pipe"
-#define JOURNAL_ENTRY_SIZE 4096
-#define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
+#define JOURNAL_QUEUE_MAX 4096
 
 struct journal_queue_entry
 {
@@ -50,8 +47,8 @@ struct journal_queue_entry
 
 static struct journal_queue_entry journal_queue[JOURNAL_QUEUE_MAX];
 static size_t head = 0, tail = 0, count = 0;
-static pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
 static bool shutdown_in_progress = false;
 
 void
@@ -105,7 +102,6 @@ journal_enqueue (const char *data, size_t len)
 void
 journal_flush_now (void)
 {
-  LOG_DEBUG ("Toy journaling: flush now.");
   pthread_mutex_lock (&queue_lock);
   pthread_cond_signal (&queue_cond);
   pthread_mutex_unlock (&queue_lock);
@@ -116,6 +112,12 @@ journal_flusher_thread (void *arg)
 {
   while (1)
     {
+      // Wait until the journal device is ready
+      while (!journal_device_ready && !shutdown_in_progress)
+	{
+	  usleep (100 * 1000);	// Sleep 100ms
+	}
+
       pthread_mutex_lock (&queue_lock);
 
       while (count == 0 && !shutdown_in_progress)
@@ -145,6 +147,13 @@ journal_flusher_thread (void *arg)
 		  && now.tv_nsec >= deadline.tv_nsec))
 	    break;
 	  pthread_cond_timedwait (&queue_cond, &queue_lock, &deadline);
+	}
+
+      // If the device went away again, skip flushing
+      if (!journal_device_ready)
+	{
+	  pthread_mutex_unlock (&queue_lock);
+	  continue;
 	}
 
       size_t batch_count = count;

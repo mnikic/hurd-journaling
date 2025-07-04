@@ -21,8 +21,13 @@
 #define LOG_DEBUG(fmt, ...) do { } while (0)
 #endif
 
+#define RAW_DEVICE_PATH "/tmp/journal-pipe"
+
 // Global state
 extern volatile size_t dropped_events;
 extern volatile bool journal_device_ready;
+// Queue locks, needed for coordination.
+extern pthread_mutex_t queue_lock;
+extern pthread_cond_t queue_cond;
 
 #endif // JOURNAL_GLOBALS_H
