@@ -62,7 +62,7 @@ struct __attribute__((__packed__)) journal_entry_bin
 };
 
 static size_t dropped_txs = 0;
-static bool replayed_once = false;
+volatile bool journal_device_ready = false;
 static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
 static int sync_fd = -1;
 
@@ -373,7 +373,7 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
 {
   pthread_mutex_lock (&sync_write_lock);
   // Dirty hack to avoid blocking in the early boot
-  if (!replayed_once)
+  if (!journal_device_ready)
     {
       LOG_ERROR ("Device not ready yet. Aborting.");
       pthread_mutex_unlock (&sync_write_lock);
@@ -467,10 +467,10 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
       return false;
     }
 
-  if (!replayed_once)
+  if (!journal_device_ready)
     {
       journal_replay_and_validate ();
-      replayed_once = true;
+      journal_device_ready = true;
     }
 
   for (size_t i = 0; i < count; ++i)
