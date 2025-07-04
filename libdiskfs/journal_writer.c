@@ -60,7 +60,7 @@ struct __attribute__((__packed__)) journal_entry_bin
   uint32_t crc32;
 };
 
-static size_t dropped_txs = 0;
+volatile size_t dropped_events = 0;
 volatile bool journal_device_ready = false;
 static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
 static int sync_fd = -1;
@@ -448,19 +448,19 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
   int fd = get_sync_fd ();
   if (fd < 0)
     {
-      dropped_txs += count;
+      dropped_events += count;
       LOG_ERROR
 	("journal_write_raw: failed to get fd. Dropped %zu txs now and %zu since the start.",
-	 count, dropped_txs);
+	 count, dropped_events);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
   if (!initialize_indices (fd, &start_index, &end_index))
     {
-      dropped_txs += count;
+      dropped_events += count;
       LOG_ERROR
 	("journal_write_raw: initialization failed. Dropped %zu txs now and %zu since the start.",
-	 count, dropped_txs);
+	 count, dropped_events);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -478,7 +478,7 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 	{
 	  LOG_ERROR ("journal_write_raw: unexpected payload size %zu",
 		     entries[i].len);
-	  dropped_txs += count;
+	  dropped_events += count;
 	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
 	}
@@ -486,10 +486,10 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
       if (!journal_write_indexed (fd, entries[i].data, expected_len,
 				  &end_index, &start_index))
 	{
-	  dropped_txs += count;
+	  dropped_events += count;
 	  LOG_ERROR
 	    ("journal_write_raw: failed to write entry. Dropped %zu txs now and %zu since the start.",
-	     count, dropped_txs);
+	     count, dropped_events);
 	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
 	}

@@ -5,7 +5,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-// Define DEBUG if not already defined, to avoid LOG_DEBUG being undefined
 #ifndef DEBUG
 #define DEBUG 1
 #endif
