@@ -1,0 +1,28 @@
+#ifndef JOURNAL_GLOBALS_H
+#define JOURNAL_GLOBALS_H
+
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+// Define DEBUG if not already defined, to avoid LOG_DEBUG being undefined
+#ifndef DEBUG
+#define DEBUG 1
+#endif
+
+// Logging macros
+#define LOG_ERROR(fmt, ...) \
+	do { fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } while (0)
+
+#if DEBUG
+#define LOG_DEBUG(fmt, ...) \
+	do { fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } while (0)
+#else
+#define LOG_DEBUG(fmt, ...) do { } while (0)
+#endif
+
+// Global state
+extern volatile size_t dropped_events;
+extern volatile bool journal_device_ready;
+
+#endif // JOURNAL_GLOBALS_H

@@ -23,6 +23,7 @@
 #include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal.h>
 #include <libdiskfs/journal_writer.h>
+#include <libdiskfs/journal_globals.h>
 #include <diskfs.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -56,22 +57,21 @@ current_time_ms (void)
 void
 journal_init (void)
 {
-  fprintf (stderr, "Toy journaling: journal_init() called\n");
+  LOG_DEBUG ("Toy journaling: journal_init() called.");
   journal_queue_init ();
   if (pthread_create
       (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
     {
-      fprintf (stderr,
-	       "Toy journaling: failed to create a flusher thread.\n");
+      LOG_ERROR("Toy journaling: failed to create a flusher thread.");
       journal_shutting_down = true;
     }
-  fprintf (stderr, "Toy journaling: done initializing.\n");
+  LOG_DEBUG ("Toy journaling: done initializing.");
 }
 
 void
 journal_shutdown (void)
 {
-  fprintf (stderr, "Toy journaling: journal_shutdown() called\n");
+  LOG_DEBUG ("Toy journaling: journal_shutdown() called.");
   journal_shutting_down = true;
   journal_queue_shutdown ();
   pthread_join (journal_flusher_tid, NULL);
@@ -89,14 +89,13 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 {
   if (!node_ptr)
     {
-      fprintf (stderr,
-	       "Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.\n");
+      LOG_ERROR ("Toy journaling: NULL node_ptr received in journal_log_metadata, skipping.");
       return;
     }
   if (!info)
     {
-      fprintf (stderr,
-	       "Toy journaling: NULL info pointer received in journal_log_metadata, skipping.\n");
+     
+      LOG_ERROR ("Toy journaling: NULL info pointer received in journal_log_metadata, skipping.");
       return;
     }
 
@@ -114,7 +113,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   size_t total_size = sizeof (struct journal_payload_bin);
   if (total_size > JOURNAL_ENTRY_SIZE)
     {
-      fprintf (stderr, "Toy journaling: entry too large, dropped.\n");
+      LOG_ERROR ("Toy journaling: entry too large, dropped.");
       return;
     }
 
@@ -180,7 +179,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   if (durability == JOURNAL_DURABILITY_SYNC)
     {
       if (!journal_write_raw_sync (entry))
-	fprintf (stderr, "Failed to write sync.\n");
+	LOG_ERROR ("Failed to write sync.");
     }
   else
     {

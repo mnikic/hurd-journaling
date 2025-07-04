@@ -22,6 +22,7 @@
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_queue.h>
+#include <libdiskfs/journal_globals.h>
 #include <libdiskfs/crc32.h>
 #include <hurd/fshelp.h>
 #include <string.h>
@@ -68,7 +69,7 @@ static int sync_fd = -1;
 static int
 get_sync_fd (void)
 {
-  fprintf (stderr, "In get_sync_id\n");
+  LOG_DEBUG ("In get_sync_id");
   if (sync_fd >= 0)
     {
       // Check if fd is still valid
@@ -80,11 +81,9 @@ get_sync_fd (void)
       sync_fd = -1;
     }
 
-  fprintf (stderr, "About to open raw.\n");
   sync_fd = open (RAW_DEVICE_PATH, O_RDWR);
-  fprintf (stderr, "Got %i as fd.\n", sync_fd);
   if (sync_fd < 0)
-    fprintf (stderr, "get_sync_fd: open failed: %s\n", strerror (errno));
+    LOG_ERROR ("get_sync_fd: open failed: %s", strerror (errno));
 
   return sync_fd;
 }
@@ -99,12 +98,12 @@ index_to_offset (uint64_t index)
 static void
 journal_replay_and_validate (void)
 {
-  fprintf (stderr, "Toy journaling: Starting validation.\n");
+  LOG_DEBUG ("Toy journaling: Starting validation.");
   int fd = open (RAW_DEVICE_PATH, O_RDONLY);
   if (fd < 0)
     {
-      fprintf (stderr, "journal_replay_and_validate: open failed: %s\n",
-	       strerror (errno));
+      LOG_ERROR ("journal_replay_and_validate: open failed: %s",
+		 strerror (errno));
       return;
     }
 
@@ -112,7 +111,7 @@ journal_replay_and_validate (void)
   ssize_t n = pread (fd, &hdr, sizeof (hdr), 0);
   if (n != sizeof (hdr))
     {
-      fprintf (stderr, "journal replay: could not read journal header\n");
+      LOG_ERROR ("journal replay: could not read journal header");
       close (fd);
       return;
     }
@@ -123,7 +122,7 @@ journal_replay_and_validate (void)
   if (actual_crc != expected_crc
       || hdr.magic != JOURNAL_MAGIC || hdr.version != JOURNAL_VERSION)
     {
-      fprintf (stderr, "journal replay: header invalid\n");
+      LOG_ERROR ("journal replay: header invalid");
       close (fd);
       return;
     }
@@ -131,7 +130,7 @@ journal_replay_and_validate (void)
   if (hdr.start_index >= JOURNAL_NUM_ENTRIES
       || hdr.end_index >= JOURNAL_NUM_ENTRIES)
     {
-      fprintf (stderr, "journal_write_raw: header indices out of bounds\n");
+      LOG_ERROR ("journal_write_raw: header indices out of bounds.");
       close (fd);
       return;
     }
@@ -148,9 +147,8 @@ journal_replay_and_validate (void)
       off_t offset = index_to_offset (index);
       if (pread (fd, buf, JOURNAL_ENTRY_SIZE, offset) != JOURNAL_ENTRY_SIZE)
 	{
-	  fprintf (stderr,
-		   "journal replay: incomplete read at offset %ld\n",
-		   (long) offset);
+	  LOG_ERROR ("journal replay: incomplete read at offset %ld",
+		     (long) offset);
 	  break;
 	}
 
@@ -158,17 +156,16 @@ journal_replay_and_validate (void)
 
       if (entry->magic != JOURNAL_MAGIC)
 	{
-	  fprintf (stderr, "journal replay: bad magic at offset %ld\n",
-		   (long) offset);
+	  LOG_ERROR ("journal replay: bad magic at offset %ld",
+		     (long) offset);
 	  all_good = false;
 	  break;
 	}
 
       if (entry->version != JOURNAL_VERSION)
 	{
-	  fprintf (stderr,
-		   "journal replay: version mismatch at offset %ld\n",
-		   (long) offset);
+	  LOG_ERROR ("journal replay: version mismatch at offset %ld",
+		     (long) offset);
 	  all_good = false;
 	  break;
 	}
@@ -180,8 +177,8 @@ journal_replay_and_validate (void)
 					 sizeof (struct journal_payload_bin));
       if (actual_entry_crc != stored_crc)
 	{
-	  fprintf (stderr, "journal replay: CRC mismatch at offset %ld\n",
-		   (long) offset);
+	  LOG_ERROR ("journal replay: CRC mismatch at offset %ld",
+		     (long) offset);
 	  all_good = false;
 	  break;
 	}
@@ -190,11 +187,10 @@ journal_replay_and_validate (void)
 
       if (payload->timestamp_ms < last_timestamp)
 	{
-	  fprintf (stderr,
-		   "journal replay: decreasing timestamp at offset %ld (index=%"
-		   PRIu64 "): current=%" PRIu64 ", previous=%" PRIu64 "\n",
-		   (long) offset, index, payload->timestamp_ms,
-		   last_timestamp);
+	  LOG_ERROR
+	    ("journal replay: decreasing timestamp at offset %ld (index=%"
+	     PRIu64 "): current=%" PRIu64 ", previous=%" PRIu64,
+	     (long) offset, index, payload->timestamp_ms, last_timestamp);
 	  all_good = false;
 	  break;
 	}
@@ -207,41 +203,39 @@ journal_replay_and_validate (void)
 	  if (llabs ((int64_t) (payload->timestamp_ms - last_timestamp)) >
 	      10000)
 	    {
-	      fprintf (stderr,
-		       "journal replay: timestamp skew too large at offset %ld (index=%"
-		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%"
-		       PRIu64 "\n", (long) offset, index, payload->tx_id,
-		       last_tx_id, payload->timestamp_ms, last_timestamp);
+	      LOG_ERROR
+		("journal replay: timestamp skew too large at offset %ld (index=%"
+		 PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
+		 ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64,
+		 (long) offset, index, payload->tx_id, last_tx_id,
+		 payload->timestamp_ms, last_timestamp);
 	      all_good = false;
 	      break;
 	    }
 	  else
 	    {
-	      fprintf (stderr,
-		       "journal replay: WARNING: non-monotonic tx_id or timestamp at offset %ld (index=%"
-		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%"
-		       PRIu64 "\n", (long) offset, index, payload->tx_id,
-		       last_tx_id, payload->timestamp_ms, last_timestamp);
+	      LOG_ERROR
+		("journal replay: WARNING: non-monotonic tx_id or timestamp at offset %ld (index=%"
+		 PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
+		 ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64,
+		 (long) offset, index, payload->tx_id, last_tx_id,
+		 payload->timestamp_ms, last_timestamp);
 	    }
 	}
 
       last_tx_id = payload->tx_id;
       last_timestamp = payload->timestamp_ms;
 
-      fprintf (stderr,
-	       "journal replay: tx_id=%" PRIu64 ", timestamp=%" PRIu64 "\n",
-	       payload->tx_id, payload->timestamp_ms);
+      LOG_DEBUG ("journal replay: tx_id=%" PRIu64 ", timestamp=%" PRIu64,
+		 payload->tx_id, payload->timestamp_ms);
 
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
 
   if (all_good)
-    fprintf (stderr,
-	     "Toy journaling: Succesful validation of journal entries.\n");
+    LOG_DEBUG ("Toy journaling: Succesful validation of journal entries.");
   else
-    fprintf (stderr, "Toy journaling: Validation completed with errors.\n");
+    LOG_DEBUG ("Toy journaling: Validation completed with errors.");
 
   close (fd);
 }
@@ -268,9 +262,8 @@ persist_header_with_retry (int fd, uint64_t start_index,
 	  return true;
 	}
 
-      fprintf (stderr,
-	       "journal: header write failed, retrying (%d left): %s\n",
-	       retries, strerror (errno));
+      LOG_ERROR ("journal: header write failed, retrying (%d left): %s",
+		 retries, strerror (errno));
       usleep (1000);
     }
 
@@ -285,15 +278,14 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
 
   if (n == -1 && errno == EIO)
     {
-      fprintf (stderr,
-	       "journal_write_raw: cannot read journal file: %s\n",
-	       strerror (errno));
+      LOG_ERROR ("journal_write_raw: cannot read journal file: %s",
+		 strerror (errno));
       return false;
     }
 
   if (n != sizeof (hdr))
     {
-      fprintf (stderr, "journal_write_raw: header read failed or missing\n");
+      LOG_ERROR ("journal_write_raw: header read failed or missing");
       *start_index = 0;
       *end_index = 0;
       return true;
@@ -306,7 +298,7 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
   if (actual_crc != expected_crc
       || hdr.magic != JOURNAL_MAGIC || hdr.version != JOURNAL_VERSION)
     {
-      fprintf (stderr, "journal_write_raw: header CRC mismatch or invalid\n");
+      LOG_ERROR ("journal_write_raw: header CRC mismatch or invalid");
       *start_index = 0;
       *end_index = 0;
       return true;
@@ -315,7 +307,7 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
   if (hdr.start_index >= JOURNAL_NUM_ENTRIES
       || hdr.end_index >= JOURNAL_NUM_ENTRIES)
     {
-      fprintf (stderr, "journal_write_raw: header indices out of bounds\n");
+      LOG_ERROR ("journal_write_raw: header indices out of bounds");
       *start_index = 0;
       *end_index = 0;
       return true;
@@ -324,9 +316,8 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
   *start_index = hdr.start_index;
   *end_index = hdr.end_index;
 
-  fprintf (stderr,
-	   "journal_write_raw: start_index=%llu, end_index=%llu\n",
-	   *start_index, *end_index);
+  LOG_DEBUG ("journal_write_raw: start_index=%llu, end_index=%llu",
+		     *start_index, *end_index);
 
   return true;
 }
@@ -337,8 +328,7 @@ journal_write_indexed (int fd, const char *data, size_t len,
 {
   if (len > sizeof (struct journal_payload_bin))
     {
-      fprintf (stderr,
-	       "journal_write_indexed: payload too large: %zu bytes\n", len);
+      LOG_ERROR ("journal_write_indexed: payload too large: %zu bytes", len);
       return false;
     }
 
@@ -363,16 +353,14 @@ journal_write_indexed (int fd, const char *data, size_t len,
   off_t offset = index_to_offset (*end_index);
   if (lseek (fd, offset, SEEK_SET) == (off_t) - 1)
     {
-      fprintf (stderr,
-	       "journal_write_indexed: lseek failed: %s\n", strerror (errno));
+      LOG_ERROR ("journal_write_indexed: lseek failed: %s", strerror (errno));
       return false;
     }
 
   ssize_t written = write (fd, buf, JOURNAL_ENTRY_SIZE);
   if (written != JOURNAL_ENTRY_SIZE)
     {
-      fprintf (stderr,
-	       "journal_write_indexed: write failed: %s\n", strerror (errno));
+      LOG_ERROR ("journal_write_indexed: write failed: %s", strerror (errno));
       return false;
     }
 
@@ -387,7 +375,7 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
   // Dirty hack to avoid blocking in the early boot
   if (!replayed_once)
     {
-      fprintf (stderr, "Device not ready yet. Aborting.\n");
+      LOG_ERROR ("Device not ready yet. Aborting.");
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -419,16 +407,16 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
   off_t offset = index_to_offset (end_index);
   if (lseek (fd, offset, SEEK_SET) == (off_t) - 1)
     {
-      fprintf (stderr, "journal_write_direct_sync: lseek failed: %s",
-	       strerror (errno));
+      LOG_ERROR ("journal_write_direct_sync: lseek failed: %s",
+		 strerror (errno));
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
 
   if (write (fd, buf, JOURNAL_ENTRY_SIZE) != JOURNAL_ENTRY_SIZE)
     {
-      fprintf (stderr, "journal_write_direct_sync: write failed: %s",
-	       strerror (errno));
+      LOG_ERROR ("journal_write_direct_sync: write failed: %s",
+		 strerror (errno));
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -440,7 +428,7 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
     start_index = (start_index + 1) % JOURNAL_NUM_ENTRIES;
   if (!persist_header_with_retry (fd, start_index, next_index, 3))
     {
-      fprintf (stderr, "journal_write_direct_sync: failed to persist header");
+      LOG_ERROR ("journal_write_direct_sync: failed to persist header");
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -463,18 +451,18 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
   if (fd < 0)
     {
       dropped_txs += count;
-      fprintf (stderr,
-	       "journal_write_raw: failed to get fd. Dropped %zu txs now and %zu since the start.",
-	       count, dropped_txs);
+      LOG_ERROR
+	("journal_write_raw: failed to get fd. Dropped %zu txs now and %zu since the start.",
+	 count, dropped_txs);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
   if (!initialize_indices (fd, &start_index, &end_index))
     {
       dropped_txs += count;
-      fprintf (stderr,
-	       "journal_write_raw: initialization failed. Dropped %zu txs now and %zu since the start.",
-	       count, dropped_txs);
+      LOG_ERROR
+	("journal_write_raw: initialization failed. Dropped %zu txs now and %zu since the start.",
+	 count, dropped_txs);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -489,8 +477,8 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
     {
       if (entries[i].len != expected_len)
 	{
-	  fprintf (stderr, "journal_write_raw: unexpected payload size %zu",
-		   entries[i].len);
+	  LOG_ERROR ("journal_write_raw: unexpected payload size %zu",
+		     entries[i].len);
 	  dropped_txs += count;
 	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
@@ -500,19 +488,19 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 				  &end_index, &start_index))
 	{
 	  dropped_txs += count;
-	  fprintf (stderr,
-		   "journal_write_raw: failed to write entry. Dropped %zu txs now and %zu since the start.",
-		   count, dropped_txs);
+	  LOG_ERROR
+	    ("journal_write_raw: failed to write entry. Dropped %zu txs now and %zu since the start.",
+	     count, dropped_txs);
 	  pthread_mutex_unlock (&sync_write_lock);
 	  return false;
 	}
     }
 
   if (!persist_header_with_retry (fd, start_index, end_index, 3))
-    fprintf (stderr,
-	     "journal_write_raw: failed to persist updated header after retries.");
+    LOG_ERROR
+      ("journal_write_raw: failed to persist updated header after retries.");
 
-  fprintf (stderr, "Toy journaling: wrote %zu entries to raw disk.", count);
+  LOG_ERROR ("Toy journaling: wrote %zu entries to raw disk.", count);
 
   pthread_mutex_unlock (&sync_write_lock);
   return true;

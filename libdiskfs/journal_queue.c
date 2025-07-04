@@ -22,7 +22,7 @@
 #include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_writer.h>
-#include <libdiskfs/crc32.h>
+#include <libdiskfs/journal_globals.h>
 #include <pthread.h>
 #include <string.h>
 #include <stdio.h>
@@ -105,7 +105,7 @@ journal_enqueue (const char *data, size_t len)
 void
 journal_flush_now (void)
 {
-  fprintf (stderr, "Toy journaling: flush now.\n");
+  LOG_DEBUG ("Toy journaling: flush now.");
   pthread_mutex_lock (&queue_lock);
   pthread_cond_signal (&queue_cond);
   pthread_mutex_unlock (&queue_lock);
