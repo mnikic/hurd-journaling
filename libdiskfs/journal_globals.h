@@ -21,7 +21,8 @@
 
 #define RAW_DEVICE_PATH "/tmp/journal-pipe"
 #define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
-#define JOURNAL_RESERVED_SPACE 4096	/* Leave room for future header growth */
+#define JOURNAL_ENTRY_SIZE 4096ULL
+#define JOURNAL_RESERVED_SPACE 4096ULL	/* Leave room for future header growth */
 #define JOURNAL_DATA_CAPACITY (RAW_DEVICE_SIZE - JOURNAL_RESERVED_SPACE)
 #define JOURNAL_NUM_ENTRIES (JOURNAL_DATA_CAPACITY / JOURNAL_ENTRY_SIZE)
 
@@ -52,11 +53,11 @@ struct __attribute__((__packed__)) journal_entry_bin
 	uint32_t crc32;
 };
 
-	static inline off_t
+	static inline uint64_t
 index_to_offset (uint64_t index)
 {
 	return JOURNAL_RESERVED_SPACE +
-		(index % JOURNAL_NUM_ENTRIES) * JOURNAL_ENTRY_SIZE;
+		(index % (uint64_t) JOURNAL_NUM_ENTRIES) * (uint64_t) JOURNAL_ENTRY_SIZE;
 }
 
 #endif // JOURNAL_GLOBALS_H

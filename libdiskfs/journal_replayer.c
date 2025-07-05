@@ -19,9 +19,7 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
-#include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/crc32.h>
 #include <stdio.h>
@@ -33,6 +31,57 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdlib.h>
+
+struct journal_entries
+{
+  struct journal_payload_bin **entries;
+  size_t count;
+  size_t capacity;
+};
+
+static void
+add_event_to_global_list (struct journal_entries *list,
+			  struct journal_payload_bin *entry)
+{
+  if (list->count == list->capacity)
+    {
+      size_t new_capacity = list->capacity == 0 ? 128 : list->capacity * 2;
+      list->entries =
+	realloc (list->entries, new_capacity * sizeof (*list->entries));
+      list->capacity = new_capacity;
+    }
+  list->entries[list->count++] = entry;
+}
+
+static int
+compare_entries_by_time_then_txid (const void *a, const void *b)
+{
+  const struct journal_payload_bin *entry_a =
+    *(const struct journal_payload_bin **) a;
+  const struct journal_payload_bin *entry_b =
+    *(const struct journal_payload_bin **) b;
+
+  if (entry_a->timestamp_ms < entry_b->timestamp_ms)
+    return -1;
+  if (entry_a->timestamp_ms > entry_b->timestamp_ms)
+    return 1;
+
+  // Tie-breaker: lower tx_id wins
+  if (entry_a->tx_id < entry_b->tx_id)
+    return -1;
+  if (entry_a->tx_id > entry_b->tx_id)
+    return 1;
+
+  return 0;
+}
+
+static void
+sort_global_entries (struct journal_entries *list)
+{
+  qsort (list->entries, list->count,
+	 sizeof (struct journal_payload_bin *),
+	 compare_entries_by_time_then_txid);
+}
 
 void
 journal_replay_from_file (const char *path)
@@ -76,15 +125,17 @@ journal_replay_from_file (const char *path)
 
   uint64_t index = hdr.start_index;
   uint64_t end_index = hdr.end_index;
+  LOG_DEBUG ("header start index %llu and end index %llu", index, end_index);
   uint64_t last_tx_id = 0;
   uint64_t last_timestamp = 0;
   char buf[JOURNAL_ENTRY_SIZE] = { 0 };
   bool all_good = true;
-
+  struct journal_entries list = { 0 };
   while (index != end_index)
     {
-      off_t offset = index_to_offset (index);
-      if (pread (fd, buf, JOURNAL_ENTRY_SIZE, offset) != JOURNAL_ENTRY_SIZE)
+      uint64_t offset = index_to_offset (index);
+      if (pread (fd, buf, JOURNAL_ENTRY_SIZE, (off_t) offset) !=
+	  JOURNAL_ENTRY_SIZE)
 	{
 	  fprintf (stderr,
 		   "journal replay: incomplete read at offset %ld\n",
@@ -109,12 +160,17 @@ journal_replay_from_file (const char *path)
 	  all_good = false;
 	  break;
 	}
-
       uint32_t stored_crc = entry->crc32;
       entry->crc32 = 0;
-
+      fprintf (stderr, "[DEBUG] offset: %llu, index: %llu\n", offset, index);
+      fprintf (stderr,
+	       "magic: 0x%x, version: %u, tx_id: %" PRIu64 ", timestamp: %"
+	       PRIu64 "\n", entry->magic, entry->version,
+	       entry->payload.tx_id, entry->payload.timestamp_ms);
+      fprintf (stderr, "raw entry_crc: 0x%x\n", stored_crc);
       uint32_t actual_entry_crc = crc32 ((const char *) &entry->payload,
 					 sizeof (struct journal_payload_bin));
+      fprintf (stderr, "computed_crc: 0x%x\n", actual_entry_crc);
       if (actual_entry_crc != stored_crc)
 	{
 	  fprintf (stderr, "journal replay: CRC mismatch at offset %ld\n",
@@ -123,62 +179,19 @@ journal_replay_from_file (const char *path)
 	  break;
 	}
 
-      const struct journal_payload_bin *payload = &entry->payload;
-
-      if (payload->timestamp_ms < last_timestamp)
+      struct journal_payload_bin *payload = &entry->payload;
+      if (strnlen (payload->action, sizeof (payload->action)) ==
+	  0)
 	{
-	  fprintf (stderr,
-		   "journal replay: decreasing timestamp at offset %ld (index=%"
-		   PRIu64 "): current=%" PRIu64 ", previous=%" PRIu64 "\n",
-		   (long) offset, index, payload->timestamp_ms,
-		   last_timestamp);
+	  LOG_DEBUG ("action not valid on index %llu tx_id %llu action %s", index,
+		     payload->tx_id, payload->action);
 	  all_good = false;
 	  break;
 	}
-
-      if ((payload->timestamp_ms > last_timestamp
-	   && payload->tx_id <= last_tx_id)
-	  || (payload->timestamp_ms < last_timestamp
-	      && payload->tx_id >= last_tx_id))
-	{
-	  if (llabs ((int64_t) (payload->timestamp_ms - last_timestamp)) >
-	      10000)
-	    {
-	      fprintf (stderr,
-		       "journal replay: timestamp skew too large at offset %ld (index=%"
-		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64
-		       "\n", (long) offset, index, payload->tx_id, last_tx_id,
-		       payload->timestamp_ms, last_timestamp);
-	      all_good = false;
-	      break;
-	    }
-	  else
-	    {
-	      fprintf (stderr,
-		       "journal replay: WARNING: non-monotonic tx_id or timestamp at offset %ld (index=%"
-		       PRIu64 "): tx_id=%" PRIu64 ", previous=%" PRIu64
-		       ", timestamp=%" PRIu64 ", previous_timestamp=%" PRIu64
-		       "\n", (long) offset, index, payload->tx_id, last_tx_id,
-		       payload->timestamp_ms, last_timestamp);
-	    }
-	}
-
-      last_tx_id = payload->tx_id;
-      last_timestamp = payload->timestamp_ms;
-
-      fprintf (stderr,
-	       "journal replay: tx_id=%" PRIu64 ", timestamp=%" PRIu64 "\n",
-	       payload->tx_id, payload->timestamp_ms);
-
+      add_event_to_global_list (&list, payload);
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
-
-  if (all_good)
-    fprintf (stderr,
-	     "Toy journaling: Succesful validation of journal entries.\n");
-  else
-    fprintf (stderr, "Toy journaling: Validation completed with errors.\n");
-
+  LOG_DEBUG ("Validation done");
+  sort_global_entries (&list);
   close (fd);
 }

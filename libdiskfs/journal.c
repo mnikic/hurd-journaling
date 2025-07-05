@@ -188,10 +188,10 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->tx_id = ++journal_tx_id;
   entry->timestamp_ms = current_time_ms ();
 
-  entry->parent_ino = info->parent_ino;
-  entry->src_parent_ino = info->src_parent_ino;
-  entry->dst_parent_ino = info->dst_parent_ino;
-  entry->ino = st->st_ino;
+  entry->parent_ino = (journal_ino_t) info->parent_ino;
+  entry->src_parent_ino = (journal_ino_t) info->src_parent_ino;
+  entry->dst_parent_ino = (journal_ino_t) info->dst_parent_ino;
+  entry->ino = (journal_ino_t) st->st_ino;
 
   entry->st_mode = st->st_mode;
   entry->st_size = st->st_size;
@@ -215,12 +215,12 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
     }
   if (info->has_uid)
     {
-      entry->uid = info->uid;
+      entry->uid = (journal_uid_t) info->uid;
       entry->has_uid = true;
     }
   if (info->has_gid)
     {
-      entry->gid = info->gid;
+      entry->gid = (journal_uid_t) info->gid;
       entry->has_gid = true;
     }
 

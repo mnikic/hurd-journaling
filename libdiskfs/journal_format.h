@@ -29,24 +29,26 @@
 #define JOURNAL_MAGIC        0x4A4E4C30  /* "JNL0" */
 #define JOURNAL_VERSION      1
 #define MAX_FIELD_LEN        256
-#define JOURNAL_ENTRY_SIZE   4096
+
+typedef uint32_t journal_ino_t;
+typedef uint32_t journal_uid_t;
 
 struct __attribute__((__packed__)) journal_payload_bin
 {
 	uint64_t tx_id;
 	uint64_t timestamp_ms;
-	ino_t parent_ino;
-	ino_t src_parent_ino;
-	ino_t dst_parent_ino;
-	ino_t ino;
+	journal_ino_t parent_ino;
+	journal_ino_t src_parent_ino;
+	journal_ino_t dst_parent_ino;
+	journal_ino_t ino;
 	uint32_t st_mode;
 	uint64_t st_size;
 	uint64_t st_nlink;
 	uint64_t st_blocks;
 	int64_t mtime;
 	int64_t ctime;
-	uid_t uid;
-	uid_t gid;
+	journal_uid_t uid;
+	journal_uid_t gid;
 	bool has_mode;
 	bool has_size;
 	bool has_uid;

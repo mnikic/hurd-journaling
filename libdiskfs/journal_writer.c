@@ -293,7 +293,8 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
   static bool validation_done = false;
   if (!validation_done)
     {
-      journal_replay_from_file (RAW_DEVICE_PATH);
+      journal_replay_from_file ("/var/journal.img");
+      // journal_replay_from_file (RAW_DEVICE_PATH);
       validation_done = true;
     }
 
