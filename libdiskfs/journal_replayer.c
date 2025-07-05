@@ -126,8 +126,6 @@ journal_replay_from_file (const char *path)
   uint64_t index = hdr.start_index;
   uint64_t end_index = hdr.end_index;
   LOG_DEBUG ("header start index %llu and end index %llu", index, end_index);
-  uint64_t last_tx_id = 0;
-  uint64_t last_timestamp = 0;
   char buf[JOURNAL_ENTRY_SIZE] = { 0 };
   bool all_good = true;
   struct journal_entries list = { 0 };
@@ -162,15 +160,8 @@ journal_replay_from_file (const char *path)
 	}
       uint32_t stored_crc = entry->crc32;
       entry->crc32 = 0;
-      fprintf (stderr, "[DEBUG] offset: %llu, index: %llu\n", offset, index);
-      fprintf (stderr,
-	       "magic: 0x%x, version: %u, tx_id: %" PRIu64 ", timestamp: %"
-	       PRIu64 "\n", entry->magic, entry->version,
-	       entry->payload.tx_id, entry->payload.timestamp_ms);
-      fprintf (stderr, "raw entry_crc: 0x%x\n", stored_crc);
       uint32_t actual_entry_crc = crc32 ((const char *) &entry->payload,
 					 sizeof (struct journal_payload_bin));
-      fprintf (stderr, "computed_crc: 0x%x\n", actual_entry_crc);
       if (actual_entry_crc != stored_crc)
 	{
 	  fprintf (stderr, "journal replay: CRC mismatch at offset %ld\n",
@@ -180,18 +171,46 @@ journal_replay_from_file (const char *path)
 	}
 
       struct journal_payload_bin *payload = &entry->payload;
-      if (strnlen (payload->action, sizeof (payload->action)) ==
-	  0)
+      if (strnlen (payload->action, sizeof (payload->action)) == 0)
 	{
-	  LOG_DEBUG ("action not valid on index %llu tx_id %llu action %s", index,
-		     payload->tx_id, payload->action);
+	  LOG_DEBUG ("action not valid on index %llu tx_id %llu action %s",
+		     index, payload->tx_id, payload->action);
 	  all_good = false;
 	  break;
 	}
-      add_event_to_global_list (&list, payload);
+      if (payload->ino == 0)
+	{
+	  LOG_DEBUG ("ino not valid on index %llu tx_id %llu ino = 0",
+		     index, payload->tx_id);
+	  all_good = false;
+	  break;
+	}
+      struct journal_payload_bin *payload_copy =
+	malloc (sizeof *payload_copy);
+      if (!payload_copy)
+	{
+	  LOG_DEBUG ("Out of memory");
+	  goto CLEANUP;
+	}
+      memcpy (payload_copy, payload, sizeof *payload_copy);
+      LOG_DEBUG ("index: %" PRIu64 ", tx_id: %" PRIu64 ", timestamp: %"
+		 PRIu64 ", ino: %u, action: %s", index, payload->tx_id,
+		 payload->timestamp_ms, payload->ino, payload->action);
+      add_event_to_global_list (&list, payload_copy);
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
-  LOG_DEBUG ("Validation done");
+  if (!all_good)
+    {
+      LOG_DEBUG ("Validation completed with errors.");
+      goto CLEANUP;
+    }
+  LOG_DEBUG ("Validation completed successfully.");
   sort_global_entries (&list);
+
+CLEANUP:
+  for (size_t i = 0; i < list.count; i++)
+    free (list.entries[i]);
+  if (list.entries)
+    free (list.entries);
   close (fd);
 }
