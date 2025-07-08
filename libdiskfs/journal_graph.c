@@ -25,10 +25,16 @@
 #include <libdiskfs/diskfs.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <hurd/fs.h>
+#include <dirent.h>
+#include <stdio.h>
+#include <hurd/lookup.h>
+#include <libdiskfs/diskfs.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include <string.h>
 
 #define HASH_SIZE 4096
 #define MAX_CHILDREN 32
@@ -78,6 +84,7 @@ typedef struct inode_state
 
   journal_ino_t children[MAX_CHILDREN];
   int num_children;
+  char *resolved_path;
 
   struct inode_state *next;
 } inode_state_t;
@@ -205,8 +212,6 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
   inode_state_t *ino = get_inode (ev->ino);
   ino->last_tx = ev->tx_id;
   ino->last_seen = ev->timestamp_ms;
-  if (strlen(ev->name) == 0)
-  	LOG_DEBUG("action %s doesn't have name. new name = %s.", ev->action, ev->new_name);
   switch (action)
     {
     case ACTION_CREATE:
@@ -391,131 +396,251 @@ journal_graph_free (void)
     }
 }
 
-static void
-build_path_recursive(inode_state_t *node, char *buf, size_t buflen)
+static bool
+should_skip_directory (const char *name)
 {
-  if (!node)
-    {
-      strncat(buf, "/[null]", buflen - strlen(buf) - 1);
-      return;
-    }
+  return strcmp (name, "lost+found") == 0 ||
+    strcmp (name, "proc") == 0 ||
+    strcmp (name, "sshd") == 0 ||
+    strcmp (name, "dbus") == 0 ||
+    strcmp (name, "crond") == 0 ||
+    strcmp (name, "network") == 0 ||
+    strcmp (name, "lock") == 0 ||
+    strcmp (name, "shm") == 0 ||
+    strstr (name, ".pid") != NULL ||
+    strstr (name, ".lock") != NULL ||
+    strstr (name, ".reboot") != NULL ||
+    strstr (name, ".ok") != NULL || strchr (name, ':') != NULL;
+}
 
-  if (node->ino == 2) // ext2 root inode
-    return; // base case
-
-  if (node->parent_ino == node->ino || node->parent_ino == 0)
+const char *
+d_type_to_str (unsigned char d_type)
+{
+  switch (d_type)
     {
-      char fallback[32];
-      snprintf(fallback, sizeof(fallback), "/[ino-%" PRIu32 "]", node->ino);
-      strncat(buf, fallback, buflen - strlen(buf) - 1);
-      return;
-    }
-
-  inode_state_t *parent = get_inode(node->parent_ino);
-  if (!parent)
-    {
-      char fallback[32];
-      snprintf(fallback, sizeof(fallback), "/[ino-%" PRIu32 "]", node->parent_ino);
-      strncat(buf, fallback, buflen - strlen(buf) - 1);
-    }
-  else
-    {
-      build_path_recursive(parent, buf, buflen);
-    }
-
-  strncat(buf, "/", buflen - strlen(buf) - 1);
-
-  if (strlen(node->name) > 0)
-    {
-      char name_buf[MAX_FIELD_LEN + 1];
-      strncpy(name_buf, node->name, MAX_FIELD_LEN);
-      name_buf[MAX_FIELD_LEN] = '\0';
-      strncat(buf, name_buf, buflen - strlen(buf) - 1);
-    }
-  else
-    {
-      char fallback[32];
-      snprintf(fallback, sizeof(fallback), "[ino-%" PRIu32 "]", node->ino);
-      strncat(buf, fallback, buflen - strlen(buf) - 1);
+    case DT_REG:
+      return "regular file";
+    case DT_DIR:
+      return "directory";
+    case DT_FIFO:
+      return "FIFO";
+    case DT_SOCK:
+      return "socket";
+    case DT_LNK:
+      return "symlink";
+    case DT_BLK:
+      return "block dev";
+    case DT_CHR:
+      return "char dev";
+    case DT_UNKNOWN:
+      return "unknown";
+    default:
+      return "other";
     }
 }
 
-char *
-journal_graph_emit_restore_script(void)
+
+static bool
+is_problematic_path (const char *path)
 {
-  size_t buffer_size = 16384;
-  size_t used = 0;
-  char *script = malloc(buffer_size);
-  if (!script)
-    return NULL;
+  // System process directories
+  if (strncmp (path, "/proc", 5) == 0)
+    return true;
+  if (strncmp (path, "/sys", 4) == 0)
+    return true;
+  if (strncmp (path, "/dev", 4) == 0)
+    return true;
 
-  used += snprintf(script + used, buffer_size - used, "#!/bin/sh\n");
-  used += snprintf(script + used, buffer_size - used, "# Auto-generated restore script from journal\n\n");
-  used += snprintf(script + used, buffer_size - used, "mkdir -p /restore\n");
+  // Runtime/lock files
+  if (strstr (path, ".pid") != NULL)
+    return true;
+  if (strstr (path, ".lock") != NULL)
+    return true;
+  if (strstr (path, ".socket") != NULL)
+    return true;
 
-  for (size_t i = 0; i < HASH_SIZE; ++i)
+  // Network mounts (if any)
+  if (strncmp (path, "/net", 4) == 0)
+    return true;
+  if (strncmp (path, "/mnt", 4) == 0)
+    return true;
+
+  // Hurd-specific translators that might hang
+  if (strncmp (path, "/servers", 8) == 0)
+    return true;
+  return false;
+}
+
+static bool
+is_safe_to_traverse (const char *path, struct stat *st)
+{
+  // Skip device files
+  if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
     {
-      inode_state_t *node = inode_hash[i];
-      while (node)
-        {
-          if (node->ino == 0 || node->is_deleted)
-            {
-              node = node->next;
-              continue;
-            }
-
-          if (strlen(node->name) == 0)
-            {
-              fprintf(stderr, "\u26a0\ufe0f inode %" PRIu32 " has no name\n", node->ino);
-            }
-
-          char path[1024] = "/restore";
-          build_path_recursive(node, path + strlen("/restore"), sizeof(path) - strlen("/restore"));
-
-          if (strcmp(path, "/restore") == 0)
-            {
-              node = node->next;
-              continue;
-            }
-
-          if (used > buffer_size - 512)
-            {
-              buffer_size *= 2;
-              char *new_script = realloc(script, buffer_size);
-              if (!new_script)
-                {
-                  free(script);
-                  return NULL;
-                }
-              script = new_script;
-            }
-
-          mode_t mode = node->st_mode & S_IFMT;
-          bool is_dir = (mode == S_IFDIR);
-
-          if (is_dir)
-            {
-              used += snprintf(script + used, buffer_size - used,
-                               "[ -d '%s' ] || install -d -o %d -g %d -m 0%03o '%s'\n",
-                               path, node->uid, node->gid, node->st_mode & 0777, path);
-            }
-          else
-            {
-              used += snprintf(script + used, buffer_size - used,
-                               "[ -f '%s' ] || install -o %d -g %d -m 0%03o /dev/null '%s'\n",
-                               path, node->uid, node->gid, node->st_mode & 0777, path);
-            }
-
-          if (node->mtime)
-            {
-              used += snprintf(script + used, buffer_size - used,
-                               "touch -d @%" PRIu64 " '%s'\n",
-                               node->mtime / 1000, path);
-            }
-
-          node = node->next;
-        }
+      return false;
     }
 
-  return script;
+  // Skip FIFOs and sockets
+  if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
+    {
+      return false;
+    }
+
+  // Skip symbolic links to avoid loops
+  if (S_ISLNK (st->st_mode))
+    {
+      return false;
+    }
+
+  // Skip known problematic paths
+  if (is_problematic_path (path))
+    {
+      return false;
+    }
+
+  // Only traverse regular files and directories
+  return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
+}
+
+error_t
+scan_directory_and_update_paths (void)
+{
+  const char *safe_roots[] = {
+    "/home",
+    "/tmp",
+    "/var/log",
+    "/var/lib",
+    "/etc",
+    "/usr/local",
+    NULL
+  };
+
+  struct scan_frame
+  {
+    file_t dir_port;
+    char path[MAX_PATH_LEN];
+  };
+
+  struct scan_frame stack[MAX_STACK_DEPTH];
+  int sp = 0;
+
+  for (int i = 0; safe_roots[i] != NULL; ++i)
+    {
+      file_t root_port = file_name_lookup (safe_roots[i], O_READ | O_EXEC, 0);
+      if (root_port == MACH_PORT_NULL)
+	{
+	  LOG_DEBUG ("Skipping inaccessible root: %s", safe_roots[i]);
+	  continue;
+	}
+
+      snprintf (stack[sp].path, MAX_PATH_LEN, "%s", safe_roots[i]);
+      stack[sp].dir_port = root_port;
+      sp++;
+    }
+
+  while (sp > 0)
+    {
+      sp--;
+      file_t dir_port = stack[sp].dir_port;
+      char *path = stack[sp].path;
+
+      char *data;
+      mach_msg_type_number_t datacnt;
+      int nentries;
+      error_t err =
+	dir_readdir (dir_port, &data, &datacnt, -1, -1, 0, &nentries);
+      if (err)
+	{
+	  mach_port_deallocate (mach_task_self (), dir_port);
+	  continue;
+	}
+
+      struct dirent *entry = (struct dirent *) data;
+      char *end = data + datacnt;
+
+      while ((char *) entry < end)
+	{
+	  if (entry->d_namlen > 0 &&
+	      strcmp (entry->d_name, ".") != 0 &&
+	      strcmp (entry->d_name, "..") != 0)
+	    {
+
+	      if (should_skip_directory (entry->d_name))
+		{
+		  entry =
+		    (struct dirent *) ((char *) entry + entry->d_reclen);
+		  continue;
+		}
+
+	      char full_path[MAX_PATH_LEN];
+	      int written;
+	      if (strcmp (path, "/") == 0)
+		written =
+		  snprintf (full_path, sizeof (full_path), "/%.*s",
+			    MAX_PATH_LEN - 2, entry->d_name);
+	      else
+		written =
+		  snprintf (full_path, sizeof (full_path), "%s/%.*s", path,
+			    MAX_PATH_LEN - (int) strlen (path) - 2,
+			    entry->d_name);
+	      if (written < 0 || written >= MAX_PATH_LEN)
+		{
+		  LOG_DEBUG ("Truncated full_path for inode %llu",
+			     entry->d_ino);
+		  full_path[MAX_PATH_LEN - 1] = '\0';
+		}
+
+	      inode_state_t *s = get_inode (entry->d_ino);
+	      if (s)
+		{
+		  if (s->resolved_path == NULL)
+		    s->resolved_path = strdup (full_path);
+
+		  if (s->name[0] == '\0')
+		    strncpy (s->name, entry->d_name, MAX_FIELD_LEN - 1);
+		}
+
+	      if ((entry->d_type == DT_DIR || entry->d_type == DT_UNKNOWN)
+		  && sp < MAX_STACK_DEPTH)
+		{
+		  file_t child_port =
+		    file_name_lookup_under (dir_port, entry->d_name,
+					    O_READ | O_EXEC, 0);
+		  if (child_port != MACH_PORT_NULL)
+		    {
+		      stack[sp].dir_port = child_port;
+		      snprintf (stack[sp].path, MAX_PATH_LEN, "%s",
+				full_path);
+		      sp++;
+		    }
+		}
+	    }
+
+	  entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+	}
+
+      vm_deallocate (mach_task_self (), (vm_address_t) data, datacnt);
+      mach_port_deallocate (mach_task_self (), dir_port);
+    }
+
+  LOG_DEBUG ("Sanity check our FS traversal.");
+  for (int i = 0; i < HASH_SIZE; ++i)
+    {
+      inode_state_t *cur = inode_hash[i];
+      while (cur)
+	{
+	  if (!cur->resolved_path || cur->resolved_path[0] == '\0' ||
+	      cur->name[0] == '\0')
+	    {
+	      LOG_DEBUG ("Invalid node ino %u has name '%s' and path '%s'",
+			 cur->ino, cur->name[0] ? cur->name : "<empty>",
+			 cur->resolved_path ? cur->resolved_path : "<null>");
+	    }
+	  inode_state_t *next = cur->next;
+	  cur = next;
+	}
+    }
+  LOG_DEBUG ("Sanity check finished.");
+
+  return 0;
 }

@@ -175,7 +175,10 @@ journal_replay_from_file (const char *path)
     journal_graph_add_event (list.entries[i]);
 
   journal_graph_print ();
-  LOG_DEBUG("Journaling reconstruct script:\n%s", journal_graph_emit_restore_script ());
+  
+  scan_directory_and_update_paths ();
+  LOG_DEBUG("Done filling things up. Ola la");
+  //LOG_DEBUG("Journaling reconstruct script:\n%s", journal_graph_emit_restore_script ());
   //TODO make the actual restore set of commands.
 CLEANUP:
   journal_graph_free ();

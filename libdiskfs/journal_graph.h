@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <libdiskfs/journal_format.h>
+#include <hurd/fs.h>
 
 /* The journal graph takes a non-owning pointer to a journal event.
    The caller retains ownership and is responsible for freeing it after replay. */
@@ -32,6 +33,8 @@ void journal_graph_add_event (const struct journal_payload_bin *ev);
 void journal_graph_print (void);
 char *
 journal_graph_emit_restore_script(void);
+error_t
+scan_directory_and_update_paths (void);
 void journal_graph_free (void);
 
 #endif  // JOURNAL_GRAPH_H
