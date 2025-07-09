@@ -31,16 +31,26 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <hurd/lookup.h>
-#include <libdiskfs/diskfs.h>
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <hurd/fs.h>
+#include <hurd/hurd_types.h>
+#include <hurd/fshelp.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #define HASH_SIZE 4096
 #define MAX_CHILDREN 32
 #define MAX_PATH_LEN 512
 #define PRINTED_SET_SIZE 8192
 #define MAX_STACK_DEPTH 8192
+#define RESTORE_PATH_PREFIX "/restore"
 
 // Extended action enum
 typedef enum
@@ -641,6 +651,155 @@ scan_directory_and_update_paths (void)
 	}
     }
   LOG_DEBUG ("Sanity check finished.");
+
+  return 0;
+}
+
+
+static error_t
+safe_path_lookup (const char *path, int flags, file_t * port)
+{
+  *port = file_name_lookup (path, flags, 0);
+  return (*port == MACH_PORT_NULL) ? ENOENT : 0;
+}
+
+static error_t
+mkdir_if_missing (const char *path, mode_t mode)
+{
+  struct stat st;
+  if (stat (path, &st) == 0 && S_ISDIR (st.st_mode))
+    return 0;
+  return mkdir (path, mode);
+}
+
+// Returns the full restore path: RESTORE_PATH + inode->resolved_path
+static error_t
+build_restore_path (const inode_state_t * inode, char *buf, size_t buflen)
+{
+  if (!inode || !inode->resolved_path || inode->resolved_path[0] != '/')
+    return EINVAL;
+
+  size_t prefix_len = strlen (RESTORE_PATH_PREFIX);
+  size_t path_len = strlen (inode->resolved_path);
+
+  if (prefix_len + path_len + 1 > buflen)
+    return ENAMETOOLONG;
+
+  snprintf (buf, buflen, "%s%s", RESTORE_PATH_PREFIX, inode->resolved_path);
+  return 0;
+}
+
+error_t
+apply_inode_state_hurd (const inode_state_t * inode)
+{
+  if (!inode || inode->name[0] == '\0')
+    return EINVAL;
+
+  char path[MAX_PATH_LEN];
+  error_t err = build_restore_path (inode, path, sizeof (path));
+  if (err)
+    return err;
+
+  // Skip if live file is newer than journal entry
+  struct stat st;
+  if (!inode->is_deleted && stat (path, &st) == 0)
+    {
+      time_t file_mtime = st.st_mtime;
+      if ((time_t) (inode->last_seen / 1000) < file_mtime)
+	{
+	  LOG_DEBUG ("Stoping file %s newer (fs mtime %ld > journal last_seen %llu)",
+		     path, (long) file_mtime, inode->last_seen / 1000);
+	  return 0;
+	}
+    }
+  // Handle deletions
+  if (inode->is_deleted)
+    {
+      unlink (path);		// safe, even if not found
+      return 0;
+    }
+
+  // Ensure parent dir exists
+  mkdir_if_missing (RESTORE_PATH_PREFIX, 0755);
+
+  // Get port to parent dir
+  file_t dir_port =
+    file_name_lookup (RESTORE_PATH_PREFIX, O_DIRECTORY | O_RDWR, 0);
+  if (dir_port == MACH_PORT_NULL)
+    return ENOENT;
+
+  file_t newfile = MACH_PORT_NULL;
+  if (S_ISDIR (inode->st_mode))
+    {
+      err = dir_mkdir (dir_port, inode->name, inode->st_mode);
+      if (!err)
+	{
+	  retry_type lookup_retry;
+	  char retry_name[1024] = { 0 };
+
+	  err = dir_lookup (dir_port,
+			    (char *) inode->name,
+			    O_RDWR,
+			    inode->st_mode,
+			    &lookup_retry, retry_name, &newfile);
+	}
+    }
+  else if (S_ISREG (inode->st_mode))
+    {
+      retry_type lookup_retry;
+      char retry_name[1024] = { 0 };
+
+      err = dir_lookup (dir_port,
+			(char *) inode->name,
+			O_CREAT | O_RDWR,
+			inode->st_mode, &lookup_retry, retry_name, &newfile);
+    }
+  else if (S_ISLNK (inode->st_mode))
+    {
+      // Create symlink
+      unlink (path);		// replace if already exists
+      err = symlink (inode->symlink_target, path);
+      goto skip_port;
+    }
+  else
+    {
+      LOG_DEBUG ("Unsupported inode type: %s", path);
+      goto skip_port;
+    }
+
+  if (err || newfile == MACH_PORT_NULL)
+    {
+      LOG_DEBUG ("Failed to create %s: %s.", path, strerror (err));
+      goto skip_port;
+    }
+
+  // Set mode
+  file_chmod (newfile, inode->st_mode);
+
+  // Set ownership
+  file_chown (newfile, inode->uid, inode->gid);
+
+  // Set timestamps
+  struct time_value atime = {.seconds = inode->mtime,.microseconds = 0 };
+  struct time_value mtime = {.seconds = inode->ctime,.microseconds = 0 };
+
+  file_utimes (newfile, atime, mtime);
+  // Truncate regular file
+  if (S_ISREG (inode->st_mode))
+    {
+      struct stat st;
+      err = io_stat (newfile, &st);
+      if (!err && st.st_size != inode->st_size)
+	{
+	  file_set_size (newfile, inode->st_size);
+	}
+    }
+
+skip_port:
+  if (newfile != MACH_PORT_NULL)
+    mach_port_deallocate (mach_task_self (), newfile);
+  if (dir_port != MACH_PORT_NULL)
+    mach_port_deallocate (mach_task_self (), dir_port);
 
   return 0;
 }
