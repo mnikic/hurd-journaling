@@ -191,6 +191,12 @@ journal_write_indexed (int fd, const char *data, size_t len,
   return true;
 }
 
+static bool
+journal_restore_ready (void)
+{
+  return journal_device_ready && journal_restore_device_ready;
+}
+
 bool
 journal_write_raw_sync (struct journal_payload_bin *payload)
 {
@@ -289,14 +295,6 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
       return false;
     }
 
-  static bool validation_done = false;
-  if (!validation_done)
-    {
-      //journal_replay_from_file ("/var/journal.img");
-      journal_replay_from_file (RAW_DEVICE_PATH);
-      validation_done = true;
-    }
-
   for (size_t i = 0; i < count; ++i)
     {
       if (entries[i].len != expected_len)
@@ -326,6 +324,18 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 
   LOG_DEBUG ("Toy journaling: async wrote %zu entries to raw disk.", count);
 
+  while (!journal_restore_ready ())
+    sleep (10);
+
+  static bool validation_done = false;
+  if (!validation_done)
+    {
+      //journal_replay_from_file ("/var/journal.img");
+      LOG_DEBUG
+	("Journaling: everything is ready for a journal replay. Let's go.");
+      journal_replay_from_file (RAW_DEVICE_PATH);
+      validation_done = true;
+    }
   pthread_mutex_unlock (&sync_write_lock);
   return true;
 }

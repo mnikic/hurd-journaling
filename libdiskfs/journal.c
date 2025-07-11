@@ -24,6 +24,7 @@
 #include <libdiskfs/journal.h>
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_globals.h>
+#include <libdiskfs/journal_replayer.h>
 #include <diskfs.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -46,6 +47,10 @@ static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
 static pthread_t journal_flusher_tid;
 static pthread_t monitor_tid;
+static pthread_t journal_restore_rediness_tid;
+
+volatile bool journal_enabled = true;
+volatile bool journal_restore_device_ready = false;
 
 static uint64_t
 current_time_ms (void)
@@ -102,6 +107,54 @@ journal_device_monitor_thread (void *arg)
   return NULL;
 }
 
+static void *
+journal_restore_rediness_thread (void *arg)
+{
+  (void) arg;
+  while (1)
+    {
+      static const char * test_file = "/mnt/.restorefs_ready";
+
+      int fd = open (test_file, O_RDONLY);
+      if (fd >= 0)
+	{
+
+          LOG_DEBUG ("rediness fd > 0");
+	  if (!journal_restore_device_ready)
+	    {
+	      fsync (fd);
+	      char test_buf[1];
+	      ssize_t n = pread (fd, test_buf, sizeof (test_buf), 0);
+
+	      if (n == 1)
+		{
+		 journal_restore_device_ready = true;
+		 LOG_DEBUG ("All checks worked. Restore device is ready!");
+		}
+	      else
+		{
+		  LOG_DEBUG ("pread returned %zd, restore device still not ready", n);
+		}
+	    }
+	}
+      else
+	{
+	  if (journal_restore_device_ready)
+	    {
+	      journal_restore_device_ready = false;
+	      LOG_DEBUG ("Journal restore device is not ready.");
+	    }
+	}
+
+      if (fd >= 0)
+	close (fd);
+
+      int sleep_ms = journal_restore_device_ready ? 1000 : 100;	// 1s if ready, 100ms if not
+      usleep (sleep_ms * 1000);
+    }
+  return NULL;
+}
+
 void
 journal_init (void)
 {
@@ -125,6 +178,16 @@ journal_init (void)
       LOG_DEBUG ("Started journal device monitor thread");
     }
 
+  if (pthread_create (&journal_restore_rediness_tid, NULL, journal_restore_rediness_thread, NULL)
+      != 0)
+    {
+      LOG_ERROR ("Failed to start journal restore device rediness monitor thread");
+    }
+  else
+    {
+      LOG_DEBUG ("Started journal restore device rediness monitor thread");
+    }
+
   LOG_DEBUG ("Toy journaling: done initializing.");
 }
 
@@ -144,6 +207,12 @@ flush_journal_to_file (void)
 }
 
 void
+journal_restore (void)
+{
+  // journal_replay_from_file (RAW_DEVICE_PATH);
+}
+
+void
 journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 		      journal_durability_t durability)
 {
@@ -155,7 +224,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
     }
   if (!info)
     {
-
       LOG_ERROR
 	("Toy journaling: NULL info pointer received in journal_log_metadata, skipping.");
       return;
@@ -164,7 +232,11 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   const struct stat *st = &((struct node *) node_ptr)->dn_stat;
   if (IGNORE_INODE (st->st_ino))
     return;
-
+  if (!journal_enabled)
+    {
+      LOG_DEBUG ("Journaling disabled.We just ignored this: %llu.", st->st_ino);
+      return;
+    }
   const char *action = info->action ? : "";
   const char *name = info->name ? : "";
   const char *extra = info->extra ? : "";
@@ -238,6 +310,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
+  LOG_DEBUG ("We just got this to update: %u.", entry->ino);
   if (journal_device_ready && durability == JOURNAL_DURABILITY_SYNC)
     {
       if (!journal_write_raw_sync (entry))

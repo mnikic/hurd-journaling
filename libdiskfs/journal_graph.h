@@ -27,6 +27,37 @@
 #include <libdiskfs/journal_format.h>
 #include <hurd/fs.h>
 
+#define MAX_CHILDREN 32
+
+typedef struct inode_state
+{
+  journal_ino_t ino;
+  journal_ino_t parent_ino;
+  char name[MAX_FIELD_LEN];
+  uint64_t last_tx;
+  uint64_t last_seen;
+  int link_count;
+  bool is_deleted;
+
+  uint64_t deleted_at_tx;
+  uint64_t deleted_at_timestamp;
+
+  uint32_t st_mode;
+  uint64_t st_size;
+  int64_t mtime;
+  int64_t ctime;
+  journal_uid_t uid;
+  journal_uid_t gid;
+
+  char symlink_target[MAX_FIELD_LEN];
+
+  journal_ino_t children[MAX_CHILDREN];
+  int num_children;
+  char *resolved_path;
+
+  struct inode_state *next;
+} inode_state_t;
+
 /* The journal graph takes a non-owning pointer to a journal event.
    The caller retains ownership and is responsible for freeing it after replay. */
 void journal_graph_add_event (const struct journal_payload_bin *ev);

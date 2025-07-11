@@ -23,28 +23,32 @@
 #include <stdlib.h>
 
 struct journal_arena *
-journal_arena_create(size_t size) {
-  struct journal_arena *a = malloc(sizeof(*a));
+journal_arena_create (size_t size)
+{
+  struct journal_arena *a = malloc (sizeof (*a));
   if (!a)
-	return NULL;
-  a->base = malloc(size);
-if (!a->base)
-	return NULL;
+    return NULL;
+  a->base = malloc (size);
+  if (!a->base)
+    return NULL;
   a->offset = 0;
   a->size = size;
   return a;
 }
 
 void *
-journal_arena_alloc(struct journal_arena *a, size_t sz) {
-  if (a->offset + sz > a->size) return NULL;
+journal_arena_alloc (struct journal_arena *a, size_t sz)
+{
+  if (a->offset + sz > a->size)
+    return NULL;
   void *ptr = a->base + a->offset;
-  a->offset += (sz + 7) & ~7; // Align to 8 bytes
+  a->offset += (sz + 7) & ~7;	// Align to 8 bytes
   return ptr;
 }
 
 void
-journal_arena_destroy(struct journal_arena *a) {
-  free(a->base);
-  free(a);
+journal_arena_destroy (struct journal_arena *a)
+{
+  free (a->base);
+  free (a);
 }

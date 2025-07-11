@@ -3,7 +3,6 @@
 
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_arena.h>
-#include <libdiskfs/journal_globals.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -24,16 +23,19 @@
 #define LOG_DEBUG(fmt, ...) do { } while (0)
 #endif
 
-#define RAW_DEVICE_PATH "/tmp/journal-pipe"
+#define RAW_DEVICE_PATH "/root/journal.img"
 #define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
 #define JOURNAL_ENTRY_SIZE 4096ULL
 #define JOURNAL_RESERVED_SPACE 4096ULL	/* Leave room for future header growth */
 #define JOURNAL_DATA_CAPACITY (RAW_DEVICE_SIZE - JOURNAL_RESERVED_SPACE)
 #define JOURNAL_NUM_ENTRIES (JOURNAL_DATA_CAPACITY / JOURNAL_ENTRY_SIZE)
+#define RESTORE_DEVICE_PREFIX "/mnt"
 
 // Global state
 extern volatile size_t dropped_events;
 extern volatile bool journal_device_ready;
+extern volatile bool journal_restore_device_ready;
+extern volatile bool journal_enabled;
 
 // Queue locks, needed for coordination.
 extern pthread_mutex_t queue_lock;

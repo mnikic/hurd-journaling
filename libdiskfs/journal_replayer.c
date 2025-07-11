@@ -25,6 +25,7 @@
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
+#include <libdiskfs/journal_inode_apply.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -86,6 +87,39 @@ sort_entries (struct journal_entries *list)
 	 PAYLOAD_PTR_SIZE, compare_entries_by_time_then_txid);
 }
 
+static void
+test_inode_replay (void)
+{
+  inode_state_t test = {
+    .ino = 123,
+    .parent_ino = 0,
+    .last_tx = 1,
+    .last_seen = (uint64_t) time (NULL) * 1000,
+    .link_count = 1,
+    .is_deleted = false,
+    .st_mode = S_IFREG | 0644,
+    .st_size = 12345,
+    .mtime = time (NULL),
+    .ctime = time (NULL),
+    .uid = 0,
+    .gid = 0,
+  };
+
+  LOG_DEBUG ("About to sprintf,");
+  snprintf (test.name, MAX_FIELD_LEN, "example.txt");
+  test.resolved_path = strdup ("/tmp/example.txt");	// this will be written to /restore/tmp/example.txt
+
+  LOG_DEBUG ("About to call apply state,");
+  error_t err = apply_inode_state_hurd (&test);
+  if (err)
+    LOG_DEBUG ("apply_inode_state_hurd failed: %s", strerror (err));
+  else
+    LOG_DEBUG ("apply_inode_state_hurd succeeded");
+
+  if (test.resolved_path)
+    free (test.resolved_path);
+}
+
 /*
  * journal_replay_from_file - Loads and validates the journal,
  *                            sorts events, and builds the state graph.
@@ -94,11 +128,15 @@ void
 journal_replay_from_file (const char *path)
 {
   LOG_DEBUG ("Toy journaling: Starting validation.");
+  journal_enabled = false;
+  test_inode_replay ();
+  LOG_DEBUG ("Done testing");
   int fd = open (path, O_RDONLY);
   if (fd < 0)
     {
       LOG_DEBUG ("journal_replay_and_validate: open failed: %s",
 		 strerror (errno));
+      journal_enabled = true;
       return;
     }
 
@@ -106,6 +144,7 @@ journal_replay_from_file (const char *path)
   if (!journal_read_and_validate_header (fd, &hdr))
     {
       close (fd);
+      journal_enabled = true;
       return;
     }
   uint64_t index = hdr.start_index;
@@ -116,6 +155,7 @@ journal_replay_from_file (const char *path)
   if (!arena)
     {
       LOG_ERROR ("Out of memory!");
+      journal_enabled = true;
       return;
     }
   struct journal_entries list = { 0 };
@@ -151,11 +191,6 @@ journal_replay_from_file (const char *path)
 	  all_good = false;
 	  break;
 	}
-      LOG_DEBUG ("index: %" PRIu64 ", tx_id: %" PRIu64 ", timestamp: %"
-		 PRIu64 ", ino: %u, action: %s, parent: %u", index,
-		 payload->tx_id, payload->timestamp_ms, payload->ino,
-		 payload->action, payload->parent_ino);
-
       if (!add_event_to_list (&list, payload))
 	{
 	  all_good = false;
@@ -174,14 +209,17 @@ journal_replay_from_file (const char *path)
   for (int i = 0; i < list.count; ++i)
     journal_graph_add_event (list.entries[i]);
 
-  journal_graph_print ();
-  
+  //journal_graph_print ();
+
   scan_directory_and_update_paths ();
-  LOG_DEBUG("Done filling things up. Ola la");
+  LOG_DEBUG ("Done filling things up. Ola la");
+  LOG_DEBUG ("Done testing.");
+
   //LOG_DEBUG("Journaling reconstruct script:\n%s", journal_graph_emit_restore_script ());
   //TODO make the actual restore set of commands.
 CLEANUP:
   journal_graph_free ();
   journal_arena_destroy (arena);
   close (fd);
+  journal_enabled = true;
 }

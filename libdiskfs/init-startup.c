@@ -27,6 +27,7 @@
 #include <hurd/fsys.h>
 #include <hurd/paths.h>
 #include <hurd/startup.h>
+#include <libdiskfs/journal.h>
 
 #include "startup_S.h"
 
@@ -124,7 +125,8 @@ diskfs_startup_diskfs (mach_port_t fs_bootstrap, int flags)
 
       /* We are the bootstrap filesystem; do special boot-time setup.  */
       diskfs_start_bootstrap ();
-
+      
+      journal_restore();
       /* If we have a bootstrap port we must call fsys_startup */
       task_get_bootstrap_port (mach_task_self (), &bootstrap);
       if (bootstrap != MACH_PORT_NULL)

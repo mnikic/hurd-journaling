@@ -56,6 +56,7 @@ void journal_init (void);
 void journal_shutdown (void);
 void flush_journal_to_file (void);
 void journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,  journal_durability_t  durability);
+void journal_restore (void);
 
 #endif /* JOURNAL_H */
 
