@@ -24,6 +24,7 @@
 #include <hurd/fsys.h>
 #include <stdio.h>
 #include <maptime.h>
+#include <write.h>
 
 /* For safe inlining of diskfs_node_disknode and
    diskfs_disknode_node.  */
@@ -95,7 +96,6 @@ diskfs_init_diskfs (void)
   diskfs_shutdown_notification_class = ports_create_class (0, 0);
 
   diskfs_port_bucket = ports_create_bucket ();
-
   _hurd_port_init (&_diskfs_exec_portcell, MACH_PORT_NULL);
 
   return 0;
