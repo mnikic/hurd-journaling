@@ -7,18 +7,18 @@
 #include <unistd.h>
 
 #define MAX_PATH_LEN  1024
-
 static void
-make_dir (struct node *root, const char *dirname)
+make_dir_safe (struct node *root, const char *dirname)
 {
   error_t err;
-  struct node *dir_node = NULL;
+  struct node *new_node = NULL;
   struct protid *cred = NULL;
   struct peropen *po = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
-  fprintf (stderr, "[DEBUG] test_early_boot_write: start\n");
 
-  err = diskfs_make_peropen (root, O_WRITE, 0, &po);
+  fprintf (stderr, "[DEBUG] make_dir: start\n");
+
+  err = diskfs_make_peropen (root, O_READ | O_EXEC | O_WRITE, 0, &po);
   if (err)
     {
       fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
@@ -35,52 +35,131 @@ make_dir (struct node *root, const char *dirname)
 
   pthread_mutex_lock (&root->lock);
 
-  /* Follow the same pattern as diskfs_S_dir_mkdir */
-  err = diskfs_lookup (root, dirname, CREATE, 0, ds, cred);
-  if (err == EAGAIN)
-    err = EEXIST;
-  if (!err)
-    err = EEXIST;
-
-  if (err != ENOENT)
+  // STEP 1: Try LOOKUP to see if it already exists
+  err = diskfs_lookup (root, dirname, LOOKUP, &new_node, NULL, cred);
+  if (err == 0 && new_node != NULL)
     {
-      if (err == EEXIST)
-	fprintf (stderr, "[DEBUG] Directory already exists\n");
-      else
-	fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
-
-      /* Unlock first, then clean up dirstat */
+      fprintf (stderr, "[DEBUG] Directory already exists\n");
+      pthread_mutex_unlock (&new_node->lock);
+      fprintf (stderr, "[DEBUG] Unlocked new node %llu\n",
+	       new_node->dn_stat.st_ino);
+      diskfs_nput (new_node);
+      fprintf (stderr, "[DEBUG] After nput %llu\n", new_node->dn_stat.st_ino);
       pthread_mutex_unlock (&root->lock);
-      diskfs_drop_dirstat (root, ds);
-      ports_port_deref (cred);
-      ports_port_deref (po);
-      return;
+      fprintf (stderr, "[DEBUG] After unlick root %llu\n",
+	       root->dn_stat.st_ino);
+      goto cleanup;
+    }
+  else if (err != ENOENT)
+    {
+      fprintf (stderr, "[ERROR] lookup(LOOKUP) failed: %d\n", err);
+      pthread_mutex_unlock (&root->lock);
+      goto cleanup;
     }
 
-  fprintf (stderr, "[DEBUG] Directory not found, creating...\n");
-  mode_t mode = (S_IFDIR | 0755) & ~(S_ISPARE | S_IFMT | S_ITRANS);
-  mode |= S_IFDIR;
+  // STEP 2: Use CREATE with dirstat to set up for create_node
+  err = diskfs_lookup (root, dirname, CREATE, NULL, ds, cred);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      pthread_mutex_unlock (&root->lock);
+      diskfs_drop_dirstat (root, ds);
+      goto cleanup;
+    }
 
-  err = diskfs_create_node (root, dirname, mode, &dir_node, cred, ds);
+  // STEP 3: Actually create the node
+  mode_t mode = S_IFDIR | 0755;
+  err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
   if (err)
     {
       fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
-      diskfs_drop_dirstat (root, ds);
       pthread_mutex_unlock (&root->lock);
+      diskfs_drop_dirstat (root, ds);
+      goto cleanup;
+    }
+
+  fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
+  diskfs_node_update (new_node, 1);
+  pthread_mutex_unlock (&new_node->lock);
+  diskfs_nput (new_node);
+
+  pthread_mutex_unlock (&root->lock);
+  diskfs_drop_dirstat (root, ds);
+
+cleanup:
+  if (cred)
+    {
       ports_port_deref (cred);
+      fprintf (stderr, "[DEBUG] cleaned up cred.\n");
+    }
+  fprintf (stderr, "[DEBUG] make_dir: success\n");
+}
+
+static void
+make_dir (struct node *root, const char *dirname)
+{
+  error_t err;
+  struct node *new_node = NULL;
+  struct protid *cred = NULL;
+  struct peropen *po = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  fprintf (stderr, "[DEBUG] make_dir: start\n");
+
+  err = diskfs_make_peropen (root, O_READ | O_EXEC | O_WRITE, 0, &po);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
+      return;
+    }
+
+  err = diskfs_create_protid (po, 0, &cred);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] create_protid failed: %d\n", err);
       ports_port_deref (po);
       return;
     }
 
+  pthread_mutex_lock (&root->lock);
+
+  err = diskfs_lookup (root, dirname, CREATE, NULL, ds, cred);
+  if (err == EAGAIN || err == 0)
+    {
+      fprintf (stderr, "[DEBUG] Directory already exists\n");
+      pthread_mutex_unlock (&root->lock);
+      diskfs_drop_dirstat (root, ds);
+      goto cleanup;
+    }
+  else if (err != ENOENT)
+    {
+      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      pthread_mutex_unlock (&root->lock);
+      diskfs_drop_dirstat (root, ds);
+      goto cleanup;
+    }
+
+  mode_t mode = S_IFDIR | 0755;
+  err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
+      pthread_mutex_unlock (&root->lock);
+      diskfs_drop_dirstat (root, ds);
+      goto cleanup;
+    }
+
   fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
-  diskfs_node_update (dir_node, 1);
-  pthread_mutex_unlock (&dir_node->lock);
-  diskfs_nput (dir_node);
-  diskfs_drop_dirstat (root, ds);
+  diskfs_node_update (new_node, 1);
+  pthread_mutex_unlock (&new_node->lock);
+  diskfs_nput (new_node);
+
   pthread_mutex_unlock (&root->lock);
+  diskfs_drop_dirstat (root, ds);
+
+cleanup:
   ports_port_deref (cred);
-  ports_port_deref (po);
-  fprintf (stderr, "[DEBUG] test_early_boot_write: success\n");
+  fprintf (stderr, "[DEBUG] make_dir: success\n");
 }
 
 static struct node *
@@ -124,16 +203,24 @@ mkdir_p (struct node *root, const char *path)
 static void
 test (void)
 {
+  fprintf (stderr, " Entered test \n");
+
   struct node *root = diskfs_root_node;
-  make_dir (root, "full-taker86");
-  make_dir (root, "full-taker85");
+  diskfs_nref (root);
+
+  make_dir (root, "hey");
+  make_dir (root, "hey");
+  make_dir (root, "hey2");
+  make_dir (root, "hey2");
+  make_dir (root, "hey3");
+  make_dir (root, "hey");
   diskfs_nput (root);
 }
 
 static void *
 delayed_test_thread (void *arg)
 {
-  sleep (10);			// delay to ensure system is writable and stable
+  sleep (30);			// delay to ensure system is writable and stable
   test ();
   return NULL;
 }
@@ -152,4 +239,3 @@ start_test_thread (void)
   if (err)
     fprintf (stderr, "[ERROR] Failed to create test thread: %d\n", err);
 }
-
