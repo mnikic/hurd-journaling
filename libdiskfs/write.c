@@ -33,6 +33,21 @@
       }                                                  \
     err;                                                 \
   })
+
+/**
+ * Convert milliseconds since epoch into struct timespec.
+ *
+ * @param ms   Milliseconds since epoch.
+ * @param out  Pointer to timespec to fill.
+ */
+static void
+timespec_from_ms(uint64_t ms, struct timespec *out)
+{
+  out->tv_sec = ms / 1000;
+  out->tv_nsec = (ms % 1000) * 1000000;
+}
+
+
 /**
  * Internal utimes that updates atime and mtime on a node without RPC or user checks.
  *
