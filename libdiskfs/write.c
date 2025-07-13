@@ -32,6 +32,12 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
   return 0;
 }
 
+/**
+ * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
+ * If the directory already exists, the function exits early without error.
+ *
+ * This function is intended for internal use during journal replay only.
+ */
 static void
 make_dir (struct node *root, const char *dirname, struct protid *cred)
 {
@@ -46,15 +52,15 @@ make_dir (struct node *root, const char *dirname, struct protid *cred)
   if (err == EAGAIN || err == 0)
     {
       fprintf (stderr, "[DEBUG] Directory already exists\n");
-      pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
+      pthread_mutex_unlock (&root->lock);
       return;
     }
   else if (err != ENOENT)
     {
       fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
-      pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
+      pthread_mutex_unlock (&root->lock);
       return;
     }
 
@@ -63,24 +69,27 @@ make_dir (struct node *root, const char *dirname, struct protid *cred)
   if (err)
     {
       fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
-      pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
+      pthread_mutex_unlock (&root->lock);
       return;
     }
 
   fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
   diskfs_node_update (new_node, 1);
-  pthread_mutex_unlock (&new_node->lock);
-  diskfs_nput (new_node);
+  diskfs_nput (new_node);	// unlocks internally
 
-  pthread_mutex_unlock (&root->lock);
   diskfs_drop_dirstat (root, ds);
+  pthread_mutex_unlock (&root->lock);
 }
 
 static error_t
-mkdir_p (struct node *root, const char *path, struct protid *cred, struct node **out_node)
+mkdir_p (struct node *root, const char *path, struct protid *cred,
+	 struct node **out_node)
 {
-  fprintf (stderr, "[DEBUG] makedir_p: start\n");
+  fprintf (stderr, "[DEBUG] mkdir_p: start\n");
+
+  if (strlen (path) >= MAX_PATH_LEN)
+    return ENAMETOOLONG;
 
   char path_copy[MAX_PATH_LEN];
   strncpy (path_copy, path, MAX_PATH_LEN);
@@ -88,10 +97,12 @@ mkdir_p (struct node *root, const char *path, struct protid *cred, struct node *
 
   char *token = strtok (path_copy, "/");
   struct node *prev_node = NULL;
+
   while (token != NULL)
     {
       fprintf (stderr, "[DEBUG] Token: %s\n", token);
       make_dir (root, token, cred);
+
       struct node *next_node = NULL;
       error_t err = diskfs_lookup (root, token, LOOKUP, &next_node, 0, cred);
       if (err || !next_node)
@@ -101,21 +112,18 @@ mkdir_p (struct node *root, const char *path, struct protid *cred, struct node *
 		   token);
 	  if (prev_node)
 	    diskfs_nput (prev_node);
-
-	  ports_port_deref (cred);
-	  return err ?: EIO;
+	  return err ? : EIO;
 	}
 
-      fprintf (stderr, "[DEBUG] Found a node for token: %s. Gonna try unlock.\n",
-	       token);
       pthread_mutex_unlock (&next_node->lock);
-      fprintf (stderr, "[DEBUG] Unlocked it. token:  %s\n", token);
       if (prev_node)
 	diskfs_nput (prev_node);
+
       prev_node = root;
       root = next_node;
       token = strtok (NULL, "/");
     }
+
   *out_node = root;
   return 0;
 }
@@ -123,24 +131,32 @@ mkdir_p (struct node *root, const char *path, struct protid *cred, struct node *
 static void
 test (void)
 {
-  fprintf (stderr, " Entered test \n");
+  fprintf (stderr, "[INFO] Entered test\n");
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
+
   error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
   if (err)
     {
-      fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
+      fprintf (stderr, "[ERROR] create_creds failed: %d\n", err);
+      diskfs_nput (root);
       return;
     }
+
   struct node *child = NULL;
-  err = mkdir_p (root, "hey/there/me/too", cred, &child);
-  if (!err && child) 
+  err = mkdir_p (root, "hey/there/they/too", cred, &child);
+  if (!err && child)
     {
-  	fprintf (stderr, "[INFO] Final node ino is %llu\n", child->dn_stat.st_ino);
-        diskfs_nput (child);
-    } else
-  	fprintf (stderr, "[ERROR] Failed to get the final node.");
+      fprintf (stderr, "[INFO] Final node ino is %llu\n",
+	       child->dn_stat.st_ino);
+      diskfs_nput (child);
+    }
+  else
+    {
+      fprintf (stderr, "[ERROR] Failed to create final node.\n");
+    }
+
   diskfs_nput (root);
   ports_port_deref (cred);
 }
