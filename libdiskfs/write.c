@@ -35,6 +35,45 @@
   })
 
 /**
+ * Internal truncate that sets the file size of a node.
+ * 
+ * The node must be locked before calling. No permission checks are performed.
+ */
+static error_t
+truncate_local(struct node *np, off_t new_size)
+{
+  return CHANGE_NODE_FIELD(np, {
+    if (new_size < 0)
+      {
+        err = EINVAL;
+      }
+    else if (new_size < np->dn_stat.st_size)
+      {
+        err = diskfs_truncate(np, new_size);
+        if (!err && np->filemod_reqs)
+          diskfs_notice_filechange(np, FILE_CHANGED_TRUNCATE, 0, new_size);
+      }
+    else if (new_size > np->dn_stat.st_size)
+      {
+        err = diskfs_grow(np, new_size, NULL);
+        if (!err)
+          {
+            np->dn_stat.st_size = new_size;
+            np->dn_set_ctime = 1;
+            np->dn_set_mtime = 1;
+            if (np->filemod_reqs)
+              diskfs_notice_filechange(np, FILE_CHANGED_EXTEND, 0, new_size);
+          }
+      }
+    else
+      {
+        err = 0; // no-op
+      }
+  });
+}
+
+
+/**
  * Convert milliseconds since epoch into struct timespec.
  *
  * @param ms   Milliseconds since epoch.
