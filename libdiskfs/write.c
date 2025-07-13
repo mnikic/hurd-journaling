@@ -10,6 +10,7 @@
 /**
  * Create reusable diskfs protid credentials for a given node.
  * Caller must ports_port_deref(cred) when done.
+ * Flags are passed to diskfs_make_peropen.
  */
 static error_t
 diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
@@ -47,14 +48,14 @@ make_dir (struct node *root, const char *dirname, struct protid *cred)
       fprintf (stderr, "[DEBUG] Directory already exists\n");
       pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
-      goto cleanup;
+      return;
     }
   else if (err != ENOENT)
     {
       fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
       pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
-      goto cleanup;
+      return;
     }
 
   mode_t mode = S_IFDIR | 0755;
@@ -64,7 +65,7 @@ make_dir (struct node *root, const char *dirname, struct protid *cred)
       fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
       pthread_mutex_unlock (&root->lock);
       diskfs_drop_dirstat (root, ds);
-      goto cleanup;
+      return;
     }
 
   fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
@@ -74,35 +75,25 @@ make_dir (struct node *root, const char *dirname, struct protid *cred)
 
   pthread_mutex_unlock (&root->lock);
   diskfs_drop_dirstat (root, ds);
-
-cleanup:
-  fprintf (stderr, "[DEBUG] make_dir: success\n");
 }
 
-static struct node *
-mkdir_p (struct node *root, const char *path, struct protid *cred)
+static error_t
+mkdir_p (struct node *root, const char *path, struct protid *cred, struct node **out_node)
 {
-
-  error_t err;
-
   fprintf (stderr, "[DEBUG] makedir_p: start\n");
 
   char path_copy[MAX_PATH_LEN];
   strncpy (path_copy, path, MAX_PATH_LEN);
-
   path_copy[MAX_PATH_LEN - 1] = '\0';
 
   char *token = strtok (path_copy, "/");
   struct node *prev_node = NULL;
   while (token != NULL)
     {
-
       fprintf (stderr, "[DEBUG] Token: %s\n", token);
       make_dir (root, token, cred);
-
       struct node *next_node = NULL;
       error_t err = diskfs_lookup (root, token, LOOKUP, &next_node, 0, cred);
-      fprintf (stderr, "[DEBUG] After lookup for token  %s\n", token);
       if (err || !next_node)
 	{
 	  fprintf (stderr,
@@ -112,22 +103,21 @@ mkdir_p (struct node *root, const char *path, struct protid *cred)
 	    diskfs_nput (prev_node);
 
 	  ports_port_deref (cred);
-	  return NULL;
+	  return err ?: EIO;
 	}
 
-      fprintf (stderr, "[DEBUG] Found a node. Gonna try unlock.  %s\n",
+      fprintf (stderr, "[DEBUG] Found a node for token: %s. Gonna try unlock.\n",
 	       token);
       pthread_mutex_unlock (&next_node->lock);
-      fprintf (stderr, "[DEBUG] Unlocked it.  %s\n", token);
+      fprintf (stderr, "[DEBUG] Unlocked it. token:  %s\n", token);
       if (prev_node)
 	diskfs_nput (prev_node);
       prev_node = root;
       root = next_node;
-
       token = strtok (NULL, "/");
     }
-
-  return root;
+  *out_node = root;
+  return 0;
 }
 
 static void
@@ -143,8 +133,14 @@ test (void)
       fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
       return;
     }
-  mkdir_p (root, "hey/there/me/too", cred);
-
+  struct node *child = NULL;
+  err = mkdir_p (root, "hey/there/me/too", cred, &child);
+  if (!err && child) 
+    {
+  	fprintf (stderr, "[INFO] Final node ino is %llu\n", child->dn_stat.st_ino);
+        diskfs_nput (child);
+    } else
+  	fprintf (stderr, "[ERROR] Failed to get the final node.");
   diskfs_nput (root);
   ports_port_deref (cred);
 }
