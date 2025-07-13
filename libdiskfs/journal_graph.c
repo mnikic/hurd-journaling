@@ -186,6 +186,28 @@ action_from_string (const char *action_str)
 
 typedef struct journal_payload_bin journal_event_t;
 
+static void
+safe_strncpy (char *dst, const char *src, size_t size)
+{
+  if (size == 0)
+    return;
+
+  strncpy (dst, src, size - 1);
+  dst[size - 1] = '\0';
+}
+
+static void
+maybe_set_name (inode_state_t * ino, const struct journal_payload_bin *ev)
+{
+  if (strlen (ino->name) == 0)
+    {
+      if (strlen (ev->name) > 0)
+	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
+      else if (strlen (ev->new_name) > 0)
+	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
+    }
+}
+
 void
 journal_graph_add_event (const struct journal_payload_bin *ev)
 {
@@ -200,8 +222,9 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
     case ACTION_MKFILE:
       {
 	ino->parent_ino = ev->parent_ino;
-	strncpy (ino->name, ev->name, sizeof (ino->name));
+	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
 	ino->link_count = 1;
+	ino->link_count_reliable = true;
 	ino->is_deleted = false;
 	inode_state_t *parent = get_inode (ev->parent_ino);
 	add_child (parent, ev->ino);
@@ -210,10 +233,11 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
     case ACTION_SYMLINK:
       {
 	ino->parent_ino = ev->parent_ino;
-	strncpy (ino->name, ev->name, sizeof (ino->name));
-	strncpy (ino->symlink_target, ev->target,
-		 sizeof (ino->symlink_target));
+	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
+	safe_strncpy (ino->symlink_target, ev->target,
+		      sizeof (ino->symlink_target));
 	ino->link_count = 1;
+	ino->link_count_reliable = true;
 	ino->is_deleted = false;
 	inode_state_t *parent = get_inode (ev->parent_ino);
 	add_child (parent, ev->ino);
@@ -221,19 +245,52 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       }
     case ACTION_LINK:
       ino->link_count++;
+      ino->ctime = ev->timestamp_ms;
+      ino->has_ctime = true;
       break;
     case ACTION_UNLINK:
+      {
+	inode_state_t *parent = get_inode (ev->parent_ino);
+	remove_child (parent, ev->ino);
+	ino->link_count--;
+	ino->ctime = ev->timestamp_ms;
+	ino->has_ctime = true;
+	if (ino->link_count <= 0)
+	  {
+	    // We only trust link_count-based deletion if we saw the inode created.
+	    if (ino->link_count_reliable)
+	      {
+		ino->is_deleted = true;
+		ino->num_children = 0;
+		ino->deleted_at_tx = ev->tx_id;
+		ino->deleted_at_timestamp = ev->timestamp_ms;
+	      }
+	  }
+	break;
+      }
     case ACTION_RMDIR:
       {
 	inode_state_t *parent = get_inode (ev->parent_ino);
 	remove_child (parent, ev->ino);
-	if (--ino->link_count <= 0)
+	// RMDIR confirms the directory was empty at this point.
+	// We can safely mark it as deleted regardless of child or link count state.
+	ino->is_deleted = true;
+	ino->deleted_at_tx = ev->tx_id;
+	ino->deleted_at_timestamp = ev->timestamp_ms;
+
+	// Additionally, mark all children as deleted — they must have been removed
+	// even if we never saw their UNLINK events.
+	for (int i = 0; i < ino->num_children; i++)
 	  {
-	    ino->is_deleted = true;
-	    ino->num_children = 0;
-	    ino->deleted_at_tx = ev->tx_id;
-	    ino->deleted_at_timestamp = ev->timestamp_ms;
+	    inode_state_t *child = get_inode (ino->children[i]);
+	    if (!child->is_deleted)
+	      {
+		child->is_deleted = true;
+		child->deleted_at_tx = ev->tx_id;
+		child->deleted_at_timestamp = ev->timestamp_ms;
+	      }
 	  }
+	ino->num_children = 0;
 	break;
       }
     case ACTION_RENAME:
@@ -243,36 +300,54 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
 	remove_child (old_parent, ev->ino);
 	add_child (new_parent, ev->ino);
 	ino->parent_ino = ev->dst_parent_ino;
-	strncpy (ino->name, ev->new_name, sizeof (ino->name));
+	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
+	ino->ctime = ev->timestamp_ms;
+	ino->has_ctime = true;
 	break;
       }
     case ACTION_UTIME:
       ino->mtime = ev->timestamp_ms;
+      ino->has_mtime = true;
       break;
     case ACTION_CHMOD:
       if (ev->has_mode)
-	ino->st_mode = ev->st_mode;
+	{
+	  ino->st_mode = ev->st_mode;
+	  ino->has_st_mode = true;
+	  ino->ctime = ev->timestamp_ms;
+	  ino->has_ctime = true;
+	}
       break;
     case ACTION_CHOWN:
       if (ev->has_uid)
-	ino->uid = ev->uid;
+	{
+	  ino->uid = ev->uid;
+	  ino->has_uid = true;
+	  ino->ctime = ev->timestamp_ms;
+	  ino->has_ctime = true;
+	}
       if (ev->has_gid)
-	ino->gid = ev->gid;
+	{
+	  ino->gid = ev->gid;
+	  ino->has_gid = true;
+	  ino->ctime = ev->timestamp_ms;
+	  ino->has_ctime = true;
+	}
       break;
     case ACTION_TRUNCATE:
       if (ev->has_size)
-	ino->st_size = ev->st_size;
+	{
+	  ino->st_size = ev->st_size;
+	  ino->has_st_size = true;
+	  ino->ctime = ev->timestamp_ms;
+	  ino->has_ctime = true;
+	}
       break;
     default:
       break;
     }
-  if (strlen (ino->name) == 0)
-    {
-      if (strlen (ev->name) > 0)
-	strncpy (ino->name, ev->name, sizeof (ino->name));
-      else if (strlen (ev->new_name) > 0)
-	strncpy (ino->name, ev->new_name, sizeof (ino->name));
-    }
+
+  maybe_set_name (ino, ev);
 }
 
 static void
@@ -633,4 +708,3 @@ safe_path_lookup (const char *path, int flags, file_t * port)
   *port = file_name_lookup (path, flags, 0);
   return (*port == MACH_PORT_NULL) ? ENOENT : 0;
 }
-
