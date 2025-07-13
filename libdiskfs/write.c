@@ -7,6 +7,68 @@
 #include <unistd.h>
 
 #define MAX_PATH_LEN  1024
+
+/**
+ * Change a node field safely: locks the node, evaluates OPERATION, optionally
+ * calls diskfs_node_update if synchronous mode is enabled, and unlocks.
+ *
+ * Usage:
+ *   CHANGE_NODE_FIELD(np, {
+ *     np->dn_stat.st_mode = new_mode;
+ *     np->dn_set_ctime = 1;
+ *   });
+ */
+#define CHANGE_NODE_FIELD(NODE, OPERATION)               \
+  ({                                                     \
+    error_t err = 0;                                     \
+    if (!(NODE))                                         \
+      err = EINVAL;                                      \
+    else                                                 \
+      {                                                  \
+        pthread_mutex_lock(&(NODE)->lock);               \
+        (OPERATION);                                     \
+        if (diskfs_synchronous)                          \
+          diskfs_node_update((NODE), 1);                 \
+        pthread_mutex_unlock(&(NODE)->lock);             \
+      }                                                  \
+    err;                                                 \
+  })
+/**
+ * Internal utimes that updates atime and mtime on a node without RPC or user checks.
+ *
+ * If tv_nsec == UTIME_NOW, updates are taken from current time.
+ * If tv_nsec == UTIME_OMIT, no update is performed.
+ * Otherwise, time is set explicitly.
+ */
+static error_t
+utimes_local(struct node *np, struct timespec atime, struct timespec mtime)
+{
+  return CHANGE_NODE_FIELD(np, {
+    diskfs_set_node_times(np);  // Flush pending updates
+
+    if (atime.tv_nsec == UTIME_NOW)
+      np->dn_set_atime = 1;
+    else if (atime.tv_nsec != UTIME_OMIT)
+      {
+        np->dn_stat.st_atim = atime;
+        np->dn_set_atime = 0;
+      }
+
+    if (mtime.tv_nsec == UTIME_NOW)
+      np->dn_set_mtime = 1;
+    else if (mtime.tv_nsec != UTIME_OMIT)
+      {
+        np->dn_stat.st_mtim = mtime;
+        np->dn_set_mtime = 0;
+      }
+
+    np->dn_set_ctime = 1;
+
+    if (np->filemod_reqs)
+      diskfs_notice_filechange(np, FILE_CHANGED_META, 0, 0);
+  });
+}
+
 /**
  * Create reusable diskfs protid credentials for a given node.
  * Caller must ports_port_deref(cred) when done.
@@ -287,6 +349,68 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
   *out_node = root;
   return 0;
 }
+
+/**
+ * Internal chmod that directly modifies the mode bits of a node.
+ *
+ * The node must be locked before calling. No permission checks are performed.
+ */
+static error_t
+chmod_local(struct node *np, mode_t new_mode)
+{
+  return CHANGE_NODE_FIELD(np, {
+    new_mode &= ~(S_IFMT | S_ISPARE | S_ITRANS);
+    new_mode |= (np->dn_stat.st_mode & (S_IFMT | S_ISPARE | S_ITRANS));
+
+    err = diskfs_validate_mode_change(np, new_mode);
+    if (!err)
+      {
+        np->dn_stat.st_mode = new_mode;
+        np->dn_set_ctime = 1;
+
+        if (np->filemod_reqs)
+          diskfs_notice_filechange(np, FILE_CHANGED_META, 0, 0);
+      }
+  });
+}
+
+/**
+ * Internal chown that sets UID and/or GID on a node.
+ *
+ * Pass -1 for uid or gid to leave it unchanged.
+ */
+static error_t
+chown_local(struct node *np, uid_t uid, gid_t gid)
+{
+  return CHANGE_NODE_FIELD(np, {
+    if (uid != (uid_t)-1)
+      {
+        err = diskfs_validate_owner_change(np, uid);
+        if (!err)
+          {
+            np->dn_stat.st_uid = uid;
+            if (np->author_tracks_uid)
+              np->dn_stat.st_author = uid;
+          }
+      }
+
+    if (!err && gid != (gid_t)-1)
+      {
+        err = diskfs_validate_group_change(np, gid);
+        if (!err)
+          np->dn_stat.st_gid = gid;
+      }
+
+    if (!err)
+      {
+        np->dn_set_ctime = 1;
+
+        if (np->filemod_reqs)
+          diskfs_notice_filechange(np, FILE_CHANGED_META, 0, 0);
+      }
+  });
+}
+
 
 static void
 test (void)
