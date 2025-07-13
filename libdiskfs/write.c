@@ -34,54 +34,62 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
 
 /**
  * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
- * If the directory already exists, the function exits early without error.
  *
- * This function is intended for internal use during journal replay only.
+ * `root` must be UNLOCKED on entry.
+ * If the directory already exists, the existing node is returned locked via `*out`.
+ * If the directory is created, the new node is returned locked via `*out`.
+ *
+ * Caller must unlock and `diskfs_nput(*out)` after use.
  */
-static void
-make_dir (struct node *root, const char *dirname, struct protid *cred)
+static error_t
+make_dir(struct node *root, const char *dirname, struct protid *cred, struct node **out)
 {
-  error_t err;
+  error_t err = 0;
   struct node *new_node = NULL;
-  struct dirstat *ds = alloca (diskfs_dirstat_size);
+  struct dirstat *ds = alloca(diskfs_dirstat_size);
 
-  fprintf (stderr, "[DEBUG] make_dir: start\n");
-  pthread_mutex_lock (&root->lock);
+  fprintf(stderr, "[DEBUG] make_dir: start\n");
+  pthread_mutex_lock(&root->lock);
 
-  err = diskfs_lookup (root, dirname, CREATE, NULL, ds, cred);
+  err = diskfs_lookup(root, dirname, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
     {
-      fprintf (stderr, "[DEBUG] Directory already exists\n");
-      diskfs_drop_dirstat (root, ds);
-      pthread_mutex_unlock (&root->lock);
-      return;
+      fprintf(stderr, "[DEBUG] Directory already exists\n");
+      *out = new_node;
+      err = 0;
+      goto cleanup;
     }
   else if (err != ENOENT)
     {
-      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
-      diskfs_drop_dirstat (root, ds);
-      pthread_mutex_unlock (&root->lock);
-      return;
+      fprintf(stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      goto cleanup;
     }
 
   mode_t mode = S_IFDIR | 0755;
-  err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
+  err = diskfs_create_node(root, dirname, mode, &new_node, cred, ds);
   if (err)
     {
-      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
-      diskfs_drop_dirstat (root, ds);
-      pthread_mutex_unlock (&root->lock);
-      return;
+      fprintf(stderr, "[ERROR] create_node failed: %d\n", err);
+      goto cleanup;
     }
 
-  fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
-  diskfs_node_update (new_node, 1);
-  diskfs_nput (new_node);	// unlocks internally
+  fprintf(stderr, "[DEBUG] Directory '%s' created\n", dirname);
+  diskfs_node_update(new_node, 1);
+  *out = new_node;
 
-  diskfs_drop_dirstat (root, ds);
-  pthread_mutex_unlock (&root->lock);
+cleanup:
+  diskfs_drop_dirstat(root, ds);
+  pthread_mutex_unlock(&root->lock);
+  return err;
 }
 
+/**
+ * Recursively create all intermediate directories in a path relative to `root`.
+ * Uses Hurd diskfs APIs to create directories one component at a time.
+ *
+ * Returns a locked node corresponding to the final path component via `*out_node`.
+ * Caller must unlock and `diskfs_nput(*out_node)` after use.
+ */
 static error_t
 mkdir_p (struct node *root, const char *path, struct protid *cred,
 	 struct node **out_node)
@@ -101,18 +109,16 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
   while (token != NULL)
     {
       fprintf (stderr, "[DEBUG] Token: %s\n", token);
-      make_dir (root, token, cred);
-
       struct node *next_node = NULL;
-      error_t err = diskfs_lookup (root, token, LOOKUP, &next_node, 0, cred);
-      if (err || !next_node)
+      error_t err = make_dir (root, token, cred, &next_node);
+      if (err)
 	{
 	  fprintf (stderr,
-		   "[ERROR] mkdir_p: failed to lookup '%s' after creation\n",
-		   token);
+		   "[ERROR] mkdir_p: make_dir failed on '%s' with err %d\n",
+		   token, err);
 	  if (prev_node)
 	    diskfs_nput (prev_node);
-	  return err ? : EIO;
+	  return err;
 	}
 
       pthread_mutex_unlock (&next_node->lock);
