@@ -33,6 +33,48 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
 }
 
 /**
+ * Internal version of rmdir that avoids RPCs, using diskfs_lookup and diskfs_dirremove.
+ */
+static error_t
+rmdir_local (struct node *dir, const char *name, struct protid *cred)
+{
+  error_t err;
+  struct node *target = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  pthread_mutex_lock (&dir->lock);
+
+  err = diskfs_lookup (dir, name, REMOVE, &target, ds, cred);
+  if (err)
+    {
+      pthread_mutex_unlock (&dir->lock);
+      return err == EAGAIN ? ENOTEMPTY : err;
+    }
+
+  if (!S_ISDIR (target->dn_stat.st_mode))
+    {
+      diskfs_nput (target);
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return ENOTDIR;
+    }
+
+  if (!diskfs_dirempty (target, cred))
+    {
+      diskfs_nput (target);
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return ENOTEMPTY;
+    }
+
+  err = diskfs_dirremove (dir, target, name, ds);
+  diskfs_drop_dirstat (dir, ds);
+  pthread_mutex_unlock (&dir->lock);
+  diskfs_nput (target);
+  return err;
+}
+
+/**
  * Create a file named `filename` under `dir`, using Hurd diskfs APIs.
  *
  * `dir` must be UNLOCKED on entry.
@@ -242,7 +284,10 @@ test (void)
     {
       fprintf (stderr, "[ERROR] Failed to create testdir\n");
     }
-
+  
+  fprintf (stderr, "Deleting full directory.\n");
+  rmdir_local(root, "full", cred);
+  fprintf (stderr, "Done deleting.\n");
   diskfs_nput (root);
   ports_port_deref (cred);
 }
