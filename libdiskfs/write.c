@@ -33,6 +33,62 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
 }
 
 /**
+ * Create a file named `filename` under `dir`, using Hurd diskfs APIs.
+ *
+ * `dir` must be UNLOCKED on entry.
+ * If the file already exists, the existing node is returned locked via `*out`.
+ * If the file is created, the new node is returned locked via `*out`.
+ *
+ * Caller must unlock and `diskfs_nput(*out)` after use.
+ */
+static error_t
+make_file (struct node *dir, const char *filename, struct protid *cred,
+	   struct node **out)
+{
+  error_t err;
+  struct node *new_node = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  fprintf (stderr, "[DEBUG] make_file: start\n");
+  pthread_mutex_lock (&dir->lock);
+
+  err = diskfs_lookup (dir, filename, CREATE, &new_node, ds, cred);
+  if (err == EAGAIN || err == 0)
+    {
+      fprintf (stderr, "[DEBUG] File already exists\n");
+      *out = new_node;
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return 0;
+    }
+  else if (err != ENOENT)
+    {
+      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return err;
+    }
+
+  mode_t mode = S_IFREG | 0644;
+  err = diskfs_create_node (dir, filename, mode, &new_node, cred, ds);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return err;
+    }
+
+  fprintf (stderr, "[DEBUG] File '%s' created\n", filename);
+  diskfs_node_update (new_node, 1);
+  *out = new_node;
+
+  diskfs_drop_dirstat (dir, ds);
+  pthread_mutex_unlock (&dir->lock);
+  return 0;
+}
+
+/**
  * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
  *
  * `root` must be UNLOCKED on entry.
@@ -42,44 +98,45 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
  * Caller must unlock and `diskfs_nput(*out)` after use.
  */
 static error_t
-make_dir(struct node *root, const char *dirname, struct protid *cred, struct node **out)
+make_dir (struct node *root, const char *dirname, struct protid *cred,
+	  struct node **out)
 {
   error_t err = 0;
   struct node *new_node = NULL;
-  struct dirstat *ds = alloca(diskfs_dirstat_size);
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
 
-  fprintf(stderr, "[DEBUG] make_dir: start\n");
-  pthread_mutex_lock(&root->lock);
+  fprintf (stderr, "[DEBUG] make_dir: start\n");
+  pthread_mutex_lock (&root->lock);
 
-  err = diskfs_lookup(root, dirname, CREATE, &new_node, ds, cred);
+  err = diskfs_lookup (root, dirname, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
     {
-      fprintf(stderr, "[DEBUG] Directory already exists\n");
+      fprintf (stderr, "[DEBUG] Directory already exists\n");
       *out = new_node;
       err = 0;
       goto cleanup;
     }
   else if (err != ENOENT)
     {
-      fprintf(stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
       goto cleanup;
     }
 
   mode_t mode = S_IFDIR | 0755;
-  err = diskfs_create_node(root, dirname, mode, &new_node, cred, ds);
+  err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
   if (err)
     {
-      fprintf(stderr, "[ERROR] create_node failed: %d\n", err);
+      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
       goto cleanup;
     }
 
-  fprintf(stderr, "[DEBUG] Directory '%s' created\n", dirname);
-  diskfs_node_update(new_node, 1);
+  fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
+  diskfs_node_update (new_node, 1);
   *out = new_node;
 
 cleanup:
-  diskfs_drop_dirstat(root, ds);
-  pthread_mutex_unlock(&root->lock);
+  diskfs_drop_dirstat (root, ds);
+  pthread_mutex_unlock (&root->lock);
   return err;
 }
 
@@ -150,17 +207,40 @@ test (void)
       return;
     }
 
-  struct node *child = NULL;
-  err = mkdir_p (root, "hey/there/they/too", cred, &child);
-  if (!err && child)
+  struct node *dir = NULL;
+  err = mkdir_p (root, "hey/testdir", cred, &dir);
+  if (!err && dir)
     {
-      fprintf (stderr, "[INFO] Final node ino is %llu\n",
-	       child->dn_stat.st_ino);
-      diskfs_nput (child);
+      fprintf (stderr, "[INFO] testdir ino = %llu\n", dir->dn_stat.st_ino);
+
+      struct node *file = NULL;
+      err = make_file (dir, "file.txt", cred, &file);
+      if (!err && file)
+	{
+	  fprintf (stderr, "[INFO] file.txt created with ino = %llu\n",
+		   file->dn_stat.st_ino);
+	  diskfs_nput (file);
+	}
+      else
+	{
+	  fprintf (stderr, "[ERROR] Failed to create file.txt\n");
+	}
+
+      // Try to create it again
+      err = make_file (dir, "file.txt", cred, &file);
+      if (!err && file)
+	{
+	  fprintf (stderr,
+		   "[INFO] file.txt already existed with ino = %llu\n",
+		   file->dn_stat.st_ino);
+	  diskfs_nput (file);
+	}
+
+      diskfs_nput (dir);
     }
   else
     {
-      fprintf (stderr, "[ERROR] Failed to create final node.\n");
+      fprintf (stderr, "[ERROR] Failed to create testdir\n");
     }
 
   diskfs_nput (root);
