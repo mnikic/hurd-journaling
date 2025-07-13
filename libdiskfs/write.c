@@ -33,6 +33,61 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
 }
 
 /**
+ * Internal version of unlink that avoids RPCs.
+ * Unlinks a regular file named `name` under directory `dir` using `cred`.
+ * 
+ * Returns 0 on success or error code.
+ */
+static error_t
+unlink_local (struct node *dir, const char *name, struct protid *cred)
+{
+  error_t err;
+  struct node *target = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  if (!cred)
+    return EOPNOTSUPP;
+
+  pthread_mutex_lock (&dir->lock);
+
+  err = diskfs_lookup (dir, name, REMOVE, &target, ds, cred);
+  if (err)
+    {
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return err == EAGAIN ? EPERM : err;
+    }
+
+  if (S_ISDIR (target->dn_stat.st_mode))
+    {
+      // Don't unlink directories
+      diskfs_nput (target);
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return EPERM;
+    }
+
+  err = diskfs_dirremove (dir, target, name, ds);
+  if (!err)
+    {
+      target->dn_stat.st_nlink--;
+      target->dn_set_ctime = 1;
+
+      if (diskfs_synchronous)
+	{
+	  diskfs_file_update (target, 1);
+	  diskfs_node_update (dir, 1);
+	}
+    }
+
+  diskfs_nput (target);
+  diskfs_drop_dirstat (dir, ds);
+  pthread_mutex_unlock (&dir->lock);
+
+  return err;
+}
+
+/**
  * Internal version of rmdir that avoids RPCs, using diskfs_lookup and diskfs_dirremove.
  */
 static error_t
@@ -284,9 +339,9 @@ test (void)
     {
       fprintf (stderr, "[ERROR] Failed to create testdir\n");
     }
-  
+
   fprintf (stderr, "Deleting full directory.\n");
-  rmdir_local(root, "full", cred);
+  rmdir_local (root, "full", cred);
   fprintf (stderr, "Done deleting.\n");
   diskfs_nput (root);
   ports_port_deref (cred);
