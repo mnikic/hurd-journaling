@@ -7,33 +7,38 @@
 #include <unistd.h>
 
 #define MAX_PATH_LEN  1024
+/**
+ * Create reusable diskfs protid credentials for a given node.
+ * Caller must ports_port_deref(cred) when done.
+ */
+static error_t
+diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
+{
+  error_t err;
+  struct peropen *po = NULL;
+
+  err = diskfs_make_peropen (np, flags, 0, &po);
+  if (err)
+    return err;
+
+  err = diskfs_create_protid (po, 0, out_cred);
+  if (err)
+    {
+      ports_port_deref (po);
+      return err;
+    }
+
+  return 0;
+}
 
 static void
-make_dir (struct node *root, const char *dirname)
+make_dir (struct node *root, const char *dirname, struct protid *cred)
 {
   error_t err;
   struct node *new_node = NULL;
-  struct protid *cred = NULL;
-  struct peropen *po = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
 
   fprintf (stderr, "[DEBUG] make_dir: start\n");
-
-  err = diskfs_make_peropen (root, O_READ | O_EXEC | O_WRITE, 0, &po);
-  if (err)
-    {
-      fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
-      return;
-    }
-
-  err = diskfs_create_protid (po, 0, &cred);
-  if (err)
-    {
-      fprintf (stderr, "[ERROR] create_protid failed: %d\n", err);
-      ports_port_deref (po);
-      return;
-    }
-
   pthread_mutex_lock (&root->lock);
 
   err = diskfs_lookup (root, dirname, CREATE, NULL, ds, cred);
@@ -71,34 +76,16 @@ make_dir (struct node *root, const char *dirname)
   diskfs_drop_dirstat (root, ds);
 
 cleanup:
-  ports_port_deref (cred);
   fprintf (stderr, "[DEBUG] make_dir: success\n");
 }
 
 static struct node *
-mkdir_p (struct node *root, const char *path)
+mkdir_p (struct node *root, const char *path, struct protid *cred)
 {
 
   error_t err;
-  struct protid *cred = NULL;
-  struct peropen *po = NULL;
 
   fprintf (stderr, "[DEBUG] makedir_p: start\n");
-
-  err = diskfs_make_peropen (root, O_READ | O_EXEC | O_WRITE, 0, &po);
-  if (err)
-    {
-      fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
-      return NULL;
-    }
-
-  err = diskfs_create_protid (po, 0, &cred);
-  if (err)
-    {
-      fprintf (stderr, "[ERROR] create_protid failed: %d\n", err);
-      ports_port_deref (po);
-      return NULL;
-    }
 
   char path_copy[MAX_PATH_LEN];
   strncpy (path_copy, path, MAX_PATH_LEN);
@@ -111,7 +98,7 @@ mkdir_p (struct node *root, const char *path)
     {
 
       fprintf (stderr, "[DEBUG] Token: %s\n", token);
-      make_dir (root, token);
+      make_dir (root, token, cred);
 
       struct node *next_node = NULL;
       error_t err = diskfs_lookup (root, token, LOOKUP, &next_node, 0, cred);
@@ -128,7 +115,8 @@ mkdir_p (struct node *root, const char *path)
 	  return NULL;
 	}
 
-      fprintf (stderr, "[DEBUG] Found a node. Gonna try unlock.  %s\n", token);
+      fprintf (stderr, "[DEBUG] Found a node. Gonna try unlock.  %s\n",
+	       token);
       pthread_mutex_unlock (&next_node->lock);
       fprintf (stderr, "[DEBUG] Unlocked it.  %s\n", token);
       if (prev_node)
@@ -139,7 +127,6 @@ mkdir_p (struct node *root, const char *path)
       token = strtok (NULL, "/");
     }
 
-  ports_port_deref (cred);
   return root;
 }
 
@@ -147,13 +134,19 @@ static void
 test (void)
 {
   fprintf (stderr, " Entered test \n");
-
+  struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
-
-  mkdir_p (root, "hey/there/you/too");
+  error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+  if (err)
+    {
+      fprintf (stderr, "[ERROR] make_peropen failed: %d\n", err);
+      return;
+    }
+  mkdir_p (root, "hey/there/me/too", cred);
 
   diskfs_nput (root);
+  ports_port_deref (cred);
 }
 
 static void *
