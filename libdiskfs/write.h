@@ -4,4 +4,6 @@
 void
 start_test_thread (void);
 
+void test(void);
+
 #endif //_WRITE

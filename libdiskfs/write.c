@@ -466,7 +466,7 @@ chown_local(struct node *np, uid_t uid, gid_t gid)
 }
 
 
-static void
+void
 test (void)
 {
   fprintf (stderr, "[INFO] Entered test\n");

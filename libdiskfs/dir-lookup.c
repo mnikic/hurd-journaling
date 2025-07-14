@@ -39,7 +39,7 @@ diskfs_S_dir_lookup (struct protid *dircred,
 		     mach_port_t *retry_port,
 		     mach_msg_type_name_t *retry_port_type)
 {
-  start_test_thread ();
+  //start_test_thread ();
   struct node *dnp;
   struct node *np;
   int nsymlinks = 0;

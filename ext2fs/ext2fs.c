@@ -32,6 +32,7 @@
 #include <hurd/store.h>
 #include <version.h>
 #include "ext2fs.h"
+#include <libdiskfs/write.h>
 
 /* ---------------------------------------------------------------- */
 
@@ -251,6 +252,7 @@ main (int argc, char **argv)
     ext2_panic ("no root node!");
   pthread_mutex_unlock (&diskfs_root_node->lock);
 
+  test();
   /* Now that we are all set up to handle requests, and diskfs_root_node is
      set properly, it is safe to export our fsys control port to the
      outside world.  */
