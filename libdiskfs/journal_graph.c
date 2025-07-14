@@ -208,6 +208,25 @@ maybe_set_name (inode_state_t * ino, const struct journal_payload_bin *ev)
     }
 }
 
+/*
+ * journal_graph_add_event:
+ *   Applies a single journal event to the in-memory inode graph.
+ *   It updates inode metadata, name, link count, and deletion status based on the action type.
+ *
+ *   Conservative Deletion Policy:
+ *   - An inode is marked as deleted (is_deleted = true) in exactly two cases:
+ *       1. RMDIR: The inode is a directory and a successful RMDIR was observed. This implies
+ *          the directory was empty at deletion time, and we can safely mark both it and all
+ *          of its children as deleted.
+ *       2. Reliable UNLINK: The inode was created during the journal window (link_count_reliable == true),
+ *          and its link count reaches zero due to one or more UNLINK operations.
+ *
+ *   - In all other situations — including missing CREATE events, incomplete link history, or ambiguous deletions —
+ *     is_deleted is not set.
+ *
+ *   - This conservative approach ensures that no speculative deletions occur. Data is preserved unless its
+ *     deletion can be positively confirmed by the journal.
+ */
 void
 journal_graph_add_event (const struct journal_payload_bin *ev)
 {
