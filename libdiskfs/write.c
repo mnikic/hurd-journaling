@@ -35,6 +35,61 @@
   })
 
 /**
+ * Look up a full path (starting from '/') and return the final node locked.
+ * Caller must `diskfs_nput(*out_np)` and unlock the node after use.
+ */
+static error_t
+diskfs_lookup_path(const char *path, struct protid *cred, struct node **out_np)
+{
+  if (!path)
+    return EINVAL;
+
+  // Skip leading slashes
+  while (*path == '/')
+    ++path;
+
+  struct node *current = diskfs_root_node;
+  pthread_mutex_lock(&current->lock);
+  diskfs_nref(current);
+  
+  const char *p = path;
+  char component[NAME_MAX + 1];
+
+  while (*p)
+    {
+      const char *slash = strchr(p, '/');
+      size_t len = slash ? (size_t)(slash - p) : strlen(p);
+      if (len == 0 || len > NAME_MAX)
+        {
+          diskfs_nput(current);
+          return ENAMETOOLONG;
+        }
+
+      memcpy(component, p, len);
+      component[len] = '\0';
+
+      struct node *next = NULL;
+      error_t err = diskfs_lookup_hard(current, component, LOOKUP, &next, NULL, cred);
+      diskfs_nput(current);
+
+      if (err)
+        return err;
+
+      current = next;
+      if (!slash)
+        break;
+      p = slash + 1;
+
+      // Skip consecutive slashes
+      while (*p == '/')
+        ++p;
+    }
+
+  *out_np = current;
+  return 0;
+}
+
+/**
  * Internal truncate that sets the file size of a node.
  * 
  * The node must be locked before calling. No permission checks are performed.
@@ -511,6 +566,27 @@ test (void)
 	  diskfs_nput (file);
 	}
 
+
+      struct node *path_lookup = NULL;
+      // starting slah '/' shuld work
+      err = diskfs_lookup_path("/hey/testdir", cred, &path_lookup);
+      if (!err && path_lookup) 
+        {
+          fprintf (stderr, "Path found final node ino: %llu and the original node ino is: %llu", path_lookup->dn_stat.st_ino, dir->dn_stat.st_ino);
+	  diskfs_nput (path_lookup);
+        } else {
+          fprintf (stderr, "Path lookup failed.  %u\n", err);
+        }
+
+      // starting th slash '/' shuld  also work
+      err = diskfs_lookup_path("/hey/testdir", cred, &path_lookup);
+      if (!err && path_lookup) 
+        {
+          fprintf (stderr, "Path found final node ino: %llu and the original node ino is: %llu", path_lookup->dn_stat.st_ino, dir->dn_stat.st_ino);
+	  diskfs_nput (path_lookup);
+        } else {
+          fprintf (stderr, "Path lookup failed.  %u\n", err);
+        }
       diskfs_nput (dir);
     }
   else
@@ -521,6 +597,8 @@ test (void)
   fprintf (stderr, "Deleting full directory.\n");
   rmdir_local (root, "full", cred);
   fprintf (stderr, "Done deleting.\n");
+
+
   diskfs_nput (root);
   ports_port_deref (cred);
 }
