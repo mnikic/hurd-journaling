@@ -69,8 +69,23 @@ typedef enum
   ACTION_UNKNOWN
 } journal_action_t;
 
+typedef struct inode_graph_node
+{
+  journal_ino_t ino;             // Key used in graph hash table and parent-child tracking
+  journal_ino_t parent_ino;
 
-static inode_state_t *inode_hash[HASH_SIZE];
+  int link_count;                // Reflects relative changes from journaled LINK/UNLINK events
+  bool link_count_reliable;     // Only valid if inode was seen created. Otherwise speculative.
+
+  journal_ino_t children[MAX_CHILDREN];
+  int num_children;
+
+  inode_replay_state_t replay;  // Final replay-relevant state (clean, minimal)
+
+  struct inode_graph_node *next;
+} inode_graph_node_t;
+
+static inode_graph_node_t *inode_hash[HASH_SIZE];
 bool printed_set[PRINTED_SET_SIZE];
 
 static journal_ino_t
@@ -79,26 +94,27 @@ hash_ino (journal_ino_t ino)
   return ino % HASH_SIZE;
 }
 
-static inode_state_t *
+static inode_graph_node_t *
 get_inode (journal_ino_t ino)
 {
   journal_ino_t h = hash_ino (ino);
-  inode_state_t *cur = inode_hash[h];
+  inode_graph_node_t *cur = inode_hash[h];
   while (cur)
     {
       if (cur->ino == ino)
-	return cur;
+        return cur;
       cur = cur->next;
     }
-  inode_state_t *new_node = calloc (1, sizeof (inode_state_t));
+  inode_graph_node_t *new_node = calloc (1, sizeof (inode_graph_node_t));
   new_node->ino = ino;
+  new_node->replay.ino = ino;
   new_node->next = inode_hash[h];
   inode_hash[h] = new_node;
   return new_node;
 }
 
 static void
-add_child (inode_state_t * parent, journal_ino_t child_ino)
+add_child (inode_graph_node_t *parent, journal_ino_t child_ino)
 {
   if (parent->num_children < MAX_CHILDREN)
     {
@@ -107,48 +123,18 @@ add_child (inode_state_t * parent, journal_ino_t child_ino)
 }
 
 static void
-remove_child (inode_state_t * parent, journal_ino_t child_ino)
+remove_child (inode_graph_node_t *parent, journal_ino_t child_ino)
 {
   for (int i = 0; i < parent->num_children; ++i)
     {
       if (parent->children[i] == child_ino)
-	{
-	  for (int j = i; j < parent->num_children - 1; ++j)
-	    parent->children[j] = parent->children[j + 1];
-	  parent->num_children--;
-	  break;
-	}
+        {
+          for (int j = i; j < parent->num_children - 1; ++j)
+            parent->children[j] = parent->children[j + 1];
+          parent->num_children--;
+          break;
+        }
     }
-}
-
-static void
-get_full_path (journal_ino_t ino, char *buf, size_t buflen)
-{
-  if (ino == 0 || buflen == 0)
-    {
-      snprintf (buf, buflen, "/?");
-      return;
-    }
-  inode_state_t *parts[MAX_PATH_LEN / 2];
-  int count = 0;
-
-  inode_state_t *cur = get_inode (ino);
-  while (cur && cur->ino != 0 && !cur->is_deleted && count < MAX_PATH_LEN / 2)
-    {
-      parts[count++] = cur;
-      if (cur->parent_ino == 0)
-	break;
-      cur = get_inode (cur->parent_ino);
-    }
-
-  buf[0] = '\0';
-  for (int i = count - 1; i >= 0; --i)
-    {
-      strncat (buf, "/", buflen - strlen (buf) - 1);
-      strncat (buf, parts[i]->name, buflen - strlen (buf) - 1);
-    }
-  if (strlen (buf) == 0)
-    snprintf (buf, buflen, "/");
 }
 
 static journal_action_t
@@ -184,8 +170,6 @@ action_from_string (const char *action_str)
   return ACTION_UNKNOWN;
 }
 
-typedef struct journal_payload_bin journal_event_t;
-
 static void
 safe_strncpy (char *dst, const char *src, size_t size)
 {
@@ -197,7 +181,7 @@ safe_strncpy (char *dst, const char *src, size_t size)
 }
 
 static void
-maybe_set_name (inode_state_t * ino, const struct journal_payload_bin *ev)
+maybe_set_name (inode_replay_state_t * ino, const struct journal_payload_bin *ev)
 {
   if (strlen (ino->name) == 0)
     {
@@ -231,228 +215,133 @@ void
 journal_graph_add_event (const struct journal_payload_bin *ev)
 {
   journal_action_t action = action_from_string (ev->action);
-  inode_state_t *ino = get_inode (ev->ino);
-  ino->last_tx = ev->tx_id;
-  ino->last_seen = ev->timestamp_ms;
+  inode_graph_node_t *ino = get_inode (ev->ino);
+  inode_replay_state_t *replay = &ino->replay;
+  replay->last_tx = ev->tx_id;
+  replay->last_seen = ev->timestamp_ms;
   switch (action)
     {
     case ACTION_CREATE:
     case ACTION_MKDIR:
     case ACTION_MKFILE:
       {
-	ino->parent_ino = ev->parent_ino;
-	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
-	ino->link_count = 1;
-	ino->link_count_reliable = true;
-	ino->is_deleted = false;
-	inode_state_t *parent = get_inode (ev->parent_ino);
-	add_child (parent, ev->ino);
-	break;
+        ino->parent_ino = ev->parent_ino;
+        safe_strncpy (replay->name, ev->name, sizeof (replay->name));
+        ino->link_count = 1;
+        ino->link_count_reliable = true;
+        replay->is_deleted = false;
+        inode_graph_node_t *parent = get_inode (ev->parent_ino);
+        add_child (parent, ev->ino);
+        break;
       }
     case ACTION_SYMLINK:
       {
-	ino->parent_ino = ev->parent_ino;
-	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
-	safe_strncpy (ino->symlink_target, ev->target,
-		      sizeof (ino->symlink_target));
-	ino->link_count = 1;
-	ino->link_count_reliable = true;
-	ino->is_deleted = false;
-	inode_state_t *parent = get_inode (ev->parent_ino);
-	add_child (parent, ev->ino);
-	break;
+        ino->parent_ino = ev->parent_ino;
+        safe_strncpy (replay->name, ev->name, sizeof (replay->name));
+        safe_strncpy (replay->symlink_target, ev->target, sizeof (replay->symlink_target));
+        ino->link_count = 1;
+        ino->link_count_reliable = true;
+        replay->is_deleted = false;
+        inode_graph_node_t *parent = get_inode (ev->parent_ino);
+        add_child (parent, ev->ino);
+        break;
       }
     case ACTION_LINK:
       ino->link_count++;
-      ino->ctime = ev->timestamp_ms;
-      ino->has_ctime = true;
+      replay->ctime = ev->timestamp_ms;
+      replay->has_ctime = true;
       break;
     case ACTION_UNLINK:
       {
-	inode_state_t *parent = get_inode (ev->parent_ino);
-	remove_child (parent, ev->ino);
-	ino->link_count--;
-	ino->ctime = ev->timestamp_ms;
-	ino->has_ctime = true;
-	if (ino->link_count <= 0)
-	  {
-	    // We only trust link_count-based deletion if we saw the inode created.
-	    if (ino->link_count_reliable)
-	      {
-		ino->is_deleted = true;
-		ino->num_children = 0;
-		ino->deleted_at_tx = ev->tx_id;
-		ino->deleted_at_timestamp = ev->timestamp_ms;
-	      }
-	  }
-	break;
+        inode_graph_node_t *parent = get_inode (ev->parent_ino);
+        remove_child (parent, ev->ino);
+        ino->link_count--;
+        replay->ctime = ev->timestamp_ms;
+        replay->has_ctime = true;
+        if (ino->link_count <= 0 && ino->link_count_reliable)
+          {
+            replay->is_deleted = true;
+            ino->num_children = 0;
+            replay->deleted_at_tx = ev->tx_id;
+            replay->deleted_at_timestamp = ev->timestamp_ms;
+          }
+        break;
       }
     case ACTION_RMDIR:
       {
-	inode_state_t *parent = get_inode (ev->parent_ino);
-	remove_child (parent, ev->ino);
-	// RMDIR confirms the directory was empty at this point.
-	// We can safely mark it as deleted regardless of child or link count state.
-	ino->is_deleted = true;
-	ino->deleted_at_tx = ev->tx_id;
-	ino->deleted_at_timestamp = ev->timestamp_ms;
-
-	// Additionally, mark all children as deleted — they must have been removed
-	// even if we never saw their UNLINK events.
-	for (int i = 0; i < ino->num_children; i++)
-	  {
-	    inode_state_t *child = get_inode (ino->children[i]);
-	    if (!child->is_deleted)
-	      {
-		child->is_deleted = true;
-		child->deleted_at_tx = ev->tx_id;
-		child->deleted_at_timestamp = ev->timestamp_ms;
-	      }
-	  }
-	ino->num_children = 0;
-	break;
+        inode_graph_node_t *parent = get_inode (ev->parent_ino);
+        remove_child (parent, ev->ino);
+        replay->is_deleted = true;
+        replay->deleted_at_tx = ev->tx_id;
+        replay->deleted_at_timestamp = ev->timestamp_ms;
+        for (int i = 0; i < ino->num_children; i++)
+          {
+            inode_graph_node_t *child = get_inode (ino->children[i]);
+            if (!child->replay.is_deleted)
+              {
+                child->replay.is_deleted = true;
+                child->replay.deleted_at_tx = ev->tx_id;
+                child->replay.deleted_at_timestamp = ev->timestamp_ms;
+              }
+          }
+        ino->num_children = 0;
+        break;
       }
     case ACTION_RENAME:
       {
-	inode_state_t *old_parent = get_inode (ev->src_parent_ino);
-	inode_state_t *new_parent = get_inode (ev->dst_parent_ino);
-	remove_child (old_parent, ev->ino);
-	add_child (new_parent, ev->ino);
-	ino->parent_ino = ev->dst_parent_ino;
-	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
-	ino->ctime = ev->timestamp_ms;
-	ino->has_ctime = true;
-	break;
+        inode_graph_node_t *old_parent = get_inode (ev->src_parent_ino);
+        inode_graph_node_t *new_parent = get_inode (ev->dst_parent_ino);
+        remove_child (old_parent, ev->ino);
+        add_child (new_parent, ev->ino);
+        ino->parent_ino = ev->dst_parent_ino;
+        safe_strncpy (replay->name, ev->new_name, sizeof (replay->name));
+        replay->ctime = ev->timestamp_ms;
+        replay->has_ctime = true;
+        break;
       }
     case ACTION_UTIME:
-      ino->mtime = ev->timestamp_ms;
-      ino->has_mtime = true;
+      replay->mtime = ev->timestamp_ms;
+      replay->has_mtime = true;
       break;
     case ACTION_CHMOD:
       if (ev->has_mode)
-	{
-	  ino->st_mode = ev->st_mode;
-	  ino->has_st_mode = true;
-	  ino->ctime = ev->timestamp_ms;
-	  ino->has_ctime = true;
-	}
+        {
+          replay->st_mode = ev->st_mode;
+          replay->has_st_mode = true;
+          replay->ctime = ev->timestamp_ms;
+          replay->has_ctime = true;
+        }
       break;
     case ACTION_CHOWN:
       if (ev->has_uid)
-	{
-	  ino->uid = ev->uid;
-	  ino->has_uid = true;
-	  ino->ctime = ev->timestamp_ms;
-	  ino->has_ctime = true;
-	}
+        {
+          replay->uid = ev->uid;
+          replay->has_uid = true;
+          replay->ctime = ev->timestamp_ms;
+          replay->has_ctime = true;
+        }
       if (ev->has_gid)
-	{
-	  ino->gid = ev->gid;
-	  ino->has_gid = true;
-	  ino->ctime = ev->timestamp_ms;
-	  ino->has_ctime = true;
-	}
+        {
+          replay->gid = ev->gid;
+          replay->has_gid = true;
+          replay->ctime = ev->timestamp_ms;
+          replay->has_ctime = true;
+        }
       break;
     case ACTION_TRUNCATE:
       if (ev->has_size)
-	{
-	  ino->st_size = ev->st_size;
-	  ino->has_st_size = true;
-	  ino->ctime = ev->timestamp_ms;
-	  ino->has_ctime = true;
-	}
+        {
+          replay->st_size = ev->st_size;
+          replay->has_st_size = true;
+          replay->ctime = ev->timestamp_ms;
+          replay->has_ctime = true;
+        }
       break;
     default:
       break;
     }
 
-  maybe_set_name (ino, ev);
-}
-
-static void
-print_inode_tree (journal_ino_t root_ino)
-{
-  typedef struct
-  {
-    uint32_t ino;
-    int child_index;
-  } StackFrame;
-
-  StackFrame stack[MAX_STACK_DEPTH];
-  int top = 0;
-
-  stack[top++] = (StackFrame)
-  {
-  root_ino, 0};
-
-  while (top > 0)
-    {
-      StackFrame *frame = &stack[top - 1];
-      inode_state_t *inode = get_inode (frame->ino);
-
-      if (frame->child_index == 0
-	  && !printed_set[inode->ino % PRINTED_SET_SIZE])
-	{
-	  printed_set[inode->ino % PRINTED_SET_SIZE] = true;
-	  char path[MAX_PATH_LEN];
-	  get_full_path (inode->ino, path, sizeof (path));
-	  LOG_DEBUG
-	    ("%s (ino: %u, mode: %u, uid: %u, gid: %u, size: %llu, mtime: %lld, ctime: %lld)",
-	     path, inode->ino, inode->st_mode, inode->uid, inode->gid,
-	     inode->st_size, inode->mtime, inode->ctime);
-	}
-
-      if (frame->child_index < inode->num_children)
-	{
-	  stack[top++] = (StackFrame)
-	  {
-	  inode->children[frame->child_index++], 0};
-	  if (top >= MAX_STACK_DEPTH)
-	    return;
-	}
-      else
-	{
-	  top--;
-	}
-    }
-}
-
-void
-journal_graph_print (void)
-{
-  LOG_DEBUG ("Filesystem Tree:");
-  memset (printed_set, 0, sizeof (printed_set));
-
-  for (int i = 0; i < HASH_SIZE; ++i)
-    {
-      inode_state_t *cur = inode_hash[i];
-      while (cur)
-	{
-	  if (cur->ino != 0 && cur->parent_ino == 0 && !cur->is_deleted)
-	    {
-	      print_inode_tree (cur->ino);
-	    }
-	  cur = cur->next;
-	}
-    }
-
-  LOG_DEBUG ("Deleted Inodes:");
-  for (int i = 0; i < HASH_SIZE; ++i)
-    {
-      inode_state_t *cur = inode_hash[i];
-      while (cur)
-	{
-	  if (cur->ino != 0 && cur->is_deleted)
-	    {
-	      char path[MAX_PATH_LEN];
-	      get_full_path (cur->ino, path, sizeof (path));
-	      LOG_DEBUG ("- %s (ino: %u) deleted at tx %" PRIu64
-			 ", timestamp %" PRIu64 "\n", path, cur->ino,
-			 cur->deleted_at_tx, cur->deleted_at_timestamp);
-	    }
-	  cur = cur->next;
-	}
-    }
+  maybe_set_name (replay, ev);
 }
 
 void
@@ -460,14 +349,14 @@ journal_graph_free (void)
 {
   for (int i = 0; i < HASH_SIZE; ++i)
     {
-      inode_state_t *cur = inode_hash[i];
+      inode_graph_node_t *cur = inode_hash[i];
       while (cur)
-	{
-	  inode_state_t *next = cur->next;
-	  free (cur);		// Free each allocated inode_state
-	  cur = next;
-	}
-      inode_hash[i] = NULL;	// Clear the bucket
+        {
+          inode_graph_node_t *next = cur->next;
+          free (cur);
+          cur = next;
+        }
+      inode_hash[i] = NULL;
     }
 }
 
@@ -581,13 +470,7 @@ error_t
 scan_directory_and_update_paths (void)
 {
   const char *safe_roots[] = {
-    "/home",
-    "/tmp",
-    "/var/log",
-    "/var/lib",
-    "/etc",
-    "/usr/local",
-    NULL
+    "/home", "/tmp", "/var/log", "/var/lib", "/etc", "/usr/local", NULL
   };
 
   struct scan_frame
@@ -603,11 +486,10 @@ scan_directory_and_update_paths (void)
     {
       file_t root_port = file_name_lookup (safe_roots[i], O_READ | O_EXEC, 0);
       if (root_port == MACH_PORT_NULL)
-	{
-	  LOG_DEBUG ("Skipping inaccessible root: %s", safe_roots[i]);
-	  continue;
-	}
-
+        {
+          LOG_DEBUG ("Skipping inaccessible root: %s", safe_roots[i]);
+          continue;
+        }
       snprintf (stack[sp].path, MAX_PATH_LEN, "%s", safe_roots[i]);
       stack[sp].dir_port = root_port;
       sp++;
@@ -622,77 +504,66 @@ scan_directory_and_update_paths (void)
       char *data;
       mach_msg_type_number_t datacnt;
       int nentries;
-      error_t err =
-	dir_readdir (dir_port, &data, &datacnt, -1, -1, 0, &nentries);
+      error_t err = dir_readdir (dir_port, &data, &datacnt, -1, -1, 0, &nentries);
       if (err)
-	{
-	  mach_port_deallocate (mach_task_self (), dir_port);
-	  continue;
-	}
+        {
+          mach_port_deallocate (mach_task_self (), dir_port);
+          continue;
+        }
 
       struct dirent *entry = (struct dirent *) data;
       char *end = data + datacnt;
 
       while ((char *) entry < end)
-	{
-	  if (entry->d_namlen > 0 &&
-	      strcmp (entry->d_name, ".") != 0 &&
-	      strcmp (entry->d_name, "..") != 0)
-	    {
+        {
+          if (entry->d_namlen > 0 && strcmp (entry->d_name, ".") != 0 && strcmp (entry->d_name, "..") != 0)
+            {
+              if (should_skip_directory (entry->d_name))
+                {
+                  entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+                  continue;
+                }
 
-	      if (should_skip_directory (entry->d_name))
-		{
-		  entry =
-		    (struct dirent *) ((char *) entry + entry->d_reclen);
-		  continue;
-		}
+              char full_path[MAX_PATH_LEN];
+              int written;
+              if (strcmp (path, "/") == 0)
+                written = snprintf (full_path, sizeof (full_path), "/%.*s",
+                                   MAX_PATH_LEN - 2, entry->d_name);
+              else
+                written = snprintf (full_path, sizeof (full_path), "%s/%.*s", path,
+                                   MAX_PATH_LEN - (int) strlen (path) - 2, entry->d_name);
 
-	      char full_path[MAX_PATH_LEN];
-	      int written;
-	      if (strcmp (path, "/") == 0)
-		written =
-		  snprintf (full_path, sizeof (full_path), "/%.*s",
-			    MAX_PATH_LEN - 2, entry->d_name);
-	      else
-		written =
-		  snprintf (full_path, sizeof (full_path), "%s/%.*s", path,
-			    MAX_PATH_LEN - (int) strlen (path) - 2,
-			    entry->d_name);
-	      if (written < 0 || written >= MAX_PATH_LEN)
-		{
-		  LOG_DEBUG ("Truncated full_path for inode %llu",
-			     entry->d_ino);
-		  full_path[MAX_PATH_LEN - 1] = '\0';
-		}
+              if (written < 0 || written >= MAX_PATH_LEN)
+                {
+                  LOG_DEBUG ("Truncated full_path for inode %llu", entry->d_ino);
+                  full_path[MAX_PATH_LEN - 1] = '\0';
+                }
 
-	      inode_state_t *s = get_inode (entry->d_ino);
-	      if (s)
-		{
-		  if (s->resolved_path == NULL)
-		    s->resolved_path = strdup (full_path);
+              inode_graph_node_t *s = get_inode (entry->d_ino);
+              if (s)
+                {
+                  inode_replay_state_t *r = &s->replay;
+                  if (r->resolved_path == NULL)
+                    r->resolved_path = strdup (full_path);
 
-		  if (s->name[0] == '\0')
-		    strncpy (s->name, entry->d_name, MAX_FIELD_LEN - 1);
-		}
+                  if (r->name[0] == '\0')
+                    safe_strncpy (r->name, entry->d_name, MAX_FIELD_LEN);
+                }
 
-	      if ((entry->d_type == DT_DIR || entry->d_type == DT_UNKNOWN)
-		  && sp < MAX_STACK_DEPTH)
-		{
-		  file_t child_port =
-		    file_name_lookup_under (dir_port, entry->d_name,
-					    O_READ | O_EXEC, 0);
-		  if (child_port != MACH_PORT_NULL)
-		    {
-		      stack[sp].dir_port = child_port;
-		      snprintf (stack[sp].path, MAX_PATH_LEN, "%s",
-				full_path);
-		      sp++;
-		    }
-		}
-	    }
+              if ((entry->d_type == DT_DIR || entry->d_type == DT_UNKNOWN) && sp < MAX_STACK_DEPTH)
+                {
+                  file_t child_port = file_name_lookup_under (dir_port, entry->d_name, O_READ | O_EXEC, 0);
+                  if (child_port != MACH_PORT_NULL)
+                    {
+                      stack[sp].dir_port = child_port;
+                      snprintf (stack[sp].path, MAX_PATH_LEN, "%s", full_path);
+                      sp++;
+                    }
+                }
+            }
 
-	  entry = (struct dirent *) ((char *) entry + entry->d_reclen);
-	}
+          entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+        }
 
       vm_deallocate (mach_task_self (), (vm_address_t) data, datacnt);
       mach_port_deallocate (mach_task_self (), dir_port);
@@ -701,26 +572,24 @@ scan_directory_and_update_paths (void)
   LOG_DEBUG ("Sanity check our FS traversal.");
   for (int i = 0; i < HASH_SIZE; ++i)
     {
-      inode_state_t *cur = inode_hash[i];
+      inode_graph_node_t *cur = inode_hash[i];
       while (cur)
-	{
-	  if (!cur->resolved_path || cur->resolved_path[0] == '\0' ||
-	      cur->name[0] == '\0')
-	    {
-	      LOG_DEBUG ("Invalid node ino %u has name '%s' and path '%s'",
-			 cur->ino, cur->name[0] ? cur->name : "<empty>",
-			 cur->resolved_path ? cur->resolved_path : "<null>");
-	    }
-	  inode_state_t *next = cur->next;
-	  cur = next;
-	}
+        {
+          inode_replay_state_t *r = &cur->replay;
+          if (!r->resolved_path || r->resolved_path[0] == '\0' || r->name[0] == '\0')
+            {
+              LOG_DEBUG ("Invalid node ino %u has name '%s' and path '%s'",
+                         cur->ino,
+                         r->name[0] ? r->name : "<empty>",
+                         r->resolved_path ? r->resolved_path : "<null>");
+            }
+          cur = cur->next;
+        }
     }
   LOG_DEBUG ("Sanity check finished.");
 
   return 0;
 }
-
-
 static error_t
 safe_path_lookup (const char *path, int flags, file_t * port)
 {

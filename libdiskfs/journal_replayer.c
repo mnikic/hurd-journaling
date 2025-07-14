@@ -90,12 +90,10 @@ sort_entries (struct journal_entries *list)
 static void
 test_inode_replay (void)
 {
-  inode_state_t test = {
+  inode_replay_state_t test = {
     .ino = 123,
-    .parent_ino = 0,
     .last_tx = 1,
     .last_seen = (uint64_t) time (NULL) * 1000,
-    .link_count = 1,
     .is_deleted = false,
     .st_mode = S_IFREG | 0644,
     .st_size = 12345,

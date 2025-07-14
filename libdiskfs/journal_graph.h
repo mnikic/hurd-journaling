@@ -29,41 +29,35 @@
 
 #define MAX_CHILDREN 32
 
-typedef struct inode_state
+typedef struct inode_replay_state
 {
-	journal_ino_t ino;
-	journal_ino_t parent_ino;
-	char name[MAX_FIELD_LEN];
-	uint64_t last_tx;
-	uint64_t last_seen;
-	int link_count; // Reflects relative changes from journaled LINK/UNLINK events. Only meaningful if link_count_reliable == true (i.e., inode was created during journal window).
-	bool link_count_reliable; // Only valid if inode was seen created. Link count is speculative otherwise and must not be used to infer deletion.
-	bool is_deleted; // Strong signal: only set when deletion is certain (RMDIR or reliable UNLINK). Never speculative.
+  journal_ino_t ino; // Always required during replay for identification/logging
+  bool is_deleted;   // Strong signal: only set when deletion is certain (RMDIR or reliable UNLINK). Never speculative.
+  char *resolved_path;
 
-	uint64_t deleted_at_tx;
-	uint64_t deleted_at_timestamp;
+  uint64_t last_seen;     // Timestamp of the last journal event for this inode, used by replay to skip stale restores
+  uint64_t last_tx;       // Transaction ID of the last modification (for ordering during replay)
+  uint64_t deleted_at_tx;
+  uint64_t deleted_at_timestamp;
 
-	uint32_t st_mode;
-	bool has_st_mode;
-	uint64_t st_size;
-	bool has_st_size;
-	int64_t mtime;
-	bool has_mtime;
-	int64_t ctime; // Updated on metadata changes (e.g., mode, ownership, size, rename). Not initialized at creation time.
-	bool has_ctime; // Set when metadata (mode, ownership, size, etc.) changes
-	journal_uid_t uid;
-	bool has_uid;
-	journal_uid_t gid;
-	bool has_gid;
+  char name[MAX_FIELD_LEN];            // Current name of the inode (may come from SYMLINK/CREATE/RENAME)
+  char symlink_target[MAX_FIELD_LEN];  // Set if inode is a symlink
 
-	char symlink_target[MAX_FIELD_LEN];
+  uint32_t st_mode;
+  bool has_st_mode;
+  uint64_t st_size;
+  bool has_st_size;
 
-	journal_ino_t children[MAX_CHILDREN];
-	int num_children;
-	char *resolved_path;
+  int64_t mtime;
+  bool has_mtime;
+  int64_t ctime;        // Updated on metadata changes (e.g., mode, ownership, size, rename). Not initialized at creation time.
+  bool has_ctime;
 
-	struct inode_state *next;
-} inode_state_t;
+  journal_uid_t uid;
+  bool has_uid;
+  journal_uid_t gid;
+  bool has_gid;
+} inode_replay_state_t;
 
 /* The journal graph takes a non-owning pointer to a journal event.
    The caller retains ownership and is responsible for freeing it after replay. */

@@ -4,6 +4,6 @@
 #include <error.h>
 #include <libdiskfs/journal_graph.h>
 
-error_t apply_inode_state_hurd(const inode_state_t *inode);
+error_t apply_inode_state_hurd(const inode_replay_state_t *inode);
 
 #endif

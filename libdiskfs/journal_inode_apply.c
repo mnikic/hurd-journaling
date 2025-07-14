@@ -126,7 +126,7 @@ mkdir_p (const char *path, mode_t mode)
 }
 
 static error_t
-build_restore_path (const inode_state_t * inode, char *buf, size_t buflen)
+build_restore_path (const inode_replay_state_t * inode, char *buf, size_t buflen)
 {
   if (!inode || !inode->resolved_path || inode->resolved_path[0] != '/')
     return EINVAL;
@@ -141,7 +141,7 @@ build_restore_path (const inode_state_t * inode, char *buf, size_t buflen)
 }
 
 error_t
-apply_inode_state_hurd (const inode_state_t * inode)
+apply_inode_state_hurd (const inode_replay_state_t * inode)
 {
   if (!inode || inode->name[0] == '\0')
     return EINVAL;
@@ -185,7 +185,7 @@ apply_inode_state_hurd (const inode_state_t * inode)
 }
 
 error_t
-apply_inode_state_hurd2 (const inode_state_t * inode)
+apply_inode_state_hurd2 (const inode_replay_state_t * inode)
 {
   LOG_DEBUG ("Inside apply");
   if (!inode || inode->name[0] == '\0')
