@@ -528,7 +528,7 @@ test (void)
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
-
+ 
   error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
   if (err)
     {
