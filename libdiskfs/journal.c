@@ -118,8 +118,6 @@ journal_restore_rediness_thread (void *arg)
       int fd = open (test_file, O_RDONLY);
       if (fd >= 0)
 	{
-
-          LOG_DEBUG ("rediness fd > 0");
 	  if (!journal_restore_device_ready)
 	    {
 	      fsync (fd);

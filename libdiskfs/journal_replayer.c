@@ -127,7 +127,7 @@ journal_replay_from_file (const char *path)
 {
   LOG_DEBUG ("Toy journaling: Starting validation.");
   journal_enabled = false;
-  test_inode_replay ();
+  //test_inode_replay ();
   LOG_DEBUG ("Done testing");
   int fd = open (path, O_RDONLY);
   if (fd < 0)

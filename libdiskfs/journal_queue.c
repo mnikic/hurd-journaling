@@ -113,7 +113,7 @@ journal_flusher_thread (void *arg)
   while (1)
     {
       // Wait until the journal device is ready
-      while (!journal_device_ready && !shutdown_in_progress)
+      while (!journal_enabled && !journal_device_ready && !shutdown_in_progress)
 	{
 	  usleep (100 * 1000);	// Sleep 100ms
 	}
@@ -150,7 +150,7 @@ journal_flusher_thread (void *arg)
 	}
 
       // If the device went away again, skip flushing
-      if (!journal_device_ready)
+      if (!journal_device_ready || !journal_enabled)
 	{
 	  pthread_mutex_unlock (&queue_lock);
 	  continue;
