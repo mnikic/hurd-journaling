@@ -5,7 +5,9 @@
 #include <errno.h>
 #include <pthread.h>
 #include <unistd.h>
-
+ #include "priv.h"
+   #include "io_S.h"
+   #include <fcntl.h>
 #define MAX_PATH_LEN  1024
 
 /**
@@ -520,15 +522,75 @@ chown_local(struct node *np, uid_t uid, gid_t gid)
   });
 }
 
+void test_read_journal_early(void)
+{
+
+  char* file = "/var/journal-raw.img";
+  printf("Lets try to read a file %s\n", file);
+  int fd = open(file, O_RDONLY);
+  if (fd < 0)
+    {
+      printf("Failed to open %s: %s\n", file, strerror(errno));
+      return;
+    }
+
+  char buf;
+  ssize_t n = read(fd, &buf, 1);
+  if (n < 0)
+    {
+      printf("Failed to read: %s\n", strerror(errno));
+    }
+  else if (n == 0)
+    {
+      printf("EOF reached, no data in file.\n");
+    }
+  else
+    {
+      printf("Read one byte: 0x%02x\n", (unsigned char) buf);
+    }
+
+  close(fd);
+}
+
+error_t
+journal_node_read(struct node *np, off_t offset, void *buf, size_t len)
+{
+
+  fprintf (stderr, "[INFO] Entered node read.\n");
+  error_t err;
+  mach_msg_type_number_t rdlen = len;
+
+  // Lock node before accessing
+  pthread_mutex_lock(&np->lock);
+
+  if (offset < 0 || offset > np->dn_stat.st_size)
+    {
+      pthread_mutex_unlock(&np->lock);
+      return EINVAL;
+    }
+
+  if (offset + len > np->dn_stat.st_size)
+    rdlen = np->dn_stat.st_size - offset;
+
+  if (rdlen == 0)
+    err = 0;
+  else
+    err = _diskfs_rdwr_internal(np, buf, offset, &rdlen, 0, 0);
+
+  fprintf (stderr, "[INFO] err is %u.\n", err);
+  pthread_mutex_unlock(&np->lock);
+  return err ?: (int)rdlen;
+}
 
 void
 test (void)
 {
   fprintf (stderr, "[INFO] Entered test\n");
+  test_read_journal_early ();
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
- 
+  char byte; 
   error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
   if (err)
     {
@@ -536,7 +598,18 @@ test (void)
       diskfs_nput (root);
       return;
     }
-
+  struct node * tmp_node = NULL;
+  err = diskfs_cached_lookup (82814, &tmp_node);
+  if (!err) {
+    fprintf (stderr, "[INFO] seems i got the journal file node here. Ino: %llu \n", tmp_node->dn_stat.st_ino); 
+    pthread_mutex_unlock(&tmp_node->lock);
+    if (journal_node_read(tmp_node, 0, &byte, 1) >= 0)
+      printf("First byte of journal: 0x%02x\n", byte & 0xff);
+    else
+      printf("Failed to read from node.\n");
+  }
+  if (tmp_node)
+    diskfs_nput (tmp_node);
   struct node *dir = NULL;
   err = mkdir_p (root, "hey/testdir", cred, &dir);
   if (!err && dir)
