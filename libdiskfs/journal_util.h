@@ -29,10 +29,6 @@
 
 #include <stdio.h>
 
-/* Inode range used to suppress excessive metadata changes from /dev.  */
-#define JOURNAL_INO_DENY_MIN 48794
-#define JOURNAL_INO_DENY_MAX 49200
-
 #ifndef JOURNAL_DEBUG
 #define JOURNAL_DEBUG 1 /* Set to enable (very chatty) debug messages. */
 #endif
@@ -89,7 +85,7 @@ journal_is_safe_stat (const struct stat *st)
 static inline bool
 journal_is_ino_denied (journal_ino_t ino)
 {
-	return ino == JOURNAL_RAW_INO || journal_inode_denylist_contains (journal_denylist, ino);
+	return ino == journal_raw_ino || journal_inode_denylist_contains (journal_denylist, ino);
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
