@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include <libdiskfs/journal_inode_set.h>
+#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/diskfs.h>
@@ -62,12 +62,12 @@ stack_pop (struct node **np_out, char *path_out)
 }
 
 error_t
-journal_scan_path_for_inos (const char *root_path)
+journal_scan_path_for_inos (const char *root_path, journal_inode_denylist_builder_t *builder)
 {
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
-  JOURNAL_LOG_DEBUG ("In scan paths!");
+  JOURNAL_LOG_DEBUG ("In scan paths!, path: %s", root_path);
   error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
   if (err)
     {
@@ -75,8 +75,6 @@ journal_scan_path_for_inos (const char *root_path)
       diskfs_nput (root);
       return err;
     }
-  inode_set_init ();		// clear the set
-
   struct node *start_np = NULL;
   err = diskfs_lookup_path (root_path, cred, &start_np);
   if (err || !S_ISDIR (start_np->dn_stat.st_mode))
@@ -86,7 +84,6 @@ journal_scan_path_for_inos (const char *root_path)
       return err;
     }
 
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: Got root path. ");
   stack_init ();
   stack_push (start_np, root_path);	// path not really needed here but could help later
   size_t count = 0;
@@ -140,7 +137,7 @@ journal_scan_path_for_inos (const char *root_path)
 	  mode_t mode = child_np->dn_stat.st_mode;
 	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
 
-	  inode_set_add (ino);
+          journal_inode_denylist_builder_add(builder, ino);
 	  JOURNAL_LOG_DEBUG ("denylist: found node %u (%s)",
 			     (unsigned) ino, name);
 	  count++;

@@ -168,7 +168,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   if (journal_is_ino_denied ((journal_ino_t) st->st_ino))
     {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu64 " in denylist.", st->st_ino);
       return;
     }
 

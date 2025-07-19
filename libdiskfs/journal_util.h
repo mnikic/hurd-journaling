@@ -24,7 +24,10 @@
 
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
-#include <libdiskfs/journal_inode_set.h>
+#include <libdiskfs/journal_inode_denylist.h>
+#include <libdiskfs/journal_globals.h>
+
+#include <stdio.h>
 
 /* Inode range used to suppress excessive metadata changes from /dev.  */
 #define JOURNAL_INO_DENY_MIN 48794
@@ -35,21 +38,21 @@
 #endif
 
 #define JOURNAL_LOG_ERROR(fmt, ...)                            \
-  do                                                           \
-    {                                                          \
-      fprintf (stderr, "[JOURNAL][ERROR] " fmt "\n", ##__VA_ARGS__); \
-      fflush (stderr);                                         \
-    }                                                          \
-  while (0)
+	do                                                           \
+{                                                          \
+	fprintf (stderr, "[JOURNAL][ERROR] " fmt "\n", ##__VA_ARGS__); \
+	fflush (stderr);                                         \
+}                                                          \
+while (0)
 
 #if JOURNAL_DEBUG
 #define JOURNAL_LOG_DEBUG(fmt, ...)                            \
-  do                                                           \
-    {                                                          \
-      fprintf (stderr, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__); \
-      fflush (stderr);                                         \
-    }                                                          \
-  while (0)
+	do                                                           \
+{                                                          \
+	fprintf (stderr, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__); \
+	fflush (stderr);                                         \
+}                                                          \
+while (0)
 #else
 #define JOURNAL_LOG_DEBUG(fmt, ...) do { } while (0)
 #endif
@@ -58,35 +61,35 @@
 static inline uint64_t
 index_to_offset (uint64_t index)
 {
-  return JOURNAL_RESERVED_SPACE
-         + (index % (uint64_t) JOURNAL_NUM_ENTRIES)
-         * (uint64_t) JOURNAL_ENTRY_SIZE;
+	return JOURNAL_RESERVED_SPACE
+		+ (index % (uint64_t) JOURNAL_NUM_ENTRIES)
+		* (uint64_t) JOURNAL_ENTRY_SIZE;
 }
 
 /* Check if a given stat structure describes a journal-safe file.  */
 static inline bool
 journal_is_safe_stat (const struct stat *st)
 {
-  if (st->st_mode == 0)
-    return false;
+	if (st->st_mode == 0)
+		return false;
 
-  if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
-    return false;
+	if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
+		return false;
 
-  if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
-    return false;
+	if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
+		return false;
 
-  if (S_ISLNK (st->st_mode))
-    return false;
+	if (S_ISLNK (st->st_mode))
+		return false;
 
-  return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
+	return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
 }
 
 /* Check if the inode is part of a denylist (typically noisy /dev nodes).  */
 static inline bool
 journal_is_ino_denied (journal_ino_t ino)
 {
-  return ino == JOURNAL_RAW_INO || inode_set_contains(ino);
+	return ino == JOURNAL_RAW_INO || journal_inode_denylist_contains (journal_denylist, ino);
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
