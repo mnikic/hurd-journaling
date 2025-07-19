@@ -23,10 +23,11 @@
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/crc32.h>
+#include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
-#include <libdiskfs/diskfs.h>
+#include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/journal_apply.h>
 #include <libdiskfs/journal_inode_scanner.h>
 #include <libdiskfs/journal_inode_denylist.h>
@@ -54,6 +55,7 @@
 
 static journal_inode_denylist_t denylist_instance;
 const journal_inode_denylist_t *journal_denylist = &denylist_instance;
+journal_ino_t journal_raw_ino;
 
 struct journal_entries
 {
@@ -107,25 +109,17 @@ sort_entries (struct journal_entries *list)
  * Returns true on success, false on error. Uses arena for memory.
  */
 static bool
-fetch_and_validate_journal (struct journal_arena *arena,
+fetch_and_validate_journal (struct node *journal_node,
+			    struct journal_arena *arena,
 			    struct journal_entries *out_entries)
 {
-  struct node *journal_node = NULL;
-  error_t err = diskfs_cached_lookup (JOURNAL_RAW_INO, &journal_node);
-  if (err || !journal_node)
-    {
-      JOURNAL_LOG_ERROR ("Could not access journal node. Skipping replay.");
-      return false;
-    }
-
   struct journal_header hdr = { 0 };
   if (!journal_node_read_and_validate_header (journal_node, &hdr))
     {
-      diskfs_nput (journal_node);
       return false;
     }
 
-  JOURNAL_LOG_DEBUG ("Header start index %llu, end index %llu",
+  JOURNAL_LOG_DEBUG ("Header: start index %llu, end index %llu",
 		     hdr.start_index, hdr.end_index);
 
   out_entries->count = 0;
@@ -135,13 +129,11 @@ fetch_and_validate_journal (struct journal_arena *arena,
   if (!out_entries->entries)
     {
       JOURNAL_LOG_ERROR ("Failed to allocate journal entry list");
-      diskfs_nput (journal_node);
       return false;
     }
 
   uint64_t index = hdr.start_index;
   uint64_t end_index = hdr.end_index;
-  bool all_good = true;
 
   while (index != end_index)
     {
@@ -151,35 +143,48 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	{
 	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
 			     index);
-	  all_good = false;
-	  break;
+	  return false;
 	}
       if (!journal_node_read_and_validate_entry
 	  (journal_node, index, payload))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("CRC check failed or corrupted payload at index %llu", index);
-	  all_good = false;
-	  break;
+	  return false;
 	}
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0)
 	{
 	  JOURNAL_LOG_ERROR
 	    ("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
 	     payload->action, payload->ino, index, payload->tx_id);
-	  all_good = false;
-	  break;
+	  return false;
 	}
       if (!add_event_to_list (out_entries, payload))
 	{
-	  all_good = false;
-	  break;
+	  return false;
 	}
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
 
-  diskfs_nput (journal_node);
-  return all_good;
+  return true;
+}
+
+static void
+journal_init_state (journal_ino_t journal_ino)
+{
+  JOURNAL_LOG_DEBUG ("In init state. journal inode=%u.", journal_ino);
+
+  journal_inode_denylist_builder_t builder =
+    journal_inode_denylist_builder_init ();
+
+  journal_scan_path_for_inos ("/dev", &builder);
+  journal_scan_path_for_inos ("/var/log", &builder);
+  // add the journal itself, we don't need updates of our updates to the file.
+  journal_inode_denylist_builder_add (&builder, journal_ino);
+  // initialize the value globaly. We need it
+  journal_raw_ino = journal_ino; 
+  // Finalize into global denylist instance
+  denylist_instance = journal_inode_denylist_finalize (&builder);
 }
 
 /*
@@ -187,30 +192,58 @@ fetch_and_validate_journal (struct journal_arena *arena,
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay_from_file(const char *path)
+journal_replay_from_file (const char *path)
 {
   (void) path;
-  JOURNAL_LOG_DEBUG("Starting journal validation.");
+  JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
 
-  journal_inode_denylist_builder_t builder = journal_inode_denylist_builder_init();
-  journal_scan_path_for_inos("/dev", &builder);
-  journal_scan_path_for_inos("/var/log", &builder);
+  struct node *root = diskfs_root_node;
+  struct protid *cred = NULL;
+  diskfs_nref (root);
 
-  // Finalize into global denylist instance
-  denylist_instance = journal_inode_denylist_finalize(&builder);
+  error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR
+	("Not able to create credentials. Don't have journal file found at '%s'. Running without persistence. To enable journaling, create the file with at least %u bytes of space.",
+	 RAW_DEVICE_PATH, RAW_DEVICE_SIZE);
+      diskfs_nput (root);
+      return;
+    }
+  struct node *journal_node = NULL;
+  err = diskfs_lookup_path (RAW_DEVICE_PATH, cred, &journal_node);
+  if (err || !journal_node)
+    {
+      JOURNAL_LOG_ERROR
+	("No journal file found at '%s'. Running without persistence. To enable journaling, create the file with at least %u bytes of space.",
+	 RAW_DEVICE_PATH, RAW_DEVICE_SIZE);
+      diskfs_nput (root);
+      ports_port_deref (cred);
+      return;
+    }
 
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
       JOURNAL_LOG_ERROR
 	("Unable to allocate enough memory for journal replay. Aborting!");
+      diskfs_nput (journal_node);
+      diskfs_nput (root);
+      ports_port_deref (cred);
+      // Even if replay fails, enable journaling to start capturing future metadata
       journal_enabled = true;
       return;
     }
 
+  journal_init_state ((journal_ino_t) journal_node->dn_stat.st_ino);
   struct journal_entries list = { 0 };
-  bool success = fetch_and_validate_journal (arena, &list);
+  bool success = fetch_and_validate_journal (journal_node, arena, &list);
+
+  // clean these up regardless, we don't need them going forward
+  diskfs_nput (journal_node);
+  diskfs_nput (root);
+  ports_port_deref (cred);
 
   if (!success)
     {
