@@ -24,13 +24,14 @@
 
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
+#include <libdiskfs/journal_inode_set.h>
 
 /* Inode range used to suppress excessive metadata changes from /dev.  */
 #define JOURNAL_INO_DENY_MIN 48794
 #define JOURNAL_INO_DENY_MAX 49200
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 0 /* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 1 /* Set to enable (very chatty) debug messages. */
 #endif
 
 #define JOURNAL_LOG_ERROR(fmt, ...)                            \
@@ -85,8 +86,7 @@ journal_is_safe_stat (const struct stat *st)
 static inline bool
 journal_is_ino_denied (journal_ino_t ino)
 {
-  return ino == JOURNAL_RAW_INO
-         || (ino >= JOURNAL_INO_DENY_MIN && ino <= JOURNAL_INO_DENY_MAX);
+  return ino == JOURNAL_RAW_INO || inode_set_contains(ino);
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */

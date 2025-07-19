@@ -28,6 +28,7 @@
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_apply.h>
+#include <libdiskfs/journal_inode_scanner.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -180,6 +181,9 @@ journal_replay_from_file (const char *path)
   (void) path;
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
+
+  journal_scan_path_for_inos("/dev");
+  journal_scan_path_for_inos("/var/log");
 
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
