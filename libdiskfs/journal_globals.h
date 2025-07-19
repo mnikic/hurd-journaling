@@ -22,6 +22,8 @@
 #ifndef LIBDISKFS_JOURNAL_GLOBALS_H
 #define LIBDISKFS_JOURNAL_GLOBALS_H
 
+#include <libdiskfs/journal_inode_denylist.h>
+
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,6 +32,8 @@
 extern volatile size_t journal_dropped_events;
 extern volatile bool journal_device_ready;
 extern volatile bool journal_enabled;
+
+extern const journal_inode_denylist_t *journal_denylist;
 
 extern pthread_mutex_t queue_lock;
 extern pthread_cond_t queue_cond;

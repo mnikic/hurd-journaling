@@ -29,6 +29,7 @@
 #include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_apply.h>
 #include <libdiskfs/journal_inode_scanner.h>
+#include <libdiskfs/journal_inode_denylist.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,9 @@
                             + REPLAY_STATE_SIZE\
                             + (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE))), 8) * 1.5)
 
+static journal_inode_denylist_t denylist_instance;
+const journal_inode_denylist_t *journal_denylist = &denylist_instance;
+
 struct journal_entries
 {
   struct journal_payload_bin **entries;
@@ -60,12 +64,12 @@ struct journal_entries
 
 static bool
 add_event_to_list (struct journal_entries *list,
-                   struct journal_payload_bin *entry)
+		   struct journal_payload_bin *entry)
 {
   if (list->count == list->capacity)
     {
       JOURNAL_LOG_ERROR ("Too many journal entries. Parsed %zu entries.",
-                         list->count);
+			 list->count);
       return false;
     }
   list->entries[list->count++] = entry;
@@ -75,8 +79,10 @@ add_event_to_list (struct journal_entries *list,
 static int
 compare_entries_by_time_then_txid (const void *a, const void *b)
 {
-  const struct journal_payload_bin *entry_a = *(const struct journal_payload_bin **) a;
-  const struct journal_payload_bin *entry_b = *(const struct journal_payload_bin **) b;
+  const struct journal_payload_bin *entry_a =
+    *(const struct journal_payload_bin **) a;
+  const struct journal_payload_bin *entry_b =
+    *(const struct journal_payload_bin **) b;
 
   if (entry_a->timestamp_ms < entry_b->timestamp_ms)
     return -1;
@@ -93,7 +99,7 @@ static void
 sort_entries (struct journal_entries *list)
 {
   qsort (list->entries, list->count,
-         PAYLOAD_PTR_SIZE, compare_entries_by_time_then_txid);
+	 PAYLOAD_PTR_SIZE, compare_entries_by_time_then_txid);
 }
 
 /*
@@ -102,7 +108,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-                             struct journal_entries *out_entries)
+			    struct journal_entries *out_entries)
 {
   struct node *journal_node = NULL;
   error_t err = diskfs_cached_lookup (JOURNAL_RAW_INO, &journal_node);
@@ -120,10 +126,11 @@ fetch_and_validate_journal (struct journal_arena *arena,
     }
 
   JOURNAL_LOG_DEBUG ("Header start index %llu, end index %llu",
-                     hdr.start_index, hdr.end_index);
+		     hdr.start_index, hdr.end_index);
 
   out_entries->count = 0;
-  out_entries->entries = journal_arena_alloc (arena, JOURNAL_NUM_ENTRIES * PAYLOAD_PTR_SIZE);
+  out_entries->entries =
+    journal_arena_alloc (arena, JOURNAL_NUM_ENTRIES * PAYLOAD_PTR_SIZE);
   out_entries->capacity = JOURNAL_NUM_ENTRIES;
   if (!out_entries->entries)
     {
@@ -139,31 +146,35 @@ fetch_and_validate_journal (struct journal_arena *arena,
   while (index != end_index)
     {
       struct journal_payload_bin *payload =
-        journal_arena_alloc (arena, PAYLOAD_SIZE);
+	journal_arena_alloc (arena, PAYLOAD_SIZE);
       if (!payload)
-        {
-          JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu", index);
-          all_good = false;
-          break;
-        }
-      if (!journal_node_read_and_validate_entry (journal_node, index, payload))
-        {
-          JOURNAL_LOG_ERROR ("CRC check failed or corrupted payload at index %llu", index);
-          all_good = false;
-          break;
-        }
+	{
+	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
+			     index);
+	  all_good = false;
+	  break;
+	}
+      if (!journal_node_read_and_validate_entry
+	  (journal_node, index, payload))
+	{
+	  JOURNAL_LOG_ERROR
+	    ("CRC check failed or corrupted payload at index %llu", index);
+	  all_good = false;
+	  break;
+	}
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0)
-        {
-          JOURNAL_LOG_ERROR ("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
-                             payload->action, payload->ino, index, payload->tx_id);
-          all_good = false;
-          break;
-        }
+	{
+	  JOURNAL_LOG_ERROR
+	    ("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
+	     payload->action, payload->ino, index, payload->tx_id);
+	  all_good = false;
+	  break;
+	}
       if (!add_event_to_list (out_entries, payload))
-        {
-          all_good = false;
-          break;
-        }
+	{
+	  all_good = false;
+	  break;
+	}
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
 
@@ -176,19 +187,24 @@ fetch_and_validate_journal (struct journal_arena *arena,
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay_from_file (const char *path)
+journal_replay_from_file(const char *path)
 {
   (void) path;
-  JOURNAL_LOG_DEBUG ("Starting journal validation.");
+  JOURNAL_LOG_DEBUG("Starting journal validation.");
   journal_enabled = false;
 
-  journal_scan_path_for_inos("/dev");
-  journal_scan_path_for_inos("/var/log");
+  journal_inode_denylist_builder_t builder = journal_inode_denylist_builder_init();
+  journal_scan_path_for_inos("/dev", &builder);
+  journal_scan_path_for_inos("/var/log", &builder);
+
+  // Finalize into global denylist instance
+  denylist_instance = journal_inode_denylist_finalize(&builder);
 
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
-      JOURNAL_LOG_ERROR ("Unable to allocate enough memory for journal replay. Aborting!");
+      JOURNAL_LOG_ERROR
+	("Unable to allocate enough memory for journal replay. Aborting!");
       journal_enabled = true;
       return;
     }
@@ -198,7 +214,8 @@ journal_replay_from_file (const char *path)
 
   if (!success)
     {
-      JOURNAL_LOG_ERROR ("Aborting replay due to validation failure. No entries replayed.");
+      JOURNAL_LOG_ERROR
+	("Aborting replay due to validation failure. No entries replayed.");
       goto CLEANUP;
     }
 
@@ -222,4 +239,3 @@ CLEANUP:
   journal_arena_destroy (arena);
   journal_enabled = true;
 }
-
