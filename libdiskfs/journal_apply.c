@@ -121,6 +121,13 @@ apply_node_replay (inode_replay_state_t *state)
       changes++;
     }
 
+  if (state->has_atime && np->dn_stat.st_atime < state->atime)
+    {
+      APPEND_CHANGE ("atime");
+      np->dn_stat.st_atime = state->atime;
+      changes++;
+    }
+
   if (state->has_flags && np->dn_stat.st_flags != state->flags)
     {
       APPEND_CHANGE ("flags 0x%x", state->flags);

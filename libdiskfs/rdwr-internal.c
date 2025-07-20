@@ -19,6 +19,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <hurd/pager.h>
+#include <libdiskfs/journal.h>
 
 /* Actually read or write a file.  The file size must already permit
    the requested access.  NP is the file to read/write.  DATA is a buffer
@@ -73,6 +74,14 @@ _diskfs_rdwr_internal (struct node *np, char *data, off_t offset,
 	np->dn_set_mtime = 1;
       else if (atime_should_update (np))
 	np->dn_set_atime = 1;
+    }
+
+  if (!diskfs_check_readonly () && !notime && !dir && atime_should_update (np))
+    {
+      struct journal_entry_info info = {
+        .action = JOURNAL_ACTION_UTIME,
+      };
+      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
     }
 
   mach_port_deallocate (mach_task_self (), memobj);

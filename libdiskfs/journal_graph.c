@@ -274,6 +274,12 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       replay->ctime = ev->ctime;
     }
 
+  if (ev->has_atime && (!replay->has_atime || ev->atime > replay->atime))
+    {
+      replay->has_atime = true;
+      replay->atime = ev->atime;
+    }
+
   maybe_set_name (replay, ev);
 }
 
