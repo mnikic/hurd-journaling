@@ -182,7 +182,7 @@ journal_init_state (journal_ino_t journal_ino)
   // add the journal itself, we don't need updates of our updates to the file.
   journal_inode_denylist_builder_add (&builder, journal_ino);
   // initialize the value globaly. We need it
-  journal_raw_ino = journal_ino; 
+  journal_raw_ino = journal_ino;
   // Finalize into global denylist instance
   denylist_instance = journal_inode_denylist_finalize (&builder);
 }

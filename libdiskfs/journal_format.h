@@ -28,7 +28,7 @@
 #include <libdiskfs/journal.h>
 #include <libdiskfs/journal_config.h>
 
-#define JOURNAL_MAGIC    0x4A4E4C30  /* "JNL0" */
+#define JOURNAL_MAGIC    0x4A4E4C30	/* "JNL0" */
 #define JOURNAL_VERSION  1
 #define MAX_FIELD_LEN    256
 
@@ -92,27 +92,27 @@ struct journal_payload
 /* Header of the journal, keeping the state of iteration across reboots */
 struct __attribute__((__packed__)) journal_header
 {
-	uint32_t magic;
-	uint32_t version;
-	uint64_t start_index;
-	uint64_t end_index;
-	uint32_t crc32;
+  uint32_t magic;
+  uint32_t version;
+  uint64_t start_index;
+  uint64_t end_index;
+  uint32_t crc32;
 };
 
 /* Envelope of journal_payload_bin to include magic, version and crc32 and to pad it to JOURNAL_ENTRY_SIZE */
 struct __attribute__((__packed__)) journal_entry_bin
 {
-	uint32_t magic;
-	uint32_t version;
-	struct journal_payload_bin payload;
-	uint8_t padding[JOURNAL_ENTRY_SIZE - sizeof (uint32_t) - sizeof (uint32_t) -
-		sizeof (struct journal_payload_bin) - sizeof (uint32_t)];
-	uint32_t crc32;
+  uint32_t magic;
+  uint32_t version;
+  struct journal_payload_bin payload;
+  uint8_t padding[JOURNAL_ENTRY_SIZE - sizeof (uint32_t) - sizeof (uint32_t) -
+		  sizeof (struct journal_payload_bin) - sizeof (uint32_t)];
+  uint32_t crc32;
 };
 
-_Static_assert(sizeof(struct journal_payload_bin) <=
-               (JOURNAL_ENTRY_SIZE - sizeof(uint32_t) - sizeof(uint32_t) - sizeof(uint32_t)),
-               "journal_payload_bin too large to fit in journal_entry_bin");
+_Static_assert (sizeof (struct journal_payload_bin) <=
+		(JOURNAL_ENTRY_SIZE - sizeof (uint32_t) - sizeof (uint32_t) -
+		 sizeof (uint32_t)),
+		"journal_payload_bin too large to fit in journal_entry_bin");
 
 #endif /* LIBDISKFS_JOURNAL_FORMAT_H */
-

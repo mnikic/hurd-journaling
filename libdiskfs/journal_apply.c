@@ -38,27 +38,28 @@
   } while (0)
 
 error_t
-apply_node_replay (inode_replay_state_t *state)
+apply_node_replay (inode_replay_state_t * state)
 {
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
     {
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
-                          " below REPLAY_MIN_INO (%d) skipping as potentially system-critical",
-                          state->ino, JOURNAL_REPLAY_MIN_INO);
+			 " below REPLAY_MIN_INO (%d) skipping as potentially system-critical",
+			 state->ino, JOURNAL_REPLAY_MIN_INO);
       return 0;
     }
 
-  if (journal_is_ino_denied (state->ino)) 
+  if (journal_is_ino_denied (state->ino))
     {
       JOURNAL_LOG_DEBUG ("inode %" PRIu32 " in denylist.", state->ino);
       return 0;
-    } 
+    }
 
   struct node *np = NULL;
   error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
   if (err || !np)
     {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": lookup failed: %s", state->ino, strerror(err));
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": lookup failed: %s", state->ino,
+			 strerror (err));
       return err ? err : ENOENT;
     }
 
@@ -68,7 +69,8 @@ apply_node_replay (inode_replay_state_t *state)
       return 0;
     }
 
-  if ((int64_t) np->dn_stat.st_mtime < 0 || (int64_t) np->dn_stat.st_ctime < 0)
+  if ((int64_t) np->dn_stat.st_mtime < 0
+      || (int64_t) np->dn_stat.st_ctime < 0)
     {
       diskfs_nput (np);
       return 0;
@@ -86,14 +88,16 @@ apply_node_replay (inode_replay_state_t *state)
   size_t desc_len = 0;
   bool first = true;
 
-  if (state->has_uid && state->uid != (uid_t) -1 && np->dn_stat.st_uid != state->uid)
+  if (state->has_uid && state->uid != (uid_t) - 1
+      && np->dn_stat.st_uid != state->uid)
     {
       APPEND_CHANGE ("uid");
       np->dn_stat.st_uid = state->uid;
       changes++;
     }
 
-  if (state->has_gid && state->gid != (gid_t) -1 && np->dn_stat.st_gid != state->gid)
+  if (state->has_gid && state->gid != (gid_t) - 1
+      && np->dn_stat.st_gid != state->gid)
     {
       APPEND_CHANGE ("gid");
       np->dn_stat.st_gid = state->gid;
@@ -138,12 +142,14 @@ apply_node_replay (inode_replay_state_t *state)
   if (changes > 0)
     {
 #if JOURNAL_REPLAY_DRY_RUN
-      JOURNAL_LOG_DEBUG ("[DRY_RUN] inode %" PRIu32 ": %d metadata changes would be applied: [%s]",
-                         state->ino, changes, change_desc);
+      JOURNAL_LOG_DEBUG ("[DRY_RUN] inode %" PRIu32
+			 ": %d metadata changes would be applied: [%s]",
+			 state->ino, changes, change_desc);
 #else
       diskfs_node_update (np, 1);
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": %d metadata changes applied: [%s]",
-                         state->ino, changes, change_desc);
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32
+			 ": %d metadata changes applied: [%s]", state->ino,
+			 changes, change_desc);
 #endif
     }
   else
@@ -154,4 +160,3 @@ apply_node_replay (inode_replay_state_t *state)
   diskfs_nput (np);
   return 0;
 }
-

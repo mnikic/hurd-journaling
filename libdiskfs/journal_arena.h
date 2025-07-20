@@ -43,4 +43,3 @@ void *journal_arena_alloc (struct journal_arena *a, size_t sz);
 void journal_arena_destroy (struct journal_arena *a);
 
 #endif /* LIBDISKFS_JOURNAL_ARENA_H */
-

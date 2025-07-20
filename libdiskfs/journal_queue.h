@@ -39,4 +39,3 @@ bool journal_enqueue (const char *data, size_t len);
 void *journal_flusher_thread (void *arg);
 
 #endif /* LIBDISKFS_JOURNAL_QUEUE_H */
-

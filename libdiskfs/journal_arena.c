@@ -51,7 +51,7 @@ journal_arena_alloc (struct journal_arena *a, size_t sz)
     return NULL;
 
   void *ptr = a->base + a->offset;
-  a->offset += (sz + 7) & ~((size_t)7); // Align to 8 bytes
+  a->offset += (sz + 7) & ~((size_t) 7);	// Align to 8 bytes
   return ptr;
 }
 
@@ -63,4 +63,3 @@ journal_arena_destroy (struct journal_arena *a)
   free (a->base);
   free (a);
 }
-

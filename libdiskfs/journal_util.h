@@ -30,7 +30,7 @@
 #include <stdio.h>
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 1 /* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 1		/* Set to enable (very chatty) debug messages. */
 #endif
 
 #define JOURNAL_LOG_ERROR(fmt, ...)                            \
@@ -57,36 +57,36 @@ while (0)
 static inline uint64_t
 index_to_offset (uint64_t index)
 {
-	return JOURNAL_RESERVED_SPACE
-		+ (index % (uint64_t) JOURNAL_NUM_ENTRIES)
-		* (uint64_t) JOURNAL_ENTRY_SIZE;
+  return JOURNAL_RESERVED_SPACE
+    + (index % (uint64_t) JOURNAL_NUM_ENTRIES)
+    * (uint64_t) JOURNAL_ENTRY_SIZE;
 }
 
 /* Check if a given stat structure describes a journal-safe file.  */
 static inline bool
 journal_is_safe_stat (const struct stat *st)
 {
-	if (st->st_mode == 0)
-		return false;
+  if (st->st_mode == 0)
+    return false;
 
-	if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
-		return false;
+  if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
+    return false;
 
-	if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
-		return false;
+  if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
+    return false;
 
-	if (S_ISLNK (st->st_mode))
-		return false;
+  if (S_ISLNK (st->st_mode))
+    return false;
 
-	return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
+  return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
 }
 
 /* Check if the inode is part of a denylist (typically noisy /dev nodes).  */
 static inline bool
 journal_is_ino_denied (journal_ino_t ino)
 {
-	return ino == journal_raw_ino || journal_inode_denylist_contains (journal_denylist, ino);
+  return ino == journal_raw_ino
+    || journal_inode_denylist_contains (journal_denylist, ino);
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
-
