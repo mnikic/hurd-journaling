@@ -57,7 +57,7 @@ get_inode (journal_ino_t ino)
   while (cur)
     {
       if (cur->ino == ino)
-        return cur;
+	return cur;
       cur = cur->next;
     }
   inode_graph_node_t *new_node = calloc (1, sizeof (inode_graph_node_t));
@@ -71,24 +71,24 @@ get_inode (journal_ino_t ino)
 }
 
 static void
-add_child (inode_graph_node_t *parent, journal_ino_t child_ino)
+add_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
   if (parent->num_children < JOURNAL_GRAPH_NODE_MAX_CHILDREN)
     parent->children[parent->num_children++] = child_ino;
 }
 
 static void
-remove_child (inode_graph_node_t *parent, journal_ino_t child_ino)
+remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
   for (int i = 0; i < parent->num_children; ++i)
     {
       if (parent->children[i] == child_ino)
-        {
-          for (int j = i; j < parent->num_children - 1; ++j)
-            parent->children[j] = parent->children[j + 1];
-          parent->num_children--;
-          break;
-        }
+	{
+	  for (int j = i; j < parent->num_children - 1; ++j)
+	    parent->children[j] = parent->children[j + 1];
+	  parent->num_children--;
+	  break;
+	}
     }
 }
 
@@ -103,14 +103,15 @@ safe_strncpy (char *dst, const char *src, size_t size)
 }
 
 static void
-maybe_set_name (inode_replay_state_t *ino, const struct journal_payload_bin *ev)
+maybe_set_name (inode_replay_state_t * ino,
+		const struct journal_payload_bin *ev)
 {
   if (strlen (ino->name) == 0)
     {
       if (strlen (ev->name) > 0)
-        safe_strncpy (ino->name, ev->name, sizeof (ino->name));
+	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
       else if (strlen (ev->new_name) > 0)
-        safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
+	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
     }
 }
 
@@ -161,7 +162,8 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
     case JOURNAL_ACTION_SYMLINK:
       ino->parent_ino = ev->parent_ino;
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
-      safe_strncpy (replay->symlink_target, ev->target, sizeof (replay->symlink_target));
+      safe_strncpy (replay->symlink_target, ev->target,
+		    sizeof (replay->symlink_target));
       ino->link_count = 1;
       ino->link_count_reliable = true;
       replay->is_deleted = false;
@@ -176,12 +178,12 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       remove_child (get_inode (ev->parent_ino), ev->ino);
       ino->link_count--;
       if (ino->link_count <= 0 && ino->link_count_reliable)
-        {
-          replay->is_deleted = true;
-          ino->num_children = 0;
-          replay->deleted_at_tx = ev->tx_id;
-          replay->deleted_at_timestamp = ev->timestamp_ms;
-        }
+	{
+	  replay->is_deleted = true;
+	  ino->num_children = 0;
+	  replay->deleted_at_tx = ev->tx_id;
+	  replay->deleted_at_timestamp = ev->timestamp_ms;
+	}
       break;
 
     case JOURNAL_ACTION_RMDIR:
@@ -190,15 +192,15 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       replay->deleted_at_tx = ev->tx_id;
       replay->deleted_at_timestamp = ev->timestamp_ms;
       for (int i = 0; i < ino->num_children; i++)
-        {
-          inode_graph_node_t *child = get_inode (ino->children[i]);
-          if (child && !child->replay.is_deleted)
-            {
-              child->replay.is_deleted = true;
-              child->replay.deleted_at_tx = ev->tx_id;
-              child->replay.deleted_at_timestamp = ev->timestamp_ms;
-            }
-        }
+	{
+	  inode_graph_node_t *child = get_inode (ino->children[i]);
+	  if (child && !child->replay.is_deleted)
+	    {
+	      child->replay.is_deleted = true;
+	      child->replay.deleted_at_tx = ev->tx_id;
+	      child->replay.deleted_at_timestamp = ev->timestamp_ms;
+	    }
+	}
       ino->num_children = 0;
       break;
 
@@ -214,48 +216,48 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
 
     case JOURNAL_ACTION_CHMOD:
       if (ev->has_mode)
-        {
-          replay->st_mode = ev->st_mode;
-          replay->has_st_mode = true;
-        }
+	{
+	  replay->st_mode = ev->st_mode;
+	  replay->has_st_mode = true;
+	}
       break;
 
     case JOURNAL_ACTION_CHOWN:
       if (ev->has_uid)
-        {
-          replay->uid = ev->uid;
-          replay->has_uid = true;
-        }
+	{
+	  replay->uid = ev->uid;
+	  replay->has_uid = true;
+	}
       if (ev->has_gid)
-        {
-          replay->gid = ev->gid;
-          replay->has_gid = true;
-        }
+	{
+	  replay->gid = ev->gid;
+	  replay->has_gid = true;
+	}
       break;
 
     case JOURNAL_ACTION_CHFLAGS:
       if (ev->has_flags)
-        {
-          replay->flags = ev->flags;
-          replay->has_flags = true;
-        }
+	{
+	  replay->flags = ev->flags;
+	  replay->has_flags = true;
+	}
       break;
 
     case JOURNAL_ACTION_CHAUTHOR:
       if (ev->has_uid)
-        {
-          replay->uid = ev->uid;
-          replay->has_uid = true;
-        }
+	{
+	  replay->uid = ev->uid;
+	  replay->has_uid = true;
+	}
       break;
 
     case JOURNAL_ACTION_TRUNCATE:
     case JOURNAL_ACTION_GROW:
       if (ev->has_size)
-        {
-          replay->st_size = ev->st_size;
-          replay->has_st_size = true;
-        }
+	{
+	  replay->st_size = ev->st_size;
+	  replay->has_st_size = true;
+	}
       break;
 
     default:
@@ -292,8 +294,8 @@ journal_graph_free (void)
 }
 
 size_t
-journal_graph_get_all (inode_replay_state_t ***out_list,
-                       struct journal_arena *arena)
+journal_graph_get_all (inode_replay_state_t *** out_list,
+		       struct journal_arena *arena)
 {
   size_t count = 0;
   inode_replay_state_t **result =
@@ -309,22 +311,22 @@ journal_graph_get_all (inode_replay_state_t ***out_list,
     {
       inode_graph_node_t *node = inode_hash[i];
       while (node)
-        {
-          if (!node->replay.is_deleted)
-            {
-              if (count >= JOURNAL_NUM_ENTRIES)
-                {
-                  JOURNAL_LOG_DEBUG ("journal_graph_get_all: overflow > %llu entries",
-                                     JOURNAL_NUM_ENTRIES);
-                  break;
-                }
-              result[count++] = &node->replay;
-            }
-          node = node->next;
-        }
+	{
+	  if (!node->replay.is_deleted)
+	    {
+	      if (count >= JOURNAL_NUM_ENTRIES)
+		{
+		  JOURNAL_LOG_DEBUG
+		    ("journal_graph_get_all: overflow > %llu entries",
+		     JOURNAL_NUM_ENTRIES);
+		  break;
+		}
+	      result[count++] = &node->replay;
+	    }
+	  node = node->next;
+	}
     }
 
   *out_list = result;
   return count;
 }
-

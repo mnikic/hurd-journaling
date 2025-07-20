@@ -62,7 +62,8 @@ stack_pop (struct node **np_out, char *path_out)
 }
 
 error_t
-journal_scan_path_for_inos (const char *root_path, journal_inode_denylist_builder_t *builder)
+journal_scan_path_for_inos (const char *root_path,
+			    journal_inode_denylist_builder_t * builder)
 {
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
@@ -137,7 +138,7 @@ journal_scan_path_for_inos (const char *root_path, journal_inode_denylist_builde
 	  mode_t mode = child_np->dn_stat.st_mode;
 	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
 
-          journal_inode_denylist_builder_add(builder, ino);
+	  journal_inode_denylist_builder_add (builder, ino);
 	  JOURNAL_LOG_DEBUG ("denylist: found node %u (%s)",
 			     (unsigned) ino, name);
 	  count++;
@@ -156,6 +157,7 @@ journal_scan_path_for_inos (const char *root_path, journal_inode_denylist_builde
       vm_deallocate (mach_task_self (), (vm_address_t) data, datacnt);
       diskfs_nput (start_np);
     }
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: complete. Found %u of inos.", count);
+  JOURNAL_LOG_DEBUG ("scan_path_for_inos: complete. Found %u of inos.",
+		     count);
   return 0;
 }

@@ -66,7 +66,7 @@ journal_node_read (struct node *np, off_t offset, void *buf, size_t len)
  */
 bool
 journal_node_read_and_validate_header (struct node *np,
-                                       struct journal_header *out)
+				       struct journal_header *out)
 {
   char buf[sizeof (struct journal_header)] = { 0 };
   error_t err =
@@ -79,7 +79,7 @@ journal_node_read_and_validate_header (struct node *np,
 
   struct journal_header *hdr = (struct journal_header *) buf;
   uint32_t expected_crc = hdr->crc32;
-  hdr->crc32 = 0; // Zero before CRC computation, as expected during write
+  hdr->crc32 = 0;		// Zero before CRC computation, as expected during write
   uint32_t actual_crc =
     crc32 ((const void *) hdr, sizeof (struct journal_header));
   if (actual_crc != expected_crc || hdr->magic != JOURNAL_MAGIC
@@ -107,7 +107,7 @@ journal_node_read_and_validate_header (struct node *np,
  */
 bool
 journal_node_read_and_validate_entry (struct node *np, uint64_t index,
-                                      struct journal_payload_bin *out)
+				      struct journal_payload_bin *out)
 {
   char buf[JOURNAL_ENTRY_SIZE] = { 0 };
   uint64_t offset = index_to_offset (index);
@@ -115,36 +115,38 @@ journal_node_read_and_validate_entry (struct node *np, uint64_t index,
     journal_node_read (np, (off_t) offset, buf, JOURNAL_ENTRY_SIZE);
   if (err)
     {
-      JOURNAL_LOG_DEBUG ("journal_node_read failed at offset %ld.", (long) offset);
+      JOURNAL_LOG_DEBUG ("journal_node_read failed at offset %ld.",
+			 (long) offset);
       return false;
     }
 
   struct journal_entry_bin *entry = (struct journal_entry_bin *) buf;
   if (entry->magic != JOURNAL_MAGIC)
     {
-      JOURNAL_LOG_DEBUG ("Bad journal entry magic at offset %ld.", (long) offset);
+      JOURNAL_LOG_DEBUG ("Bad journal entry magic at offset %ld.",
+			 (long) offset);
       return false;
     }
 
   if (entry->version != JOURNAL_VERSION)
     {
       JOURNAL_LOG_DEBUG ("Journal entry version mismatch at offset %ld",
-                         (long) offset);
+			 (long) offset);
       return false;
     }
 
   uint32_t stored_crc = entry->crc32;
-  entry->crc32 = 0; // Zero before CRC computation, as expected during write
+  entry->crc32 = 0;		// Zero before CRC computation, as expected during write
   uint32_t actual_entry_crc = crc32 ((const char *) &entry->payload,
-                                     sizeof (struct journal_payload_bin));
+				     sizeof (struct journal_payload_bin));
 
   if (actual_entry_crc != stored_crc)
     {
-      JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at offset %ld.", (long) offset);
+      JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at offset %ld.",
+			 (long) offset);
       return false;
     }
 
   *out = entry->payload;
   return true;
 }
-

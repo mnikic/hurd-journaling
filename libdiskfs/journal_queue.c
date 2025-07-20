@@ -167,4 +167,3 @@ journal_flusher_thread (void *arg)
     }
   return NULL;
 }
-

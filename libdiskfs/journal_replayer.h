@@ -25,4 +25,3 @@
 void journal_replay_from_file (const char *path);
 
 #endif /* LIBDISKFS_JOURNAL_REPLAYER_H */
-

@@ -51,9 +51,9 @@ typedef enum
 struct journal_entry_info
 {
   /* Identity and naming.  */
-  journal_action_t action;      /* e.g. "create", "unlink", "rename" */
-  const char *name;             /* Affected file name */
-  ino_t parent_ino;             /* Parent directory inode */
+  journal_action_t action;	/* e.g. "create", "unlink", "rename" */
+  const char *name;		/* Affected file name */
+  ino_t parent_ino;		/* Parent directory inode */
 
   /* Rename-specific fields.  */
   const char *old_name;
@@ -100,11 +100,10 @@ void journal_shutdown (void);
    INFO describes the metadata event.
    DURABILITY controls sync/async mode.  */
 void journal_log_metadata (void *node_ptr,
-                           const struct journal_entry_info *info,
-                           journal_durability_t durability);
+			   const struct journal_entry_info *info,
+			   journal_durability_t durability);
 
 /* Perform early journal replay before RPCs are enabled.  */
 void journal_restore (void);
 
 #endif /* LIBDISKFS_JOURNAL_H */
-

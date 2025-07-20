@@ -31,12 +31,12 @@
 /* Final resolved state for a single inode, used during replay */
 typedef struct inode_replay_state
 {
-  journal_ino_t ino;         /* Always required during replay */
-  bool is_deleted;           /* Strong signal: only set when deletion is certain. Never speculative. */
-  char *resolved_path;       /* Set by path resolution scan */
+  journal_ino_t ino;		/* Always required during replay */
+  bool is_deleted;		/* Strong signal: only set when deletion is certain. Never speculative. */
+  char *resolved_path;		/* Set by path resolution scan */
 
-  uint64_t last_seen;        /* Last event timestamp (to skip stale entries) */
-  uint64_t last_tx;          /* Last transaction affecting this inode */
+  uint64_t last_seen;		/* Last event timestamp (to skip stale entries) */
+  uint64_t last_tx;		/* Last transaction affecting this inode */
   uint64_t deleted_at_tx;
   uint64_t deleted_at_timestamp;
 
@@ -93,8 +93,7 @@ void journal_graph_free (void);
 
 /* Return a list of all resolved replay states (allocated in arena).
    Caller gets ownership of the list. */
-size_t journal_graph_get_all (inode_replay_state_t ***out_list,
-                              struct journal_arena *arena);
+size_t journal_graph_get_all (inode_replay_state_t *** out_list,
+			      struct journal_arena *arena);
 
 #endif /* LIBDISKFS_JOURNAL_GRAPH_H */
-

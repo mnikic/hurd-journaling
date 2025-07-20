@@ -29,24 +29,29 @@
 #define MAX_INODE_VALUE 131072
 #define INODE_BITSET_SIZE (MAX_INODE_VALUE / 8)
 
-typedef struct {
+typedef struct
+{
   uint8_t bits[INODE_BITSET_SIZE];
 } journal_inode_denylist_builder_t;
 
-typedef struct {
+typedef struct
+{
   const uint8_t *bits;
 } journal_inode_denylist_t;
 
 /** Initialize a new denylist builder (zeroed). */
-journal_inode_denylist_builder_t journal_inode_denylist_builder_init(void);
+journal_inode_denylist_builder_t journal_inode_denylist_builder_init (void);
 
 /** Add an inode to the denylist builder. */
-void journal_inode_denylist_builder_add(journal_inode_denylist_builder_t *builder, journal_ino_t ino);
+void journal_inode_denylist_builder_add (journal_inode_denylist_builder_t *
+					 builder, journal_ino_t ino);
 
 /** Finalize the builder into a read-only denylist view. */
-journal_inode_denylist_t journal_inode_denylist_finalize(journal_inode_denylist_builder_t *builder);
+journal_inode_denylist_t
+journal_inode_denylist_finalize (journal_inode_denylist_builder_t * builder);
 
 /** Check if the given inode is in the denylist. */
-bool journal_inode_denylist_contains(const journal_inode_denylist_t *set, journal_ino_t ino);
+bool journal_inode_denylist_contains (const journal_inode_denylist_t * set,
+				      journal_ino_t ino);
 
 #endif // LIBDISKFS_JOURNAL_INODE_DENYLIST_H

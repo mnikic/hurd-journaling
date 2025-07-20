@@ -27,12 +27,11 @@
 
 /* Read and validate the journal header from the given node. */
 bool journal_node_read_and_validate_header (struct node *n,
-                                            struct journal_header *out);
+					    struct journal_header *out);
 
 /* Read and validate a journal entry at the given index from the journal node. */
 bool journal_node_read_and_validate_entry (struct node *n,
-                                           uint64_t index,
-                                           struct journal_payload_bin *out);
+					   uint64_t index,
+					   struct journal_payload_bin *out);
 
 #endif /* LIBDISKFS_JOURNAL_IO_H */
-

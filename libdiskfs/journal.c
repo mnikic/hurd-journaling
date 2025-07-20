@@ -153,9 +153,10 @@ journal_restore (void)
 }
 
 static inline bool
-should_log_time(time_t value, int flag_set)
+should_log_time (time_t value, int flag_set)
 {
-  return flag_set || (value > MIN_REASONABLE_TIME && value < MAX_REASONABLE_TIME);
+  return flag_set || (value > MIN_REASONABLE_TIME
+		      && value < MAX_REASONABLE_TIME);
 }
 
 void
@@ -175,7 +176,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 	("NULL info pointer received in journal_log_metadata, skipping.");
       return;
     }
-  const struct node * np = (struct node *) node_ptr;
+  const struct node *np = (struct node *) node_ptr;
   const struct stat *st = &np->dn_stat;
 
   if (journal_is_ino_denied ((journal_ino_t) st->st_ino))
@@ -222,17 +223,17 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->st_nlink = st->st_nlink;
   entry->st_blocks = st->st_blocks;
 
-  if (should_log_time(st->st_mtime, np->dn_set_mtime))
+  if (should_log_time (st->st_mtime, np->dn_set_mtime))
     {
       entry->mtime = st->st_mtime;
       entry->has_mtime = true;
     }
-  if (should_log_time(st->st_ctime, np->dn_set_ctime))
+  if (should_log_time (st->st_ctime, np->dn_set_ctime))
     {
       entry->ctime = st->st_ctime;
       entry->has_ctime = true;
     }
-  if (should_log_time(st->st_atime, np->dn_set_atime))
+  if (should_log_time (st->st_atime, np->dn_set_atime))
     {
       entry->atime = st->st_atime;
       entry->has_atime = true;

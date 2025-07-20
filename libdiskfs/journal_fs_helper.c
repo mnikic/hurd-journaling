@@ -122,4 +122,3 @@ diskfs_lookup_path (const char *path, struct protid *cred,
   *out_np = current;
   return 0;
 }
-

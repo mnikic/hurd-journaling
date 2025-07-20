@@ -41,4 +41,3 @@ extern pthread_mutex_t queue_lock;
 extern pthread_cond_t queue_cond;
 
 #endif /* LIBDISKFS_JOURNAL_GLOBALS_H */
-

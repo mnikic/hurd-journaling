@@ -25,7 +25,7 @@
 #include <libdiskfs/journal_inode_denylist.h>
 
 error_t
-journal_scan_path_for_inos (const char *dir_path, journal_inode_denylist_builder_t *builder);
+journal_scan_path_for_inos (const char *dir_path,
+			    journal_inode_denylist_builder_t * builder);
 
 #endif /*  LIBDISKFS_JOURNAL_INODE_SCANNER_H */
-
