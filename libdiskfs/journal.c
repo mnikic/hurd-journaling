@@ -43,7 +43,7 @@
 #include <hurd/fshelp.h>
 
 #define MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
-#define MIN_REASONABLE_TIME 315536400		/* Jan 1, 1980 */
+#define MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
@@ -78,14 +78,16 @@ journal_device_monitor_thread (void *arg)
 	      if (n == 1)
 		{
 		  journal_device_ready = true;
-		  JOURNAL_LOG_DEBUG ("All checks worked. Journal device is ready!");
+		  JOURNAL_LOG_DEBUG
+		    ("All checks worked. Journal device is ready!");
 		  pthread_mutex_lock (&queue_lock);
 		  pthread_cond_signal (&queue_cond);	// Wake queue flusher
 		  pthread_mutex_unlock (&queue_lock);
 		}
 	      else
 		{
-		  JOURNAL_LOG_DEBUG ("pread returned %zd, still not ready", n);
+		  JOURNAL_LOG_DEBUG ("pread returned %zd, still not ready",
+				     n);
 		}
 	    }
 	}
@@ -114,13 +116,15 @@ journal_init (void)
 
   journal_queue_init ();
 
-  if (pthread_create (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
+  if (pthread_create
+      (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
     {
       JOURNAL_LOG_ERROR ("Failed to create a flusher thread.");
       journal_shutting_down = true;
     }
 
-  if (pthread_create (&monitor_tid, NULL, journal_device_monitor_thread, NULL) != 0)
+  if (pthread_create (&monitor_tid, NULL, journal_device_monitor_thread, NULL)
+      != 0)
     {
       JOURNAL_LOG_ERROR ("Failed to start journal device monitor thread.");
     }
@@ -148,23 +152,31 @@ journal_restore (void)
   journal_replay_from_file (RAW_DEVICE_PATH);
 }
 
+static inline bool
+should_log_time(time_t value, int flag_set)
+{
+  return flag_set || (value > MIN_REASONABLE_TIME && value < MAX_REASONABLE_TIME);
+}
+
 void
 journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 		      journal_durability_t durability)
 {
   if (!node_ptr)
     {
-      JOURNAL_LOG_ERROR ("NULL node_ptr received in journal_log_metadata, skipping.");
+      JOURNAL_LOG_ERROR
+	("NULL node_ptr received in journal_log_metadata, skipping.");
       return;
     }
 
   if (!info)
     {
-      JOURNAL_LOG_ERROR ("NULL info pointer received in journal_log_metadata, skipping.");
+      JOURNAL_LOG_ERROR
+	("NULL info pointer received in journal_log_metadata, skipping.");
       return;
     }
-
-  const struct stat *st = &((struct node *) node_ptr)->dn_stat;
+  const struct node * np = (struct node *) node_ptr;
+  const struct stat *st = &np->dn_stat;
 
   if (journal_is_ino_denied ((journal_ino_t) st->st_ino))
     {
@@ -174,15 +186,15 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   if (!journal_is_safe_stat (st))
     {
       JOURNAL_LOG_DEBUG ("Skipped inode %llu (mode %o) as unsafe.",
-                         st->st_ino, st->st_mode);
+			 st->st_ino, st->st_mode);
       return;
     }
 
-  const char *name     = info->name     ? info->name     : "";
-  const char *extra    = info->extra    ? info->extra    : "";
+  const char *name = info->name ? info->name : "";
+  const char *extra = info->extra ? info->extra : "";
   const char *old_name = info->old_name ? info->old_name : "";
   const char *new_name = info->new_name ? info->new_name : "";
-  const char *target   = info->target   ? info->target   : "";
+  const char *target = info->target ? info->target : "";
 
   size_t total_size = sizeof (struct journal_payload_bin);
   if (total_size > JOURNAL_ENTRY_SIZE)
@@ -200,29 +212,27 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
   entry->timestamp_ms = current_time_ms ();
 
-  entry->parent_ino     = (journal_ino_t) info->parent_ino;
+  entry->parent_ino = (journal_ino_t) info->parent_ino;
   entry->src_parent_ino = (journal_ino_t) info->src_parent_ino;
   entry->dst_parent_ino = (journal_ino_t) info->dst_parent_ino;
-  entry->ino            = (journal_ino_t) st->st_ino;
+  entry->ino = (journal_ino_t) st->st_ino;
 
-  entry->st_mode   = st->st_mode;
-  entry->st_size   = st->st_size;
-  entry->st_nlink  = st->st_nlink;
+  entry->st_mode = st->st_mode;
+  entry->st_size = st->st_size;
+  entry->st_nlink = st->st_nlink;
   entry->st_blocks = st->st_blocks;
 
-  if (st->st_mtime > MIN_REASONABLE_TIME && st->st_mtime < MAX_REASONABLE_TIME)
+  if (should_log_time(st->st_mtime, np->dn_set_mtime))
     {
       entry->mtime = st->st_mtime;
       entry->has_mtime = true;
     }
-
-  if (st->st_ctime > MIN_REASONABLE_TIME && st->st_ctime < MAX_REASONABLE_TIME)
+  if (should_log_time(st->st_ctime, np->dn_set_ctime))
     {
       entry->ctime = st->st_ctime;
       entry->has_ctime = true;
     }
-
-  if (st->st_atime > MIN_REASONABLE_TIME && st->st_atime < MAX_REASONABLE_TIME)
+  if (should_log_time(st->st_atime, np->dn_set_atime))
     {
       entry->atime = st->st_atime;
       entry->has_atime = true;
@@ -260,11 +270,11 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   entry->action = info->action;
 
-  strncpy (entry->name,     name,     sizeof (entry->name)     - 1);
-  strncpy (entry->extra,    extra,    sizeof (entry->extra)    - 1);
+  strncpy (entry->name, name, sizeof (entry->name) - 1);
+  strncpy (entry->extra, extra, sizeof (entry->extra) - 1);
   strncpy (entry->old_name, old_name, sizeof (entry->old_name) - 1);
   strncpy (entry->new_name, new_name, sizeof (entry->new_name) - 1);
-  strncpy (entry->target,   target,   sizeof (entry->target)   - 1);
+  strncpy (entry->target, target, sizeof (entry->target) - 1);
 
   // Null-terminate just to be safe
   entry->name[sizeof (entry->name) - 1] = '\0';
@@ -289,4 +299,3 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   free (buf);
 }
-

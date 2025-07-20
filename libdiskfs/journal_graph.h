@@ -55,6 +55,9 @@ typedef struct inode_replay_state
   int64_t ctime;
   bool has_ctime;
 
+  int64_t atime;
+  bool has_atime;
+
   journal_uid_t uid;
   bool has_uid;
 
