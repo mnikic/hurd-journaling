@@ -284,7 +284,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  JOURNAL_LOG_DEBUG ("Logging inode: %u", entry->ino);
+  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u", entry->ino, entry->tx_id, entry->action);
 
   if (journal_enabled && journal_device_ready &&
       durability == JOURNAL_DURABILITY_SYNC)
