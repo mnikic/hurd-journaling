@@ -31,6 +31,7 @@
 #include <libdiskfs/journal_apply.h>
 #include <libdiskfs/journal_inode_scanner.h>
 #include <libdiskfs/journal_inode_denylist.h>
+#include "priv.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -170,19 +171,14 @@ fetch_and_validate_journal (struct node *journal_node,
 }
 
 static void
-journal_init_state (journal_ino_t journal_ino)
+journal_init_state (void)
 {
-  JOURNAL_LOG_DEBUG ("In init state. journal inode=%u.", journal_ino);
-
   journal_inode_denylist_builder_t builder =
     journal_inode_denylist_builder_init ();
 
   journal_scan_path_for_inos ("/dev", &builder);
   journal_scan_path_for_inos ("/var/log", &builder);
-  // add the journal itself, we don't need updates of our updates to the file.
-  journal_inode_denylist_builder_add (&builder, journal_ino);
-  // initialize the value globaly. We need it
-  journal_raw_ino = journal_ino;
+
   // Finalize into global denylist instance
   denylist_instance = journal_inode_denylist_finalize (&builder);
 }
@@ -194,6 +190,7 @@ journal_init_state (journal_ino_t journal_ino)
 void
 journal_replay_from_file (const char *path)
 {
+
   (void) path;
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
@@ -236,9 +233,11 @@ journal_replay_from_file (const char *path)
       return;
     }
 
-  journal_init_state ((journal_ino_t) journal_node->dn_stat.st_ino);
   struct journal_entries list = { 0 };
   bool success = fetch_and_validate_journal (journal_node, arena, &list);
+
+  // initialize the value globaly. We need it
+  journal_raw_ino = (journal_ino_t) journal_node->dn_stat.st_ino;
 
   // clean these up regardless, we don't need them going forward
   diskfs_nput (journal_node);
@@ -262,9 +261,35 @@ journal_replay_from_file (const char *path)
   size_t count = journal_graph_get_all (&entries, arena);
 
   JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
-  for (size_t i = 0; i < count; ++i)
-    apply_node_replay (entries[i]);
+  if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) == 0)
+    {
+      JOURNAL_LOG_DEBUG ("unlock :)");
+      // Lock acquired
+      diskfs_set_readonly (0);
 
+      JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
+
+      for (size_t i = 0; i < count; ++i)
+	apply_node_replay (entries[i]);
+
+      diskfs_sync_everything (1);
+      diskfs_set_hypermetadata (1, 1);
+      _diskfs_diskdirty = 0;
+      err = diskfs_set_readonly (1);
+      if (err)
+	JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
+			   strerror (err), err);
+      else
+	JOURNAL_LOG_DEBUG ("Filesystem set back to readonly");
+
+      pthread_rwlock_unlock (&diskfs_fsys_lock);
+    }
+  else
+    {
+      JOURNAL_LOG_DEBUG ("didnt unlock :(");
+    }
+
+  journal_init_state ();
   JOURNAL_LOG_DEBUG ("Done with restoration.");
 
 CLEANUP:

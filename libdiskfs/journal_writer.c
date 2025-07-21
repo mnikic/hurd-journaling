@@ -242,9 +242,9 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
-
+  JOURNAL_LOG_DEBUG("journal_raw_flush: about to fsync tx_id=%llu", payload->tx_id);
   fsync (fd);
-
+  JOURNAL_LOG_DEBUG("journal_raw_flush: completed fsync tx_id=%llu", payload->tx_id);
   uint64_t next_index = (end_index + 1) % JOURNAL_NUM_ENTRIES;
   if (next_index == start_index)
     start_index = (start_index + 1) % JOURNAL_NUM_ENTRIES;
@@ -256,8 +256,9 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
-
+  JOURNAL_LOG_DEBUG("journal_raw_flush: about to fsync header.");
   fsync (fd);
+  JOURNAL_LOG_DEBUG("journal_raw_flush: completed fsync header");
   pthread_mutex_unlock (&sync_write_lock);
   return true;
 }
