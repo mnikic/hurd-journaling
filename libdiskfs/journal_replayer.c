@@ -260,6 +260,7 @@ journal_replay_from_file (const char *path)
   inode_replay_state_t **entries;
   size_t count = journal_graph_get_all (&entries, arena);
 
+  journal_init_state ();
   JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
   if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) == 0)
     {
@@ -289,7 +290,6 @@ journal_replay_from_file (const char *path)
       JOURNAL_LOG_DEBUG ("didnt unlock :(");
     }
 
-  journal_init_state ();
   JOURNAL_LOG_DEBUG ("Done with restoration.");
 
 CLEANUP:
