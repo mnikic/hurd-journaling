@@ -49,11 +49,11 @@ apply_node_replay (inode_replay_state_t * state)
       return 0;
     }
 
-//  if (journal_is_ino_denied (state->ino)) 
-  //  {
-    //  JOURNAL_LOG_DEBUG ("inode %" PRIu32 " in denylist.", state->ino);
-     // return 0;
-   // } 
+  if (journal_is_ino_denied (state->ino)) 
+    {
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32 " in denylist.", state->ino);
+      return 0;
+    } 
 
   struct node *np = NULL;
   error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
