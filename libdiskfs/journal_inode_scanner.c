@@ -66,32 +66,49 @@ journal_scan_path_for_inos (const char *root_path,
 			    journal_inode_denylist_builder_t * builder)
 {
   struct protid *cred = NULL;
+  struct node *start_np = NULL;
+  error_t err = 0;
+  size_t count = 0;
   struct node *root = diskfs_root_node;
   diskfs_nref (root);
-  JOURNAL_LOG_DEBUG ("In scan paths!, path: %s", root_path);
-  error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+
+  err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
   if (err)
     {
       JOURNAL_LOG_ERROR ("create_creds failed: %d", err);
-      diskfs_nput (root);
-      return err;
+      goto cleanup_root;
     }
-  struct node *start_np = NULL;
+
   err = diskfs_lookup_path (root_path, cred, &start_np);
-  if (err || !S_ISDIR (start_np->dn_stat.st_mode))
+  if (err)
     {
       JOURNAL_LOG_DEBUG ("scan_path_for_inos: failed to open '%s'",
 			 root_path);
-      return err;
+      goto cleanup_creds;
+    }
+
+  if (!S_ISDIR (start_np->dn_stat.st_mode))
+    {
+      JOURNAL_LOG_DEBUG ("scan_path_for_inos: '%s' is not a directory",
+			 root_path);
+      diskfs_nput (start_np);
+      err = ENOTDIR;
+      goto cleanup_creds;
     }
 
   stack_init ();
-  stack_push (start_np, root_path);	// path not really needed here but could help later
-  size_t count = 0;
+  if (!stack_push (start_np, root_path))
+    {
+      JOURNAL_LOG_ERROR ("Failed to initialize traversal stack");
+      diskfs_nput (start_np);
+      err = ENOMEM;
+      goto cleanup_creds;
+    }
+
   while (stack_pop (&start_np, NULL))
     {
-      if ((start_np->dn_stat.st_mode & S_IFMT) != S_IFDIR
-	  || start_np->dn_stat.st_size == 0)
+      if ((start_np->dn_stat.st_mode & S_IFMT) != S_IFDIR ||
+	  start_np->dn_stat.st_size == 0)
 	{
 	  diskfs_nput (start_np);
 	  continue;
@@ -139,16 +156,23 @@ journal_scan_path_for_inos (const char *root_path,
 	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
 
 	  journal_inode_denylist_builder_add (builder, ino);
-	  JOURNAL_LOG_DEBUG ("denylist: found node %u (%s)",
-			     (unsigned) ino, name);
+	  JOURNAL_LOG_DEBUG ("denylist: found node %u (%s)", (unsigned) ino,
+			     name);
 	  count++;
+
 	  if (S_ISDIR (mode))
 	    {
-	      stack_push (child_np, name);	// child_np ownership transferred
+	      if (!stack_push (child_np, name))
+		{
+		  diskfs_nput (child_np);
+		  JOURNAL_LOG_DEBUG
+		    ("Stack overflow, skipping subdirectory: %s", name);
+		}
+	      // else: ownership of child_np is now with the stack
 	    }
 	  else
 	    {
-	      diskfs_nput (child_np);	// clean up
+	      diskfs_nput (child_np);
 	    }
 
 	  entry = (struct dirent *) ((char *) entry + entry->d_reclen);
@@ -157,7 +181,17 @@ journal_scan_path_for_inos (const char *root_path,
       vm_deallocate (mach_task_self (), (vm_address_t) data, datacnt);
       diskfs_nput (start_np);
     }
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: complete. Found %u of inos.",
-		     count);
-  return 0;
+
+  JOURNAL_LOG_DEBUG ("scan_path_for_inos: complete. Found %u inos.", count);
+
+  struct node *remaining_np = NULL;
+  while (stack_pop (&remaining_np, NULL))
+    diskfs_nput (remaining_np);
+
+cleanup_creds:
+  if (cred)
+    ports_port_deref (cred);
+cleanup_root:
+  diskfs_nput (root);
+  return err;
 }
