@@ -25,6 +25,14 @@
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
 
+
+error_t
+journal_node_read (struct node *np, off_t offset, void *buf, size_t len);
+
+error_t
+journal_node_write (struct node *np, off_t offset, const void *buf,
+		    size_t len);
+
 /* Read and validate the journal header from the given node. */
 bool journal_node_read_and_validate_header (struct node *n,
 					    struct journal_header *out);
