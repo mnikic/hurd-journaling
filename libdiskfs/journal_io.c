@@ -39,7 +39,7 @@
  * is possible. It performs bounds checking and safely reads up to the requested
  * length or remaining file size.
  */
-static error_t
+error_t
 journal_node_read (struct node *np, off_t offset, void *buf, size_t len)
 {
   error_t err;
@@ -55,6 +55,33 @@ journal_node_read (struct node *np, off_t offset, void *buf, size_t len)
     err = 0;
   else
     err = _diskfs_rdwr_internal (np, buf, offset, &rdlen, 0, 0);
+
+  return err;
+}
+
+error_t
+journal_node_write (struct node *np, off_t offset, const void *buf,
+		    size_t len)
+{
+  error_t err;
+  mach_msg_type_number_t wrlen = len;
+
+  if (offset < 0)
+    return EINVAL;
+
+  if (offset >= np->dn_stat.st_size)
+    return EFBIG;		// Offset beyond EOF — disallow write
+
+  if (offset + len > np->dn_stat.st_size)
+    wrlen = np->dn_stat.st_size - offset;	// Clamp to EOF
+
+  if (wrlen == 0)
+    return 0;
+
+  err = _diskfs_rdwr_internal (np, (void *) buf, offset, &wrlen, 1, 0);
+
+  if (!err && wrlen != len)
+    return EIO;			// Unexpected short write
 
   return err;
 }

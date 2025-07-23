@@ -48,7 +48,6 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
 static pthread_t journal_flusher_tid;
-static pthread_t monitor_tid;
 
 volatile bool journal_enabled = false;
 
@@ -58,55 +57,6 @@ current_time_ms (void)
   struct timeval tv;
   gettimeofday (&tv, NULL);
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
-}
-
-static void *
-journal_device_monitor_thread (void *arg)
-{
-  (void) arg;
-  while (1)
-    {
-      int fd = open (RAW_DEVICE_PATH, O_RDWR);
-      if (fd >= 0)
-	{
-	  if (!journal_device_ready)
-	    {
-	      fsync (fd);
-	      char test_buf[1];
-	      ssize_t n = pread (fd, test_buf, sizeof (test_buf), 0);
-
-	      if (n == 1)
-		{
-		  journal_device_ready = true;
-		  JOURNAL_LOG_DEBUG
-		    ("All checks worked. Journal device is ready!");
-		  pthread_mutex_lock (&queue_lock);
-		  pthread_cond_signal (&queue_cond);	// Wake queue flusher
-		  pthread_mutex_unlock (&queue_lock);
-		}
-	      else
-		{
-		  JOURNAL_LOG_DEBUG ("pread returned %zd, still not ready",
-				     n);
-		}
-	    }
-	}
-      else
-	{
-	  if (journal_device_ready)
-	    {
-	      journal_device_ready = false;
-	      JOURNAL_LOG_DEBUG ("Journal device is not ready.");
-	    }
-	}
-
-      if (fd >= 0)
-	close (fd);
-
-      int sleep_ms = journal_device_ready ? 1000 : 100;	// 1s if ready, 100ms if not
-      usleep (sleep_ms * 1000);
-    }
-  return NULL;
 }
 
 void
@@ -123,16 +73,6 @@ journal_init (void)
       journal_shutting_down = true;
     }
 
-  if (pthread_create (&monitor_tid, NULL, journal_device_monitor_thread, NULL)
-      != 0)
-    {
-      JOURNAL_LOG_ERROR ("Failed to start journal device monitor thread.");
-    }
-  else
-    {
-      JOURNAL_LOG_DEBUG ("Started journal device monitor thread.");
-    }
-
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
 
@@ -143,7 +83,6 @@ journal_shutdown (void)
   journal_shutting_down = true;
   journal_queue_shutdown ();
   pthread_join (journal_flusher_tid, NULL);
-  pthread_join (monitor_tid, NULL);
 }
 
 void
@@ -284,10 +223,10 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u", entry->ino, entry->tx_id, entry->action);
+  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u", entry->ino,
+		     entry->tx_id, entry->action);
 
-  if (journal_enabled && journal_device_ready &&
-      durability == JOURNAL_DURABILITY_SYNC)
+  if (journal_enabled && durability == JOURNAL_DURABILITY_SYNC)
     {
       if (!journal_write_raw_sync (entry))
 	JOURNAL_LOG_ERROR ("Failed to write sync.");

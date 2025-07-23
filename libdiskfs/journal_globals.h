@@ -31,7 +31,6 @@
 #include <pthread.h>
 
 extern volatile size_t journal_dropped_events;
-extern volatile bool journal_device_ready;
 extern volatile bool journal_enabled;
 
 extern const journal_inode_denylist_t *journal_denylist;

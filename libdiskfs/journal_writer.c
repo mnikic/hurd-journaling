@@ -35,34 +35,16 @@
 #include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal_replayer.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/crc32.h>
 
 volatile size_t journal_dropped_events = 0;
-volatile bool journal_device_ready = false;
 static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
-static int sync_fd = -1;
-
-static int
-get_sync_fd (void)
-{
-  if (sync_fd >= 0)
-    {
-      if (fcntl (sync_fd, F_GETFL) != -1)
-	return sync_fd;
-      close (sync_fd);
-      sync_fd = -1;
-    }
-
-  sync_fd = open (RAW_DEVICE_PATH, O_RDWR);
-  if (sync_fd < 0)
-    JOURNAL_LOG_ERROR ("get_sync_fd: open failed: %s", strerror (errno));
-
-  return sync_fd;
-}
 
 static bool
-persist_header_with_retry (int fd, uint64_t start_index,
+persist_header_with_retry (struct node *np,
+			   uint64_t start_index,
 			   uint64_t end_index, int retries)
 {
   struct journal_header hdr = {
@@ -77,15 +59,15 @@ persist_header_with_retry (int fd, uint64_t start_index,
 
   while (retries-- > 0)
     {
-      if (pwrite (fd, &hdr, sizeof (hdr), 0) == sizeof (hdr))
+      error_t err = journal_node_write (np, 0, &hdr, sizeof (hdr));
+      if (!err)
 	{
-	  fsync (fd);
 	  return true;
 	}
 
       JOURNAL_LOG_ERROR
 	("journal: header write failed, retrying (%d left): %s", retries,
-	 strerror (errno));
+	 strerror (err));
       usleep (1000);
     }
 
@@ -93,32 +75,33 @@ persist_header_with_retry (int fd, uint64_t start_index,
 }
 
 static bool
-initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
+initialize_indices (struct node *np, uint64_t * start_index,
+		    uint64_t * end_index)
 {
   struct journal_header hdr = { 0 };
-  ssize_t n = pread (fd, &hdr, sizeof (hdr), 0);
 
-  if (n == -1 && errno == EIO)
+  error_t err = journal_node_read (np, 0, &hdr, sizeof (hdr));
+  if (err == EIO)
     {
-      JOURNAL_LOG_ERROR ("journal_write_raw: cannot read journal file: %s",
-			 strerror (errno));
+      JOURNAL_LOG_ERROR ("journal_write_raw: cannot read journal node: %s",
+			 strerror (err));
       return false;
     }
 
-  if (n != sizeof (hdr))
+  if (err != 0)
     {
       JOURNAL_LOG_ERROR ("journal_write_raw: header read failed or missing");
       *start_index = 0;
       *end_index = 0;
-      return true;
+      return true;		// Allow system to start fresh
     }
 
   uint32_t expected_crc = hdr.crc32;
   hdr.crc32 = 0;
   uint32_t actual_crc = crc32 ((const void *) &hdr, sizeof (hdr));
 
-  if (actual_crc != expected_crc || hdr.magic != JOURNAL_MAGIC
-      || hdr.version != JOURNAL_VERSION)
+  if (actual_crc != expected_crc ||
+      hdr.magic != JOURNAL_MAGIC || hdr.version != JOURNAL_VERSION)
     {
       JOURNAL_LOG_ERROR ("journal_write_raw: header CRC mismatch or invalid");
       *start_index = 0;
@@ -126,8 +109,8 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
       return true;
     }
 
-  if (hdr.start_index >= JOURNAL_NUM_ENTRIES
-      || hdr.end_index >= JOURNAL_NUM_ENTRIES)
+  if (hdr.start_index >= JOURNAL_NUM_ENTRIES ||
+      hdr.end_index >= JOURNAL_NUM_ENTRIES)
     {
       JOURNAL_LOG_ERROR ("journal_write_raw: header indices out of bounds");
       *start_index = 0;
@@ -145,7 +128,7 @@ initialize_indices (int fd, uint64_t * start_index, uint64_t * end_index)
 }
 
 static bool
-journal_write_indexed (int fd, const char *data, size_t len,
+journal_write_indexed (struct node *np, const char *data, size_t len,
 		       uint64_t * end_index, uint64_t * start_index)
 {
   if (len > sizeof (struct journal_payload_bin))
@@ -171,18 +154,13 @@ journal_write_indexed (int fd, const char *data, size_t len,
 			sizeof (struct journal_payload_bin));
 
   off_t offset = index_to_offset (*end_index);
-  if (lseek (fd, offset, SEEK_SET) == (off_t) - 1)
-    {
-      JOURNAL_LOG_ERROR ("journal_write_indexed: lseek failed: %s",
-			 strerror (errno));
-      return false;
-    }
+  error_t err = journal_node_write (np, offset, buf, JOURNAL_ENTRY_SIZE);
 
-  ssize_t written = write (fd, buf, JOURNAL_ENTRY_SIZE);
-  if (written != JOURNAL_ENTRY_SIZE)
+  if (err)
     {
-      JOURNAL_LOG_ERROR ("journal_write_indexed: write failed: %s",
-			 strerror (errno));
+      JOURNAL_LOG_ERROR
+	("journal_write_indexed: journal_node_write failed: %s (%d)",
+	 strerror (err), err);
       return false;
     }
 
@@ -194,24 +172,20 @@ bool
 journal_write_raw_sync (struct journal_payload_bin *payload)
 {
   pthread_mutex_lock (&sync_write_lock);
-
-  if (!journal_device_ready)
+  struct node *journal_node = NULL;
+  error_t err = diskfs_cached_lookup (journal_raw_ino, &journal_node);
+  if (err || !journal_node)
     {
-      JOURNAL_LOG_ERROR ("Device not ready yet. Aborting.");
-      pthread_mutex_unlock (&sync_write_lock);
-      return false;
-    }
-
-  int fd = get_sync_fd ();
-  if (fd < 0)
-    {
+      JOURNAL_LOG_ERROR ("Not able to open journal for writing. %s",
+			 strerror (err));
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
 
   uint64_t start_index = 0, end_index = 0;
-  if (!initialize_indices (fd, &start_index, &end_index))
+  if (!initialize_indices (journal_node, &start_index, &end_index))
     {
+      diskfs_nput (journal_node);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -222,43 +196,36 @@ journal_write_raw_sync (struct journal_payload_bin *payload)
   entry->magic = JOURNAL_MAGIC;
   entry->version = JOURNAL_VERSION;
   memcpy (&entry->payload, payload, sizeof (struct journal_payload_bin));
-  entry->crc32 = 0;
   entry->crc32 = crc32 ((const char *) &entry->payload,
 			sizeof (struct journal_payload_bin));
 
   off_t offset = index_to_offset (end_index);
-  if (lseek (fd, offset, SEEK_SET) == (off_t) - 1)
+  err = journal_node_write (journal_node, offset, buf, JOURNAL_ENTRY_SIZE);
+  if (err)
     {
-      JOURNAL_LOG_ERROR ("journal_write_direct_sync: lseek failed: %s",
-			 strerror (errno));
+      JOURNAL_LOG_ERROR ("journal_write_raw_sync: node write failed: %s",
+			 strerror (err));
+      diskfs_nput (journal_node);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
 
-  if (write (fd, buf, JOURNAL_ENTRY_SIZE) != JOURNAL_ENTRY_SIZE)
-    {
-      JOURNAL_LOG_ERROR ("journal_write_direct_sync: write failed: %s",
-			 strerror (errno));
-      pthread_mutex_unlock (&sync_write_lock);
-      return false;
-    }
-  JOURNAL_LOG_DEBUG("journal_raw_flush: about to fsync tx_id=%llu", payload->tx_id);
-  fsync (fd);
-  JOURNAL_LOG_DEBUG("journal_raw_flush: completed fsync tx_id=%llu", payload->tx_id);
+  JOURNAL_LOG_DEBUG ("journal_raw_flush: completed node write tx_id=%llu",
+		     payload->tx_id);
+
   uint64_t next_index = (end_index + 1) % JOURNAL_NUM_ENTRIES;
   if (next_index == start_index)
     start_index = (start_index + 1) % JOURNAL_NUM_ENTRIES;
 
-  if (!persist_header_with_retry (fd, start_index, next_index, 3))
+  if (!persist_header_with_retry (journal_node, start_index, next_index, 3))
     {
-      JOURNAL_LOG_ERROR
-	("journal_write_direct_sync: failed to persist header");
+      JOURNAL_LOG_ERROR ("journal_write_raw_sync: failed to persist header");
+      diskfs_nput (journal_node);
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
-  JOURNAL_LOG_DEBUG("journal_raw_flush: about to fsync header.");
-  fsync (fd);
-  JOURNAL_LOG_DEBUG("journal_raw_flush: completed fsync header");
+  diskfs_sync_everything (1);
+  diskfs_nput (journal_node);
   pthread_mutex_unlock (&sync_write_lock);
   return true;
 }
@@ -268,17 +235,23 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 {
   pthread_mutex_lock (&sync_write_lock);
 
-  uint64_t end_index = 0;
+  struct node *journal_node = NULL;
+  error_t err = diskfs_cached_lookup (journal_raw_ino, &journal_node);
+  if (err || !journal_node)
+    {
+      JOURNAL_LOG_ERROR ("Not able to open journal for writing. %s",
+			 strerror (err));
+      goto drop;
+    }
   uint64_t start_index = 0;
+  uint64_t end_index = 0;
+
   const size_t expected_len = sizeof (struct journal_payload_bin);
 
-  int fd = get_sync_fd ();
-  if (fd < 0)
-    goto drop;
-
-  if (!initialize_indices (fd, &start_index, &end_index))
-    goto drop;
-
+  if (!initialize_indices (journal_node, &start_index, &end_index))
+    {
+      goto drop;
+    }
   for (size_t i = 0; i < count; ++i)
     {
       if (entries[i].len != expected_len)
@@ -288,23 +261,29 @@ journal_write_raw (const struct journal_payload *entries, size_t count)
 	  goto drop;
 	}
 
-      if (!journal_write_indexed
-	  (fd, entries[i].data, expected_len, &end_index, &start_index))
+      if (!journal_write_indexed (journal_node, entries[i].data,
+				  expected_len, &end_index, &start_index))
 	goto drop;
     }
 
-  if (!persist_header_with_retry (fd, start_index, end_index, 3))
-    JOURNAL_LOG_ERROR
-      ("journal_write_raw: failed to persist updated header after retries.");
+  if (!persist_header_with_retry (journal_node, start_index, end_index, 3))
+    {
+      JOURNAL_LOG_ERROR
+	("journal_write_raw: failed to persist updated header after retries.");
+    }
 
+  diskfs_sync_everything (1);
   pthread_mutex_unlock (&sync_write_lock);
+  diskfs_nput (journal_node);
   return true;
 
 drop:
   __atomic_add_fetch (&journal_dropped_events, count, __ATOMIC_RELAXED);
   JOURNAL_LOG_ERROR
-    ("journal_write_raw: dropping %zu txs, total dropped so far: %zu.", count,
-     journal_dropped_events);
+    ("journal_write_raw: dropping %zu txs, total dropped so far: %zu.",
+     count, journal_dropped_events);
+
+  diskfs_nput (journal_node);
   pthread_mutex_unlock (&sync_write_lock);
   return false;
 }
