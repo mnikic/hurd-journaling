@@ -40,15 +40,15 @@
 #include <string.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
-#define PAYLOAD_SIZE       sizeof (struct journal_payload_bin)
-#define PAYLOAD_PTR_SIZE   sizeof (struct journal_payload_bin *)
+#define ENTRY_SIZE       sizeof (journal_entry_bin_t)
+#define PAYLOAD_PTR_SIZE   sizeof (journal_payload_bin_t *)
 #define GRAPH_NODE_SIZE    sizeof (inode_graph_node_t)
 #define REPLAY_STATE_SIZE  sizeof (inode_replay_state_t *)
 #define AVG_STRING_SIZE    128
 #define AVG_STRINGS_PER_ENTRY 2
 #define ARENA_SIZE (ALIGN_UP (\
                           (JOURNAL_NUM_ENTRIES * (\
-                              PAYLOAD_SIZE\
+                              ENTRY_SIZE\
                             + PAYLOAD_PTR_SIZE\
                             + GRAPH_NODE_SIZE\
                             + REPLAY_STATE_SIZE\
@@ -142,21 +142,22 @@ if (!hdr)
 
   while (index != end_index)
     {
-      struct journal_payload_bin *payload =
-	journal_arena_alloc (arena, PAYLOAD_SIZE);
-      if (!payload)
+      journal_entry_bin_t *entry =
+	journal_arena_alloc (arena, ENTRY_SIZE);
+      if (!entry)
 	{
 	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
 			     index);
 	  return false;
 	}
       if (!journal_node_read_and_validate_entry
-	  (journal_node, index, payload))
+	  (journal_node, index, entry))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("CRC check failed or corrupted payload at index %llu", index);
 	  return false;
 	}
+      journal_payload_bin_t *payload = &entry->payload;
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0)
 	{
 	  JOURNAL_LOG_ERROR

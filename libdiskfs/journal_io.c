@@ -265,30 +265,29 @@ journal_node_read_and_validate_header (journal_header_t * out)
  */
 bool
 journal_node_read_and_validate_entry (struct node *np, uint64_t index,
-				      struct journal_payload_bin *out)
+				      journal_entry_bin_t *out)
 {
-  journal_entry_bin_t entry = { 0 };
-  error_t err = journal_read_entry (&entry, index);
+  error_t err = journal_read_entry (out, index);
   if (err)
     {
       JOURNAL_LOG_DEBUG ("journal_node_read failed at index %llu.", index);
       return false;
     }
-  if (entry.magic != JOURNAL_MAGIC)
+  if (out->magic != JOURNAL_MAGIC)
     {
       JOURNAL_LOG_DEBUG ("Bad journal entry magic at index %llu", index);
       return false;
     }
 
-  if (entry.version != JOURNAL_VERSION)
+  if (out->version != JOURNAL_VERSION)
     {
       JOURNAL_LOG_DEBUG ("Journal entry version mismatch at index %llu", index);
       return false;
     }
 
-  uint32_t stored_crc = entry.crc32;
-  entry.crc32 = 0;		// Zero before CRC computation, as expected during write
-  uint32_t actual_entry_crc = crc32 ((const char *) &entry.payload,
+  uint32_t stored_crc = out->crc32;
+  out->crc32 = 0;		// Zero before CRC computation, as expected during write
+  uint32_t actual_entry_crc = crc32 ((const char *) &out->payload,
 				     sizeof (journal_payload_bin_t));
 
   if (actual_entry_crc != stored_crc)
@@ -297,7 +296,6 @@ journal_node_read_and_validate_entry (struct node *np, uint64_t index,
       return false;
     }
 
-  *out = entry.payload;
   return true;
 }
 
