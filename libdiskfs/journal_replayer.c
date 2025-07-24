@@ -27,7 +27,6 @@
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
-#include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/journal_apply.h>
 #include <libdiskfs/journal_inode_scanner.h>
 #include <libdiskfs/journal_inode_denylist.h>
@@ -56,7 +55,6 @@
 
 static journal_inode_denylist_t denylist_instance;
 const journal_inode_denylist_t *journal_denylist = &denylist_instance;
-journal_ino_t journal_raw_ino;
 
 struct journal_entries
 {
@@ -113,15 +111,14 @@ static bool
 fetch_and_validate_journal (struct journal_arena *arena,
 			    struct journal_entries *out_entries)
 {
-  journal_header_t *hdr = journal_arena_alloc (arena, sizeof (journal_header_t));
+  journal_header_t *hdr =
+    journal_arena_alloc (arena, sizeof (journal_header_t));
   if (!hdr)
     return false;
-  memset(hdr, 0, sizeof(*hdr));
+  memset (hdr, 0, sizeof (*hdr));
 
   if (!journal_read_and_validate_header (hdr))
-    {
-      return false;
-    }
+    return false;
 
   JOURNAL_LOG_DEBUG ("Header: start index %llu, end index %llu",
 		     hdr->start_index, hdr->end_index);
@@ -141,8 +138,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   while (index != end_index)
     {
-      journal_entry_bin_t *entry =
-	journal_arena_alloc (arena, ENTRY_SIZE);
+      journal_entry_bin_t *entry = journal_arena_alloc (arena, ENTRY_SIZE);
       if (!entry)
 	{
 	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
@@ -190,13 +186,13 @@ journal_init_state (void)
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay_from_file (const char *path)
+journal_replay (void)
 {
-  (void) path;
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
 
   journal_init_state ();
+  // There is a stack pressure here, arena is needed.
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
@@ -261,4 +257,3 @@ CLEANUP:
   journal_arena_destroy (arena);
   journal_enabled = true;
 }
-

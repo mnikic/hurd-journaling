@@ -23,7 +23,6 @@
 #define LIBDISKFS_JOURNAL_CONFIG_H
 
 
-#define RAW_DEVICE_PATH "/root/journal.img"
 #define RAW_DEVICE_SIZE (8 * 1024 * 1024)	/* 8MB */
 /* Set to 1 to simulate journal replay without mutating the file system. */
 #define JOURNAL_REPLAY_DRY_RUN 0	/* Set to 1 to simulate journal replay without making changes */
@@ -35,4 +34,3 @@
 #define JOURNAL_REPLAY_MIN_INO 256
 
 #endif /* LIBDISKFS_JOURNAL_CONFIG_H */
-

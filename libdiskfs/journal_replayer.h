@@ -20,8 +20,7 @@
 #ifndef LIBDISKFS_JOURNAL_REPLAYER_H
 #define LIBDISKFS_JOURNAL_REPLAYER_H
 
-/* Replay a binary journal file from disk (used during early boot).
-   Note: 'path' is currently ignored; replay uses a fixed device inode. */
-void journal_replay_from_file (const char *path);
+/* Replay a binary journal file from disk (used during early boot). */
+void journal_replay (void);
 
 #endif /* LIBDISKFS_JOURNAL_REPLAYER_H */
