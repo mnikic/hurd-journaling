@@ -36,7 +36,6 @@
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_writer.h>
-#include <libdiskfs/crc32.h>
 
 volatile size_t journal_dropped_events = 0;
 static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -70,7 +69,7 @@ persist_header_with_retry (uint64_t start_index,
 }
 
 static bool
-initialize_indices (uint64_t * start_index,  uint64_t * end_index)
+initialize_indices (uint64_t * start_index, uint64_t * end_index)
 {
   struct journal_header hdr = { 0 };
   error_t err = journal_read_header (&hdr);
@@ -105,12 +104,11 @@ initialize_indices (uint64_t * start_index,  uint64_t * end_index)
 
   JOURNAL_LOG_DEBUG ("journal_write_raw: start_index=%llu, end_index=%llu",
 		     *start_index, *end_index);
-
   return true;
 }
 
 bool
-journal_write_raw_sync (journal_payload_bin_t *payload)
+journal_write_raw_sync (journal_payload_bin_t * payload_bin)
 {
   pthread_mutex_lock (&sync_write_lock);
   uint64_t start_index = 0, end_index = 0;
@@ -120,23 +118,25 @@ journal_write_raw_sync (journal_payload_bin_t *payload)
       return false;
     }
 
-  char buf[JOURNAL_ENTRY_SIZE] = { 0 };
-  struct journal_entry_bin *entry = (journal_entry_bin_t *) buf;
-  entry->magic = JOURNAL_MAGIC;
-  entry->version = JOURNAL_VERSION;
-  memcpy (&entry->payload, payload, sizeof (journal_payload_bin_t));
-  entry->crc32 = crc32 ((const char *) &entry->payload,
-			sizeof (journal_payload_bin_t));
-  error_t err = journal_write_entry(entry, end_index);
+  const journal_entry_bin_t entry = {
+    .magic = JOURNAL_MAGIC,
+    .version = JOURNAL_VERSION,
+    .payload = *payload_bin,
+    .crc32 = journal_compute_payload_crc32 (payload_bin)
+  };
+
+  error_t err = journal_write_entry (&entry, end_index);
   if (err)
     {
-      JOURNAL_LOG_ERROR("journal_write_raw_sync: outside of the fs entry write failed: %s", strerror(err));
-      pthread_mutex_unlock(&sync_write_lock);
+      JOURNAL_LOG_ERROR
+	("journal_write_raw_sync: outside of the fs entry write failed: %s",
+	 strerror (err));
+      pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
   JOURNAL_LOG_DEBUG
     ("journal_write_raw_sync: completed node write tx_id=%llu",
-     payload->tx_id);
+     payload_bin->tx_id);
 
   uint64_t next_index = (end_index + 1) % JOURNAL_NUM_ENTRIES;
   if (next_index == start_index)
@@ -152,4 +152,3 @@ journal_write_raw_sync (journal_payload_bin_t *payload)
   pthread_mutex_unlock (&sync_write_lock);
   return true;
 }
-

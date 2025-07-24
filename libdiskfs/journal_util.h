@@ -64,12 +64,20 @@ index_to_offset (const uint64_t index)
 }
 
 static inline uint32_t
-journal_compute_header_crc32(const journal_header_t *hdr)
+journal_compute_header_crc32 (const journal_header_t * hdr)
 {
   if (!hdr)
     return 0;
 
-  return crc32((const uint8_t *)hdr, offsetof(journal_header_t, crc32));
+  return crc32 ((const uint8_t *) hdr, offsetof (journal_header_t, crc32));
+}
+
+static inline uint32_t
+journal_compute_payload_crc32 (const journal_payload_bin_t * payload)
+{
+  if (!payload)
+    return 0;
+  return crc32 ((const char *) payload, sizeof (journal_payload_bin_t));
 }
 
 /* Check if a given stat structure describes a journal-safe file.  */
@@ -95,9 +103,7 @@ journal_is_safe_stat (const struct stat *st)
 static inline bool
 journal_is_ino_denied (journal_ino_t ino)
 {
-  return ino == journal_raw_ino
-    || journal_inode_denylist_contains (journal_denylist, ino);
+  return journal_inode_denylist_contains (journal_denylist, ino);
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
-

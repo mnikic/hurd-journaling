@@ -59,10 +59,10 @@ current_time_ms (void)
 }
 
 void
-journal_init (struct store* store)
+journal_init (struct store *store)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
-  journal_io_set_store(store);
+  journal_io_set_store (store);
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
 
@@ -76,7 +76,7 @@ journal_shutdown (void)
 void
 journal_restore (void)
 {
-  journal_replay_from_file (RAW_DEVICE_PATH);
+  journal_replay ();
 }
 
 static inline bool
@@ -222,4 +222,3 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   free (buf);
 }
-

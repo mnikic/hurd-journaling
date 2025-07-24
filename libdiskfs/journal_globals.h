@@ -34,6 +34,5 @@ extern volatile size_t journal_dropped_events;
 extern volatile bool journal_enabled;
 
 extern const journal_inode_denylist_t *journal_denylist;
-extern journal_ino_t journal_raw_ino;
 
 #endif /* LIBDISKFS_JOURNAL_GLOBALS_H */
