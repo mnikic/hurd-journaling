@@ -46,8 +46,7 @@ journal_node_write (struct node *np, off_t offset, const void *buf,
 bool journal_node_read_and_validate_header (journal_header_t *out);
 
 /* Read and validate a journal entry at the given index from the journal node. */
-bool journal_node_read_and_validate_entry (struct node *n,
-					   uint64_t index,
+bool journal_node_read_and_validate_entry ( uint64_t index,
 					   journal_entry_bin_t *out);
 
 #endif /* LIBDISKFS_JOURNAL_IO_H */
