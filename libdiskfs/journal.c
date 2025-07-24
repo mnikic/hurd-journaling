@@ -25,6 +25,7 @@
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
+#include <libdiskfs/journal_filter.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/diskfs.h>
 
@@ -115,6 +116,15 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
     {
       JOURNAL_LOG_DEBUG ("Skipped inode %llu (mode %o) as unsafe.",
 			 st->st_ino, st->st_mode);
+      return;
+    }
+    
+  bool ignore = false;
+  if (should_log_time (st->st_atime, np->dn_set_atime))
+    ignore = !journal_filter_should_log (st->st_ino, st->st_atime);
+  if (info->action == JOURNAL_ACTION_ATIME && ignore)
+    {
+      JOURNAL_LOG_DEBUG("Skipping noisy atime update for inode %llu", st->st_ino);
       return;
     }
 

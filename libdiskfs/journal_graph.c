@@ -212,6 +212,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       break;
 
     case JOURNAL_ACTION_UTIME:
+    case JOURNAL_ACTION_ATIME:
       break;
 
     case JOURNAL_ACTION_CHMOD:
