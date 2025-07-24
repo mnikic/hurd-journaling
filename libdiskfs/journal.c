@@ -20,6 +20,7 @@
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
 #include <libdiskfs/journal.h>
+#include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal_writer.h>
@@ -41,6 +42,7 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <hurd/fshelp.h>
+#include <hurd/store.h>
 
 #define MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
 #define MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
@@ -60,7 +62,7 @@ current_time_ms (void)
 }
 
 void
-journal_init (void)
+journal_init (struct store* store)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
 
@@ -72,7 +74,7 @@ journal_init (void)
       JOURNAL_LOG_ERROR ("Failed to create a flusher thread.");
       journal_shutting_down = true;
     }
-
+  journal_io_set_store(store);
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
 
@@ -239,3 +241,4 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   free (buf);
 }
+

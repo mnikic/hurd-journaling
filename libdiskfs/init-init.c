@@ -24,7 +24,6 @@
 #include <hurd/fsys.h>
 #include <stdio.h>
 #include <maptime.h>
-#include <libdiskfs/journal.h>
 
 /* For safe inlining of diskfs_node_disknode and
    diskfs_disknode_node.  */
@@ -99,7 +98,6 @@ diskfs_init_diskfs (void)
 
   _hurd_port_init (&_diskfs_exec_portcell, MACH_PORT_NULL);
 
-  journal_init();
   return 0;
 }
 
@@ -110,3 +108,4 @@ _diskfs_control_clean (void *arg __attribute__ ((unused)))
   _diskfs_ncontrol_ports--;
   pthread_spin_unlock (&_diskfs_control_lock);
 }
+

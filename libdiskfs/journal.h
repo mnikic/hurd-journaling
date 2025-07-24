@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <hurd/store.h>
 
 /* Journaling actions representing metadata changes.  */
 typedef enum
@@ -90,14 +91,14 @@ typedef enum journal_durability
 } journal_durability_t;
 
 /* Initialize the journaling system.  */
-void journal_init (void);
+void journal_init (struct store *store);
 
 /* Shutdown and cleanup journaling resources.  */
 void journal_shutdown (void);
 
 /* Log a metadata operation for journaling.
    NODE_PTR is a filesystem node (e.g. struct node *).
-   INFO describes the metadata event.
+   INFO describes the additional detals about the metadata event.
    DURABILITY controls sync/async mode.  */
 void journal_log_metadata (void *node_ptr,
 			   const struct journal_entry_info *info,
@@ -107,3 +108,4 @@ void journal_log_metadata (void *node_ptr,
 void journal_restore (void);
 
 #endif /* LIBDISKFS_JOURNAL_H */
+

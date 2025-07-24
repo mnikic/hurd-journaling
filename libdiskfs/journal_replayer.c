@@ -114,14 +114,18 @@ fetch_and_validate_journal (struct node *journal_node,
 			    struct journal_arena *arena,
 			    struct journal_entries *out_entries)
 {
-  struct journal_header hdr = { 0 };
-  if (!journal_node_read_and_validate_header (journal_node, &hdr))
+  journal_header_t *hdr = journal_arena_alloc (arena, sizeof (journal_header_t));
+if (!hdr)
+  return false;
+
+   memset(hdr, 0, sizeof(*hdr));
+  if (!journal_node_read_and_validate_header (hdr))
     {
       return false;
     }
 
   JOURNAL_LOG_DEBUG ("Header: start index %llu, end index %llu",
-		     hdr.start_index, hdr.end_index);
+		     hdr->start_index, hdr->end_index);
 
   out_entries->count = 0;
   out_entries->entries =
@@ -133,8 +137,8 @@ fetch_and_validate_journal (struct node *journal_node,
       return false;
     }
 
-  uint64_t index = hdr.start_index;
-  uint64_t end_index = hdr.end_index;
+  uint64_t index = hdr->start_index;
+  uint64_t end_index = hdr->end_index;
 
   while (index != end_index)
     {
@@ -178,7 +182,6 @@ journal_init_state (void)
 
   journal_scan_path_for_inos ("/dev", &builder);
   journal_scan_path_for_inos ("/var/log", &builder);
-
   // Finalize into global denylist instance
   denylist_instance = journal_inode_denylist_finalize (&builder);
 }
@@ -190,7 +193,6 @@ journal_init_state (void)
 void
 journal_replay_from_file (const char *path)
 {
-
   (void) path;
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
@@ -220,6 +222,10 @@ journal_replay_from_file (const char *path)
       return;
     }
 
+  // initialize the value globaly. We need it
+  journal_raw_ino = (journal_ino_t) journal_node->dn_stat.st_ino;
+
+  journal_init_state ();
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
@@ -235,9 +241,6 @@ journal_replay_from_file (const char *path)
 
   struct journal_entries list = { 0 };
   bool success = fetch_and_validate_journal (journal_node, arena, &list);
-
-  // initialize the value globaly. We need it
-  journal_raw_ino = (journal_ino_t) journal_node->dn_stat.st_ino;
 
   // clean these up regardless, we don't need them going forward
   diskfs_nput (journal_node);
@@ -260,7 +263,6 @@ journal_replay_from_file (const char *path)
   inode_replay_state_t **entries;
   size_t count = journal_graph_get_all (&entries, arena);
 
-  journal_init_state ();
   JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
   if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) == 0)
     {
@@ -297,3 +299,4 @@ CLEANUP:
   journal_arena_destroy (arena);
   journal_enabled = true;
 }
+
