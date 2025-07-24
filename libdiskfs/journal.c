@@ -22,7 +22,6 @@
 #include <libdiskfs/journal.h>
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_queue.h>
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
@@ -49,8 +48,6 @@
 
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
-static pthread_t journal_flusher_tid;
-
 volatile bool journal_enabled = false;
 
 static uint64_t
@@ -65,15 +62,6 @@ void
 journal_init (struct store* store)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
-
-  journal_queue_init ();
-
-  if (pthread_create
-      (&journal_flusher_tid, NULL, journal_flusher_thread, NULL) != 0)
-    {
-      JOURNAL_LOG_ERROR ("Failed to create a flusher thread.");
-      journal_shutting_down = true;
-    }
   journal_io_set_store(store);
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
@@ -83,8 +71,6 @@ journal_shutdown (void)
 {
   JOURNAL_LOG_DEBUG ("journal_shutdown() called.");
   journal_shutting_down = true;
-  journal_queue_shutdown ();
-  pthread_join (journal_flusher_tid, NULL);
 }
 
 void
@@ -232,11 +218,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
     {
       if (!journal_write_raw_sync (entry))
 	JOURNAL_LOG_ERROR ("Failed to write sync.");
-    }
-  else
-    {
-      /* journal_enqueue copies the buffer internally, so it is safe to free here */
-      journal_enqueue (buf, total_size);
     }
 
   free (buf);

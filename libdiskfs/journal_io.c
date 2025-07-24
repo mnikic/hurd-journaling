@@ -264,7 +264,7 @@ journal_node_read_and_validate_header (journal_header_t * out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 bool
-journal_node_read_and_validate_entry (struct node *np, uint64_t index,
+journal_node_read_and_validate_entry (uint64_t index,
 				      journal_entry_bin_t *out)
 {
   error_t err = journal_read_entry (out, index);
@@ -285,12 +285,9 @@ journal_node_read_and_validate_entry (struct node *np, uint64_t index,
       return false;
     }
 
-  uint32_t stored_crc = out->crc32;
-  out->crc32 = 0;		// Zero before CRC computation, as expected during write
   uint32_t actual_entry_crc = crc32 ((const char *) &out->payload,
 				     sizeof (journal_payload_bin_t));
-
-  if (actual_entry_crc != stored_crc)
+  if (actual_entry_crc != out->crc32)
     {
       JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at index %llu.", index);
       return false;

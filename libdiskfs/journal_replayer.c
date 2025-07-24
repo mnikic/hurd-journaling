@@ -150,8 +150,7 @@ if (!hdr)
 			     index);
 	  return false;
 	}
-      if (!journal_node_read_and_validate_entry
-	  (journal_node, index, entry))
+      if (!journal_node_read_and_validate_entry (index, entry))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("CRC check failed or corrupted payload at index %llu", index);

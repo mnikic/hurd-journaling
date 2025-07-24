@@ -33,7 +33,7 @@ IOSRCS= io-async-icky.c io-async.c io-duplicate.c io-get-conch.c io-revoke.c \
 	io-pathconf.c io-prenotify.c io-read.c io-readable.c io-identity.c \
 	io-reauthenticate.c io-rel-conch.c io-restrict-auth.c io-seek.c \
 	io-select.c io-stat.c io-stubs.c io-write.c io-version.c io-sigio.c \
-	journal.c journal_queue.c crc32.c journal_writer.c journal_replayer.c \
+	journal.c crc32.c journal_writer.c journal_replayer.c \
 	journal_graph.c journal_arena.c journal_io.c journal_apply.c \
 	journal_inode_denylist.c journal_fs_helper.c journal_inode_scanner.c
 FSYSSRCS=fsys-getroot.c fsys-goaway.c fsys-startup.c fsys-getfile.c \
