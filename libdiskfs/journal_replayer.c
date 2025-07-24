@@ -110,16 +110,15 @@ sort_entries (struct journal_entries *list)
  * Returns true on success, false on error. Uses arena for memory.
  */
 static bool
-fetch_and_validate_journal (struct node *journal_node,
-			    struct journal_arena *arena,
+fetch_and_validate_journal (struct journal_arena *arena,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr = journal_arena_alloc (arena, sizeof (journal_header_t));
-if (!hdr)
-  return false;
+  if (!hdr)
+    return false;
+  memset(hdr, 0, sizeof(*hdr));
 
-   memset(hdr, 0, sizeof(*hdr));
-  if (!journal_node_read_and_validate_header (hdr))
+  if (!journal_read_and_validate_header (hdr))
     {
       return false;
     }
@@ -150,7 +149,7 @@ if (!hdr)
 			     index);
 	  return false;
 	}
-      if (!journal_node_read_and_validate_entry (index, entry))
+      if (!journal_read_and_validate_entry (index, entry))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("CRC check failed or corrupted payload at index %llu", index);
@@ -197,56 +196,19 @@ journal_replay_from_file (const char *path)
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
 
-  struct node *root = diskfs_root_node;
-  struct protid *cred = NULL;
-  diskfs_nref (root);
-
-  error_t err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
-  if (err)
-    {
-      JOURNAL_LOG_ERROR
-	("Not able to create credentials. Don't have journal file found at '%s'. Running without persistence. To enable journaling, create the file with at least %u bytes of space.",
-	 RAW_DEVICE_PATH, RAW_DEVICE_SIZE);
-      diskfs_nput (root);
-      return;
-    }
-  struct node *journal_node = NULL;
-  err = diskfs_lookup_path (RAW_DEVICE_PATH, cred, &journal_node);
-  if (err || !journal_node)
-    {
-      JOURNAL_LOG_ERROR
-	("No journal file found at '%s'. Running without persistence. To enable journaling, create the file with at least %u bytes of space.",
-	 RAW_DEVICE_PATH, RAW_DEVICE_SIZE);
-      diskfs_nput (root);
-      ports_port_deref (cred);
-      return;
-    }
-
-  // initialize the value globaly. We need it
-  journal_raw_ino = (journal_ino_t) journal_node->dn_stat.st_ino;
-
   journal_init_state ();
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
       JOURNAL_LOG_ERROR
 	("Unable to allocate enough memory for journal replay. Aborting!");
-      diskfs_nput (journal_node);
-      diskfs_nput (root);
-      ports_port_deref (cred);
       // Even if replay fails, enable journaling to start capturing future metadata
       journal_enabled = true;
       return;
     }
 
   struct journal_entries list = { 0 };
-  bool success = fetch_and_validate_journal (journal_node, arena, &list);
-
-  // clean these up regardless, we don't need them going forward
-  diskfs_nput (journal_node);
-  diskfs_nput (root);
-  ports_port_deref (cred);
-
+  bool success = fetch_and_validate_journal (arena, &list);
   if (!success)
     {
       JOURNAL_LOG_ERROR
@@ -278,7 +240,7 @@ journal_replay_from_file (const char *path)
       diskfs_sync_everything (1);
       diskfs_set_hypermetadata (1, 1);
       _diskfs_diskdirty = 0;
-      err = diskfs_set_readonly (1);
+      error_t err = diskfs_set_readonly (1);
       if (err)
 	JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
 			   strerror (err), err);
