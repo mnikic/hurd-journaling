@@ -172,67 +172,13 @@ journal_read_header(journal_header_t *out_hdr)
 }
 
 /*
- * journal_node_read - Reads a range of bytes from a node at a specified offset.
- *
- * This function expects the caller to hold the node lock if concurrent access
- * is possible. It performs bounds checking and safely reads up to the requested
- * length or remaining file size.
- */
-error_t
-journal_node_read (struct node *np, off_t offset, void *buf, size_t len)
-{
-  error_t err;
-  mach_msg_type_number_t rdlen = len;
-
-  if (offset < 0 || offset > np->dn_stat.st_size)
-    return EINVAL;
-
-  if (offset + len > np->dn_stat.st_size)
-    rdlen = np->dn_stat.st_size - offset;
-
-  if (rdlen == 0)
-    err = 0;
-  else
-    err = _diskfs_rdwr_internal (np, buf, offset, &rdlen, 0, 0);
-
-  return err;
-}
-
-error_t
-journal_node_write (struct node *np, off_t offset, const void *buf,
-		    size_t len)
-{
-  error_t err;
-  mach_msg_type_number_t wrlen = len;
-
-  if (offset < 0)
-    return EINVAL;
-
-  if (offset >= np->dn_stat.st_size)
-    return EFBIG;		// Offset beyond EOF — disallow write
-
-  if (offset + len > np->dn_stat.st_size)
-    wrlen = np->dn_stat.st_size - offset;	// Clamp to EOF
-
-  if (wrlen == 0)
-    return 0;
-
-  err = _diskfs_rdwr_internal (np, (void *) buf, offset, &wrlen, 1, 0);
-
-  if (!err && wrlen != len)
-    return EIO;			// Unexpected short write
-
-  return err;
-}
-
-/*
  * journal_node_read_and_validate_header - Reads and validates the journal header.
  *
  * Performs CRC and magic/version checks. Returns true if valid.
  * out may point to garbage in case of error. Do not use in that case.
  */
 bool
-journal_node_read_and_validate_header (journal_header_t * out)
+journal_read_and_validate_header (journal_header_t * out)
 {
   error_t err = journal_read_header (out);
   if (err)
@@ -264,7 +210,7 @@ journal_node_read_and_validate_header (journal_header_t * out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 bool
-journal_node_read_and_validate_entry (uint64_t index,
+journal_read_and_validate_entry (uint64_t index,
 				      journal_entry_bin_t *out)
 {
   error_t err = journal_read_entry (out, index);
