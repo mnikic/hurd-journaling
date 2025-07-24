@@ -25,6 +25,7 @@
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_inode_denylist.h>
+#include <libdiskfs/crc32.h>
 #include <libdiskfs/journal_globals.h>
 
 #include <stdio.h>
@@ -55,11 +56,20 @@ while (0)
 
 /* Compute the byte offset of a journal entry given its index.  */
 static inline uint64_t
-index_to_offset (uint64_t index)
+index_to_offset (const uint64_t index)
 {
   return JOURNAL_RESERVED_SPACE
     + (index % (uint64_t) JOURNAL_NUM_ENTRIES)
     * (uint64_t) JOURNAL_ENTRY_SIZE;
+}
+
+static inline uint32_t
+journal_compute_header_crc32(const journal_header_t *hdr)
+{
+  if (!hdr)
+    return 0;
+
+  return crc32((const uint8_t *)hdr, offsetof(journal_header_t, crc32));
 }
 
 /* Check if a given stat structure describes a journal-safe file.  */
@@ -90,3 +100,4 @@ journal_is_ino_denied (journal_ino_t ino)
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
+
