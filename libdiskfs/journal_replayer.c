@@ -63,6 +63,77 @@ struct journal_entries
   size_t capacity;
 };
 
+
+/*
+ * fetch_and_validate_header - Reads and validates the journal header.
+ *
+ * Performs CRC and magic/version checks. Returns true if valid.
+ * out may point to garbage in case of error. Do not use in that case.
+ */
+static bool
+fetch_and_validate_header (journal_header_t * out)
+{
+  error_t err = journal_read_header (out);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR ("journal_node_read failed reading header: %d", err);
+      return false;
+    }
+
+  if (out->crc32 != journal_compute_header_crc32 (out)
+      || out->magic != JOURNAL_MAGIC || out->version != JOURNAL_VERSION)
+    {
+      JOURNAL_LOG_DEBUG ("journal replay: node header invalid.");
+      return false;
+    }
+
+  if (out->start_index >= JOURNAL_NUM_ENTRIES
+      || out->end_index >= JOURNAL_NUM_ENTRIES)
+    {
+      JOURNAL_LOG_DEBUG ("journal_node_read: header indices out of bounds.");
+      return false;
+    }
+
+  return true;
+}
+
+/*
+ * fetch_and_validate_entry - Reads and validates a journal entry.
+ *
+ * Performs CRC, magic, and version checks. Returns true if valid.
+ */
+static bool
+fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
+{
+  error_t err = journal_read_entry (out, index);
+  if (err)
+    {
+      JOURNAL_LOG_DEBUG ("journal_node_read failed at index %llu.", index);
+      return false;
+    }
+  if (out->magic != JOURNAL_MAGIC)
+    {
+      JOURNAL_LOG_DEBUG ("Bad journal entry magic at index %llu", index);
+      return false;
+    }
+
+  if (out->version != JOURNAL_VERSION)
+    {
+      JOURNAL_LOG_DEBUG ("Journal entry version mismatch at index %llu",
+			 index);
+      return false;
+    }
+
+  uint32_t actual_entry_crc = journal_compute_payload_crc32 (&out->payload);
+  if (actual_entry_crc != out->crc32)
+    {
+      JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at index %llu.", index);
+      return false;
+    }
+
+  return true;
+}
+
 static bool
 add_event_to_list (struct journal_entries *list,
 		   struct journal_payload_bin *entry)
@@ -113,11 +184,12 @@ fetch_and_validate_journal (struct journal_arena *arena,
 {
   journal_header_t *hdr =
     journal_arena_alloc (arena, sizeof (journal_header_t));
+
   if (!hdr)
     return false;
   memset (hdr, 0, sizeof (*hdr));
 
-  if (!journal_read_and_validate_header (hdr))
+  if (!fetch_and_validate_header (hdr))
     return false;
 
   JOURNAL_LOG_DEBUG ("Header: start index %llu, end index %llu",
@@ -145,7 +217,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 			     index);
 	  return false;
 	}
-      if (!journal_read_and_validate_entry (index, entry))
+      if (!fetch_and_validate_entry (index, entry))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("CRC check failed or corrupted payload at index %llu", index);

@@ -34,11 +34,4 @@ error_t journal_read_header (journal_header_t * out_hdr);
 error_t journal_write_entry (const journal_entry_bin_t * entry, size_t index);
 error_t journal_read_entry (journal_entry_bin_t * out_entry, size_t index);
 
-/* Read and validate the journal header from the given node. */
-bool journal_read_and_validate_header (journal_header_t * out);
-
-/* Read and validate a journal entry at the given index from the journal node. */
-bool journal_read_and_validate_entry (uint64_t index,
-				      journal_entry_bin_t * out);
-
 #endif /* LIBDISKFS_JOURNAL_IO_H */
