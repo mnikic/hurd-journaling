@@ -24,12 +24,12 @@
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/crc32.h>
 #include <libdiskfs/diskfs.h>
+#include <libdiskfs/journal_writer.h>
+#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_apply.h>
-#include <libdiskfs/journal_inode_scanner.h>
-#include <libdiskfs/journal_inode_denylist.h>
 #include "priv.h"
 
 #include <stdio.h>
@@ -52,9 +52,6 @@
                             + GRAPH_NODE_SIZE\
                             + REPLAY_STATE_SIZE\
                             + (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE))), 8) * 1.5)
-
-static journal_inode_denylist_t denylist_instance;
-const journal_inode_denylist_t *journal_denylist = &denylist_instance;
 
 struct journal_entries
 {
@@ -180,6 +177,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
+			    const journal_inode_denylist_t * denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -224,7 +222,15 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
       journal_payload_bin_t *payload = &entry->payload;
-      if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0)
+      if (journal_inode_denylist_contains (denylist, payload->ino))
+        {
+  	  JOURNAL_LOG_DEBUG ("Ino %u is in a deny list. Skipping tx %llu.", payload->ino, payload->tx_id);
+	  goto NEXT;
+        }
+      if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
+	  || payload->tx_id == 0 || payload->timestamp_ms == 0
+	  || !(payload->has_mtime || payload->has_atime
+	       || payload->has_ctime))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
@@ -235,6 +241,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	{
 	  return false;
 	}
+NEXT:
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
 
@@ -242,15 +249,27 @@ fetch_and_validate_journal (struct journal_arena *arena,
 }
 
 static void
-journal_init_state (void)
+test (struct journal_arena *arena)
 {
-  journal_inode_denylist_builder_t builder =
-    journal_inode_denylist_builder_init ();
+  JOURNAL_LOG_DEBUG ("TESTING: Starting.");
+  time_t now = time (NULL);
+  journal_payload_bin_t *payload =
+    journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
+  payload->ino = 188144;
+  payload->mtime = now + 60;
+  payload->has_mtime = true;
+  payload->ctime = now + 60;
+  payload->has_ctime = true;
+  payload->st_mode = 0700;
+  payload->has_mode = true;
+  payload->tx_id = 7112;
+  payload->timestamp_ms = now + 60;
+  payload->action = JOURNAL_ACTION_CHMOD;
 
-  journal_scan_path_for_inos ("/dev", &builder);
-  journal_scan_path_for_inos ("/var/log", &builder);
-  // Finalize into global denylist instance
-  denylist_instance = journal_inode_denylist_finalize (&builder);
+  if (!journal_write_raw_sync (payload))
+    JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
+  else
+    JOURNAL_LOG_DEBUG ("TESTING: Payload inserted.");
 }
 
 /*
@@ -258,12 +277,10 @@ journal_init_state (void)
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay (void)
+journal_replay (journal_inode_denylist_t * denylist)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
-
-  journal_init_state ();
   // There is a stack pressure here, arena is needed.
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
@@ -275,40 +292,45 @@ journal_replay (void)
       return;
     }
 
-  struct journal_entries list = { 0 };
-  bool success = fetch_and_validate_journal (arena, &list);
-  if (!success)
-    {
-      JOURNAL_LOG_ERROR
-	("Aborting replay due to validation failure. No entries replayed.");
-      goto CLEANUP;
-    }
-
-  JOURNAL_LOG_DEBUG ("Validation completed successfully.");
-
-  sort_entries (&list);
-  for (size_t i = 0; i < list.count; ++i)
-    journal_graph_add_event (list.entries[i]);
-
-  inode_replay_state_t **entries;
-  size_t count = journal_graph_get_all (&entries, arena);
-
-  JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
   if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) == 0)
     {
-      JOURNAL_LOG_DEBUG ("unlock :)");
-      // Lock acquired
-      diskfs_set_readonly (0);
+      error_t err = diskfs_set_readonly (0);
+      if (err)
+	JOURNAL_LOG_ERROR ("Failed to set diskfs_readonly = 0: %s (%d)",
+			   strerror (err), err);
+      else
+        JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
+      test (arena);
+      struct journal_entries list = { 0 };
+      bool success = fetch_and_validate_journal (arena, denylist, &list);
+      if (!success)
+	{
+	  JOURNAL_LOG_ERROR
+	    ("Aborting replay due to validation failure. No entries replayed.");
+	  goto CLEANUP;
+	}
 
-      JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
+      JOURNAL_LOG_DEBUG ("Validation completed successfully.");
+
+      sort_entries (&list);
+      for (size_t i = 0; i < list.count; ++i)
+	journal_graph_add_event (list.entries[i]);
+
+      inode_replay_state_t **entries;
+      size_t count = journal_graph_get_all (&entries, arena);
+
+      JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
 
       for (size_t i = 0; i < count; ++i)
 	apply_node_replay (entries[i]);
 
+      JOURNAL_LOG_DEBUG ("Done with restoration.");
+
+    CLEANUP:
       diskfs_sync_everything (1);
       diskfs_set_hypermetadata (1, 1);
       _diskfs_diskdirty = 0;
-      error_t err = diskfs_set_readonly (1);
+      err = diskfs_set_readonly (1);
       if (err)
 	JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
 			   strerror (err), err);
@@ -321,10 +343,6 @@ journal_replay (void)
     {
       JOURNAL_LOG_DEBUG ("didnt unlock :(");
     }
-
-  JOURNAL_LOG_DEBUG ("Done with restoration.");
-
-CLEANUP:
   journal_graph_free ();
   journal_arena_destroy (arena);
   journal_enabled = true;

@@ -230,7 +230,6 @@ main (int argc, char **argv)
      This starts the first diskfs thread for us.  */
   store = diskfs_init_main (&startup_argp, argc, argv,
 			    &store_parsed, &bootstrap);
-  journal_init (store);
   if (store->size < SBLOCK_OFFS + SBLOCK_SIZE)
     ext2_panic ("device too small for superblock (%" PRIi64 " bytes)", store->size);
   if (store->log2_blocks_per_page < 0)
@@ -253,7 +252,8 @@ main (int argc, char **argv)
   pthread_mutex_unlock (&diskfs_root_node->lock);
 
   /* Has to happen after the root is unlocked, and before RPCs are unleashed. */
-  journal_restore ();
+  journal_init (store);
+
   /* Now that we are all set up to handle requests, and diskfs_root_node is
      set properly, it is safe to export our fsys control port to the
      outside world.  */

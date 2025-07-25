@@ -49,12 +49,6 @@ apply_node_replay (inode_replay_state_t * state)
       return 0;
     }
 
-  if (journal_is_ino_denied (state->ino)) 
-    {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 " in denylist.", state->ino);
-      return 0;
-    } 
-
   struct node *np = NULL;
   error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
   if (err || !np)
@@ -105,10 +99,11 @@ apply_node_replay (inode_replay_state_t * state)
       changes++;
     }
 
-if (state->has_st_mode &&
-    (np->dn_stat.st_mode & 07777) != (state->st_mode & 07777))
+  if (state->has_st_mode &&
+      (np->dn_stat.st_mode & 07777) != (state->st_mode & 07777))
     {
-      APPEND_CHANGE ("mode new 0%o, old 0%o", state->st_mode, np->dn_stat.st_mode);
+      APPEND_CHANGE ("mode new 0%o, old 0%o", state->st_mode,
+		     np->dn_stat.st_mode);
       np->dn_stat.st_mode = state->st_mode;
       changes++;
     }
@@ -149,7 +144,7 @@ if (state->has_st_mode &&
 			 state->ino, changes, change_desc);
 #else
       np->dn_stat_dirty = 1;
-      diskfs_node_update (np, 1);
+      diskfs_node_update (np, 0);
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
 			 ": %d metadata changes applied: [%s]", state->ino,
 			 changes, change_desc);

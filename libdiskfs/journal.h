@@ -105,8 +105,5 @@ void journal_log_metadata (void *node_ptr,
 			   const struct journal_entry_info *info,
 			   journal_durability_t durability);
 
-/* Perform early journal replay before RPCs are enabled.  */
-void journal_restore (void);
-
 #endif /* LIBDISKFS_JOURNAL_H */
 
