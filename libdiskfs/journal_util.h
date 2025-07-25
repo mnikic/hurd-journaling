@@ -99,11 +99,4 @@ journal_is_safe_stat (const struct stat *st)
   return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
 }
 
-/* Check if the inode is part of a denylist (typically noisy /dev nodes).  */
-static inline bool
-journal_is_ino_denied (journal_ino_t ino)
-{
-  return journal_inode_denylist_contains (journal_denylist, ino);
-}
-
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */

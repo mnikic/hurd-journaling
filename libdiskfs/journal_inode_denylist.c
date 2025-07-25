@@ -21,6 +21,7 @@
 
 #include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_format.h>
+#include <stdatomic.h>
 #include <string.h>
 
 typedef journal_inode_denylist_builder_t builder_t;
@@ -41,10 +42,11 @@ journal_inode_denylist_builder_add (builder_t * builder, journal_ino_t ino)
 }
 
 journal_inode_denylist_t
-journal_inode_denylist_finalize (journal_inode_denylist_builder_t * builder)
+journal_inode_denylist_finalize (builder_t * builder)
 {
-  __sync_synchronize ();
-  journal_inode_denylist_t result = {.bits = builder->bits };
+  atomic_thread_fence(memory_order_seq_cst);
+  journal_inode_denylist_t result = { 0 };
+  memcpy(result.bits, builder->bits, sizeof(result.bits));
   return result;
 }
 

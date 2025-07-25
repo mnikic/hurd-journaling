@@ -27,6 +27,8 @@
 #include <libdiskfs/journal_replayer.h>
 #include <libdiskfs/journal_filter.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_inode_scanner.h>
+#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/diskfs.h>
 
 #include <pthread.h>
@@ -50,6 +52,7 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
 volatile bool journal_enabled = false;
+static journal_inode_denylist_t ino_denylist;
 
 static uint64_t
 current_time_ms (void)
@@ -59,11 +62,24 @@ current_time_ms (void)
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
 
+static void
+denylist_init (void)
+{
+  journal_inode_denylist_builder_t builder =
+    journal_inode_denylist_builder_init ();
+
+  journal_scan_path_for_inos ("/dev", &builder);
+  journal_scan_path_for_inos ("/var/log", &builder);
+  ino_denylist = journal_inode_denylist_finalize (&builder);
+}
+
 void
 journal_init (struct store *store)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
+  denylist_init (); 
   journal_io_set_store (store);
+  journal_replay (&ino_denylist);
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
 
@@ -72,12 +88,6 @@ journal_shutdown (void)
 {
   JOURNAL_LOG_DEBUG ("journal_shutdown() called.");
   journal_shutting_down = true;
-}
-
-void
-journal_restore (void)
-{
-  journal_replay ();
 }
 
 static inline bool
@@ -107,7 +117,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   const struct node *np = (struct node *) node_ptr;
   const struct stat *st = &np->dn_stat;
 
-  if (journal_is_ino_denied ((journal_ino_t) st->st_ino))
+  if (journal_inode_denylist_contains (&ino_denylist, (journal_ino_t) st->st_ino))
     {
       return;
     }
@@ -122,9 +132,9 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   bool ignore = false;
   if (should_log_time (st->st_atime, np->dn_set_atime))
     ignore = !journal_filter_should_log (st->st_ino, st->st_atime);
-  if (info->action == JOURNAL_ACTION_ATIME && ignore)
+  if ((info->action == JOURNAL_ACTION_ATIME || info->action == JOURNAL_ACTION_UTIME) && ignore)
     {
-      JOURNAL_LOG_DEBUG("Skipping noisy atime update for inode %llu", st->st_ino);
+      //JOURNAL_LOG_DEBUG("Skipping noisy atime/ctime update for inode %llu", st->st_ino);
       return;
     }
 
@@ -232,3 +242,4 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   free (buf);
 }
+

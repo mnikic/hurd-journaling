@@ -36,7 +36,7 @@ typedef struct
 
 typedef struct
 {
-  const uint8_t *bits;
+  uint8_t bits[(MAX_INODE_VALUE + 7) / 8];
 } journal_inode_denylist_t;
 
 /** Initialize a new denylist builder (zeroed). */
