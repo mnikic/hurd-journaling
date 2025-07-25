@@ -134,7 +134,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   const char *new_name = info->new_name ? info->new_name : "";
   const char *target = info->target ? info->target : "";
 
-  size_t total_size = sizeof (struct journal_payload_bin);
+  size_t total_size = sizeof (journal_payload_bin_t);
   if (total_size > JOURNAL_ENTRY_SIZE)
     {
       JOURNAL_LOG_ERROR ("Entry too large, dropped.");
@@ -145,7 +145,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   if (!buf)
     return;
 
-  struct journal_payload_bin *entry = (struct journal_payload_bin *) buf;
+  journal_payload_bin_t *entry = (journal_payload_bin_t *) buf;
 
   entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
   entry->timestamp_ms = current_time_ms ();
