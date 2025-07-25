@@ -25,15 +25,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Write a batch of raw journal entries to the persistent journal file.
-   The entries are assumed to be fully serialized and valid.
-   Returns true on success, false on error. */
-bool journal_write_raw (const struct journal_payload *entries, size_t count);
-
 /* Write a single parsed journal payload synchronously (e.g., during boot).
    Performs internal serialization and CRC generation.
    Returns true on success, false on error. */
 bool journal_write_raw_sync (struct journal_payload_bin *payload);
 
 #endif /* LIBDISKFS_JOURNAL_WRITER_H */
-

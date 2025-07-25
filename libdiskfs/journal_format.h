@@ -42,80 +42,75 @@ typedef struct journal_payload_bin journal_payload_bin_t;
    This structure is packed and written to the journal device.  */
 struct __attribute__((__packed__)) journal_payload_bin
 {
-	/* Transaction data */
-	uint64_t tx_id;
-	uint64_t timestamp_ms;
+  /* Transaction data */
+  uint64_t tx_id;
+  uint64_t timestamp_ms;
 
-	/* Inode and parent relationships */
-	journal_ino_t ino;
-	journal_ino_t parent_ino;
-	journal_ino_t src_parent_ino;
-	journal_ino_t dst_parent_ino;
+  /* Inode and parent relationships */
+  journal_ino_t ino;
+  journal_ino_t parent_ino;
+  journal_ino_t src_parent_ino;
+  journal_ino_t dst_parent_ino;
 
-	/* Optional metadata */
-	uint32_t st_mode;
-	uint64_t st_size;
-	uint64_t st_nlink;
-	uint64_t st_blocks;
-	int64_t mtime;
-	int64_t ctime;
-	int64_t atime;
-	journal_uid_t uid;
-	journal_uid_t gid;
-	uint32_t flags;
+  /* Optional metadata */
+  uint32_t st_mode;
+  uint64_t st_size;
+  uint64_t st_nlink;
+  uint64_t st_blocks;
+  int64_t mtime;
+  int64_t ctime;
+  int64_t atime;
+  journal_uid_t uid;
+  journal_uid_t gid;
+  uint32_t flags;
 
-	/* Presence flags */
-	bool has_mode;
-	bool has_size;
-	bool has_uid;
-	bool has_gid;
-	bool has_flags;
-	bool has_mtime;
-	bool has_atime;
-	bool has_ctime;
+  /* Presence flags */
+  bool has_mode;
+  bool has_size;
+  bool has_uid;
+  bool has_gid;
+  bool has_flags;
+  bool has_mtime;
+  bool has_atime;
+  bool has_ctime;
 
-	/* Operation type */
-	journal_action_t action;
+  /* Operation type */
+  journal_action_t action;
 
-	/* Associated strings */
-	char name[MAX_FIELD_LEN];
-	char old_name[MAX_FIELD_LEN];
-	char new_name[MAX_FIELD_LEN];
-	char target[MAX_FIELD_LEN];
-	char extra[MAX_FIELD_LEN];
-};
-
-/* Internal wrapper used for passing raw binary payload from the async queue.  */
-struct journal_payload
-{
-	const char *data;
-	size_t len;
+  /* Associated strings */
+  char name[MAX_FIELD_LEN];
+  char old_name[MAX_FIELD_LEN];
+  char new_name[MAX_FIELD_LEN];
+  char target[MAX_FIELD_LEN];
+  char extra[MAX_FIELD_LEN];
 };
 
 /* Header of the journal, keeping the state of iteration across reboots */
-struct __attribute__((packed, aligned(JOURNAL_HEADER_SIZE))) journal_header
+struct __attribute__((packed, aligned (JOURNAL_HEADER_SIZE))) journal_header
 {
-	uint32_t magic;
-	uint32_t version;
-	uint64_t start_index;
-	uint64_t end_index;
-	uint32_t crc32;
+  uint32_t magic;
+  uint32_t version;
+  uint64_t start_index;
+  uint64_t end_index;
+  uint32_t crc32;
 
-	uint8_t padding[JOURNAL_HEADER_SIZE
-		- (sizeof(uint32_t) * 3 + sizeof(uint64_t) * 2)];
+  uint8_t padding[JOURNAL_HEADER_SIZE
+		  - (sizeof (uint32_t) * 3 + sizeof (uint64_t) * 2)];
 };
 
-_Static_assert(sizeof(journal_header_t) == JOURNAL_HEADER_SIZE, "journal_header must be JOURNAL_HEADER_SIZE bytes.");
+_Static_assert (sizeof (journal_header_t) == JOURNAL_HEADER_SIZE,
+		"journal_header must be JOURNAL_HEADER_SIZE bytes.");
 
-struct __attribute__((__packed__, aligned(JOURNAL_ENTRY_SIZE))) journal_entry_bin
+struct
+  __attribute__((__packed__, aligned (JOURNAL_ENTRY_SIZE))) journal_entry_bin
 {
-	uint32_t magic;
-	uint32_t version;
-	struct journal_payload_bin payload;
-	uint32_t crc32;
+  uint32_t magic;
+  uint32_t version;
+  struct journal_payload_bin payload;
+  uint32_t crc32;
 
-	uint8_t padding[JOURNAL_ENTRY_SIZE - sizeof (uint32_t) * 2 -
-		sizeof (journal_payload_bin_t) - sizeof (uint32_t)];
+  uint8_t padding[JOURNAL_ENTRY_SIZE - sizeof (uint32_t) * 2 -
+		  sizeof (journal_payload_bin_t) - sizeof (uint32_t)];
 };
 
 _Static_assert (sizeof (journal_payload_bin_t) <=
@@ -123,8 +118,7 @@ _Static_assert (sizeof (journal_payload_bin_t) <=
 		 sizeof (uint32_t)),
 		"journal_payload_bin too large to fit in journal_entry_bin");
 
-_Static_assert(sizeof(journal_entry_bin_t) == JOURNAL_ENTRY_SIZE,
+_Static_assert (sizeof (journal_entry_bin_t) == JOURNAL_ENTRY_SIZE,
 		"journal_entry_bin must be JOURNAL_ENTRY_SIZE bytes");
 
 #endif /* LIBDISKFS_JOURNAL_FORMAT_H */
-
