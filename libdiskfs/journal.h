@@ -84,13 +84,6 @@ struct journal_entry_info
   const char *extra;
 };
 
-/* Journaling durability mode.  */
-typedef enum journal_durability
-{
-  JOURNAL_DURABILITY_ASYNC,
-  JOURNAL_DURABILITY_SYNC
-} journal_durability_t;
-
 /* Initialize the journaling system.  */
 void journal_init (struct store *store);
 
@@ -102,7 +95,6 @@ void journal_shutdown (void);
    INFO describes the additional detals about the metadata event.
    DURABILITY controls sync/async mode.  */
 void journal_log_metadata (void *node_ptr,
-			   const struct journal_entry_info *info,
-			   journal_durability_t durability);
+			   const struct journal_entry_info *info);
 
 #endif /* LIBDISKFS_JOURNAL_H */

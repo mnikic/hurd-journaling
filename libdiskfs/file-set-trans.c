@@ -217,7 +217,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	            .parent_ino = np->dn_stat.st_ino,
 	    	    .target = passive + strlen(passive) + 1,
 	  	  };
-	  	  journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
+	  	  journal_log_metadata(np, &info);
 
 		  np->dn_stat.st_mode = newmode;
 		  diskfs_node_update (np, diskfs_synchronous);

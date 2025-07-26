@@ -65,7 +65,7 @@ diskfs_S_dir_mkdir (struct protid *dircred,
         .mode = mode,
 	.has_mode = true
       };
-      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+      journal_log_metadata (np, &info);
     }
   if (diskfs_synchronous)
     {

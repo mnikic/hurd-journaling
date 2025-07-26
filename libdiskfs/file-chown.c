@@ -56,7 +56,7 @@ diskfs_S_file_chown (struct protid *cred,
 			       .parent_ino = np->dn_stat.st_ino
 			     };
 
-			     journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+			     journal_log_metadata (np, &info);
 			     if (uid != (uid_t) -1)
 			       {
 				 np->dn_stat.st_uid = uid;

@@ -86,7 +86,7 @@ diskfs_S_file_utimens (struct protid *cred,
 		                 .action = JOURNAL_ACTION_UTIME,
 		                 .name = cred && cred->po ? cred->po->path : "(unknown)"
 		             };
-		             journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+		             journal_log_metadata (np, &info);
 		          }
 
 			 if (np->filemod_reqs)

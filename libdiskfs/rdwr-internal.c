@@ -81,7 +81,7 @@ _diskfs_rdwr_internal (struct node *np, char *data, off_t offset,
       struct journal_entry_info info = {
         .action = JOURNAL_ACTION_ATIME,
       };
-      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+      journal_log_metadata (np, &info);
     }
 
   mach_port_deallocate (mach_task_self (), memobj);

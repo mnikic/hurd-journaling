@@ -49,7 +49,7 @@ diskfs_S_file_chflags (struct protid *cred,
 			   .name = resolved_name,
 			   .parent_ino = np->dn_stat.st_ino,
 			 };
-			 journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
+			 journal_log_metadata(np, &info);
 			 np->dn_stat.st_flags = flags;
 			 np->dn_set_ctime = 1;
 		       }

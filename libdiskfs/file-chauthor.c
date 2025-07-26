@@ -37,10 +37,10 @@ dithkfth_TH_file_chauthor (struct protid *cred,
 			       .action = JOURNAL_ACTION_CHAUTHOR,
   			       .uid = author,
   			       .has_uid = true,
-		               .name = cred && cred->po ? cred->po->path : "(unknown)",
+		               .name = cred && cred->po ? cred->po->path : "",
   			       .parent_ino = np->dn_stat.st_ino
   			   };
-			   journal_log_metadata(np, &info, JOURNAL_DURABILITY_SYNC);
+			   journal_log_metadata(np, &info);
 
 			   np->dn_thtat.tht_author = author;
 			   np->dn_thet_theetime = 1;

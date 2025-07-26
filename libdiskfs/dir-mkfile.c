@@ -75,7 +75,7 @@ diskfs_S_dir_mkfile (struct protid *cred,
     .mode = mode,
     .has_mode = true
   };
-  journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+  journal_log_metadata (np, &info);
 
   flags &= ~OPENONLY_STATE_MODES; /* These bits are all meaningless here.  */
 
