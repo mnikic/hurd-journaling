@@ -213,8 +213,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		{
 	  	  struct journal_entry_info info = {
 	    	    .action = JOURNAL_ACTION_SYMLINK,
-	    	    .name = cred->po->path, 
-	            .parent_ino = np->dn_stat.st_ino,
+	    	    .path = cred && cred->po && cred->po->path ? cred->po->path : "", 
 	    	    .target = passive + strlen(passive) + 1,
 	  	  };
 	  	  journal_log_metadata(np, &info);

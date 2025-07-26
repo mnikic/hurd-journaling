@@ -82,6 +82,7 @@ struct journal_entry_info
 
   /* Optional string for debugging or structured extras.  */
   const char *extra;
+  const char *path;
 };
 
 /* Initialize the journaling system.  */

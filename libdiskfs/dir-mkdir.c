@@ -63,7 +63,8 @@ diskfs_S_dir_mkdir (struct protid *dircred,
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino,
         .mode = mode,
-	.has_mode = true
+	.has_mode = true,
+	.path = dircred->po ? dircred->po->path : ""
       };
       journal_log_metadata (np, &info);
     }

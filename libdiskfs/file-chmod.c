@@ -50,8 +50,7 @@ diskfs_S_file_chmod (struct protid *cred,
                                  .action = JOURNAL_ACTION_CHMOD,
 				 .mode = mode,
 				 .has_mode = true,
-				 .name = cred && cred->po ? cred->po->path : "(unknown)",
-				 .parent_ino = np->dn_stat.st_ino
+				 .path = cred && cred->po ? cred->po->path : "",
                                };
                                journal_log_metadata (np, &info);
 
