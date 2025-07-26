@@ -26,7 +26,7 @@
 #include <stdbool.h>
 #include <libdiskfs/journal_format.h>
 
-#define MAX_INODE_VALUE 131072
+#define MAX_INODE_VALUE 131072 * 2
 #define INODE_BITSET_SIZE (MAX_INODE_VALUE / 8)
 
 typedef struct

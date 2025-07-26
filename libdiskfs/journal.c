@@ -69,6 +69,7 @@ denylist_init (void)
     journal_inode_denylist_builder_init ();
 
   journal_scan_path_for_inos ("/dev", &builder);
+  journal_scan_path_for_inos ("/tmp", &builder);
   journal_scan_path_for_inos ("/var/log", &builder);
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
@@ -77,7 +78,7 @@ void
 journal_init (struct store *store)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
-  denylist_init (); 
+  denylist_init ();
   journal_io_set_store (store);
   journal_replay (&ino_denylist);
   JOURNAL_LOG_DEBUG ("Done initializing.");
@@ -97,46 +98,65 @@ should_log_time (time_t value, int flag_set)
 		      && value < MAX_REASONABLE_TIME);
 }
 
-void
-journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
-		      journal_durability_t durability)
+static bool
+should_log_event (const struct node *np,
+		  const struct journal_entry_info *info)
 {
-  if (!node_ptr)
+  if (!np)
     {
       JOURNAL_LOG_ERROR
 	("NULL node_ptr received in journal_log_metadata, skipping.");
-      return;
+      return false;
     }
 
   if (!info)
     {
       JOURNAL_LOG_ERROR
 	("NULL info pointer received in journal_log_metadata, skipping.");
-      return;
+      return false;
     }
-  const struct node *np = (struct node *) node_ptr;
   const struct stat *st = &np->dn_stat;
 
-  if (journal_inode_denylist_contains (&ino_denylist, (journal_ino_t) st->st_ino))
+  if (journal_inode_denylist_contains
+      (&ino_denylist, (journal_ino_t) st->st_ino))
     {
-      return;
+      return false;
     }
-
+  if (info->parent_ino && journal_inode_denylist_contains
+      (&ino_denylist, (journal_ino_t) info->parent_ino))
+    {
+      return false;
+    }
   if (!journal_is_safe_stat (st))
     {
       JOURNAL_LOG_DEBUG ("Skipped inode %llu (mode %o) as unsafe.",
 			 st->st_ino, st->st_mode);
-      return;
+      return false;
     }
-    
-  bool ignore = false;
+
+  bool ignore_atime = false;
+
+  /* If atime changed, check if it's worth logging */
   if (should_log_time (st->st_atime, np->dn_set_atime))
-    ignore = !journal_filter_should_log (st->st_ino, st->st_atime);
-  if ((info->action == JOURNAL_ACTION_ATIME || info->action == JOURNAL_ACTION_UTIME) && ignore)
+    ignore_atime = !journal_filter_should_log (st->st_ino, st->st_atime);
+
+  /* If we are ignoring this and the only change was atime/utime (not mtime), skip it */
+  if (ignore_atime /*&& !np->dn_set_mtime*/ &&
+      (info->action == JOURNAL_ACTION_ATIME ||
+       info->action == JOURNAL_ACTION_UTIME))
     {
-      //JOURNAL_LOG_DEBUG("Skipping noisy atime/ctime update for inode %llu", st->st_ino);
-      return;
+      return false;		// skip noisy update
     }
+  return true;
+}
+
+void
+journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
+		      journal_durability_t durability)
+{
+  const struct node *np = (struct node *) node_ptr;
+  if (!should_log_event (np, info))
+    return;
 
   const char *name = info->name ? info->name : "";
   const char *extra = info->extra ? info->extra : "";
@@ -160,6 +180,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
   entry->timestamp_ms = current_time_ms ();
 
+  const struct stat *st = &np->dn_stat;
   entry->parent_ino = (journal_ino_t) info->parent_ino;
   entry->src_parent_ino = (journal_ino_t) info->src_parent_ino;
   entry->dst_parent_ino = (journal_ino_t) info->dst_parent_ino;
@@ -217,7 +238,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
     }
 
   entry->action = info->action;
-
   strncpy (entry->name, name, sizeof (entry->name) - 1);
   strncpy (entry->extra, extra, sizeof (entry->extra) - 1);
   strncpy (entry->old_name, old_name, sizeof (entry->old_name) - 1);
@@ -242,4 +262,3 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
 
   free (buf);
 }
-
