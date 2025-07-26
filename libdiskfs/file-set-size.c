@@ -45,7 +45,7 @@ diskfs_S_file_set_size (struct protid *cred,
 			          .name = resolved_name,
 			          .parent_ino = np->dn_stat.st_ino,
 			      };
-			      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+			      journal_log_metadata (np, &info);
 
 			   if (np->filemod_reqs)
 			     diskfs_notice_filechange (np, 
@@ -72,7 +72,7 @@ diskfs_S_file_set_size (struct protid *cred,
 				   .name = resolved_name,
 				   .parent_ino = np->dn_stat.st_ino,
 			       };
-			       journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+			       journal_log_metadata (np, &info);
 			       if (np->filemod_reqs)
 				 diskfs_notice_filechange (np, 
 							   FILE_CHANGED_EXTEND,

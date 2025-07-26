@@ -53,7 +53,7 @@ diskfs_S_file_chmod (struct protid *cred,
 				 .name = cred && cred->po ? cred->po->path : "(unknown)",
 				 .parent_ino = np->dn_stat.st_ino
                                };
-                               journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+                               journal_log_metadata (np, &info);
 
 			       np->dn_stat.st_mode = mode;
 			       np->dn_set_ctime = 1;

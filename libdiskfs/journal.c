@@ -169,8 +169,7 @@ should_log_event (const struct node *np,
 }
 
 void
-journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
-		      journal_durability_t durability)
+journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
 {
   const struct node *np = (struct node *) node_ptr;
   if (!should_log_event (np, info))
@@ -272,7 +271,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info,
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u", entry->ino,
 		     entry->tx_id, entry->action);
 
-  if (journal_enabled && durability == JOURNAL_DURABILITY_SYNC)
+  if (journal_enabled)
     {
       if (!journal_write_raw_sync (entry))
 	JOURNAL_LOG_ERROR ("Failed to write sync.");

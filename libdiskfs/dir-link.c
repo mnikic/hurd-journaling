@@ -127,7 +127,7 @@ diskfs_S_dir_link (struct protid *dircred,
     .name = name,
     .parent_ino = dnp->dn_stat.st_ino
   };
-  journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+  journal_log_metadata (np, &info);
 
   if (diskfs_synchronous)
     diskfs_node_update (dnp, 1);

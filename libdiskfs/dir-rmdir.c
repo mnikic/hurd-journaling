@@ -87,7 +87,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino
       };
-      journal_log_metadata (np, &info, JOURNAL_DURABILITY_SYNC);
+      journal_log_metadata (np, &info);
 
       np->dn_stat.st_nlink--;
       np->dn_set_ctime = 1;

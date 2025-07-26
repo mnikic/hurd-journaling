@@ -241,7 +241,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
     .has_mode = true,
     .mode = fnp->dn_stat.st_mode
   };
-  journal_log_metadata(fnp, &info, JOURNAL_DURABILITY_SYNC);
+  journal_log_metadata(fnp, &info);
 
   if (diskfs_synchronous)
     {
