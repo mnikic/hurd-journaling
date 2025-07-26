@@ -44,9 +44,9 @@ journal_inode_denylist_builder_add (builder_t * builder, journal_ino_t ino)
 journal_inode_denylist_t
 journal_inode_denylist_finalize (builder_t * builder)
 {
-  atomic_thread_fence(memory_order_seq_cst);
+  atomic_thread_fence (memory_order_seq_cst);
   journal_inode_denylist_t result = { 0 };
-  memcpy(result.bits, builder->bits, sizeof(result.bits));
+  memcpy (result.bits, builder->bits, sizeof (result.bits));
   return result;
 }
 

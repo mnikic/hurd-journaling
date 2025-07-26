@@ -223,10 +223,11 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	}
       journal_payload_bin_t *payload = &entry->payload;
       if (journal_inode_denylist_contains (denylist, payload->ino))
-        {
-  	  JOURNAL_LOG_DEBUG ("Ino %u is in a deny list. Skipping tx %llu.", payload->ino, payload->tx_id);
+	{
+	  JOURNAL_LOG_DEBUG ("Ino %u is in a deny list. Skipping tx %llu.",
+			     payload->ino, payload->tx_id);
 	  goto NEXT;
-        }
+	}
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
 	  || payload->tx_id == 0 || payload->timestamp_ms == 0
 	  || !(payload->has_mtime || payload->has_atime
@@ -241,7 +242,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	{
 	  return false;
 	}
-NEXT:
+    NEXT:
       index = (index + 1) % JOURNAL_NUM_ENTRIES;
     }
 
@@ -299,7 +300,7 @@ journal_replay (journal_inode_denylist_t * denylist)
 	JOURNAL_LOG_ERROR ("Failed to set diskfs_readonly = 0: %s (%d)",
 			   strerror (err), err);
       else
-        JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
+	JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
       test (arena);
       struct journal_entries list = { 0 };
       bool success = fetch_and_validate_journal (arena, denylist, &list);
@@ -346,4 +347,3 @@ journal_replay (journal_inode_denylist_t * denylist)
   journal_graph_free ();
   journal_arena_destroy (arena);
 }
-

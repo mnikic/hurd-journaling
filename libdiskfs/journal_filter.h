@@ -18,7 +18,6 @@
  *
  * Returns: true if update should be logged, false if filtered out
  */
-bool journal_filter_should_log(journal_ino_t ino, time_t ctime);
+bool journal_filter_should_log (journal_ino_t ino, time_t ctime);
 
 #endif // JOURNAL_FILTER_H
-

@@ -106,4 +106,3 @@ void journal_log_metadata (void *node_ptr,
 			   journal_durability_t durability);
 
 #endif /* LIBDISKFS_JOURNAL_H */
-

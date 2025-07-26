@@ -164,4 +164,3 @@ apply_node_replay (inode_replay_state_t * state)
   diskfs_nput (np);
   return 0;
 }
-

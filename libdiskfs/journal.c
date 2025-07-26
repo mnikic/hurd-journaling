@@ -146,7 +146,7 @@ should_log_event (const struct node *np,
     ignore_atime = !journal_filter_should_log (st->st_ino, st->st_atime);
 
   /* If we are ignoring this and the only change was atime/utime (not mtime), skip it */
-  if (ignore_atime /*&& !np->dn_set_mtime*/ &&
+  if (ignore_atime /*&& !np->dn_set_mtime */  &&
       (info->action == JOURNAL_ACTION_ATIME ||
        info->action == JOURNAL_ACTION_UTIME))
     {
