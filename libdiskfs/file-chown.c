@@ -52,8 +52,7 @@ diskfs_S_file_chown (struct protid *cred,
 			       .gid = gid,
 			       .has_uid = (uid != (uid_t) -1),
 			       .has_gid = (gid != (gid_t) -1),
-			       .name = cred && cred->po ? cred->po->path : "(unknown)",
-			       .parent_ino = np->dn_stat.st_ino
+			       .path = cred && cred->po ? cred->po->path : "",
 			     };
 
 			     journal_log_metadata (np, &info);

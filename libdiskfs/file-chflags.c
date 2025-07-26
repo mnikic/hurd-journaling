@@ -38,16 +38,11 @@ diskfs_S_file_chflags (struct protid *cred,
 		       err = diskfs_validate_flags_change (np, flags);
 		     if (!err)
 		       {
-			 const char *resolved_name = "(chflags)";
-			 if (cred && cred->po && cred->po->path)
-			   resolved_name = cred->po->path;
-
  			 struct journal_entry_info info = {
 			   .action = JOURNAL_ACTION_CHFLAGS,
 			   .flags = flags,
 			   .has_flags = true,
-			   .name = resolved_name,
-			   .parent_ino = np->dn_stat.st_ino,
+			   .path = cred->po ? cred->po->path : ""
 			 };
 			 journal_log_metadata(np, &info);
 			 np->dn_stat.st_flags = flags;

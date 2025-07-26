@@ -45,7 +45,11 @@
 #include <inttypes.h>
 #include <hurd/fshelp.h>
 #include <hurd/store.h>
+#include <string.h>
+#include <stdio.h>
 
+#define MAX_PATH_COMPONENTS 128
+#define NORMALIZED_PATH_MAX 1024
 #define MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
 #define MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 
@@ -168,6 +172,78 @@ should_log_event (const struct node *np,
 	    info->action == JOURNAL_ACTION_UTIME));
 }
 
+const char *
+normalize_for_log(const char *input)
+{
+  static char normalized[NORMALIZED_PATH_MAX];
+  const char *components[MAX_PATH_COMPONENTS];
+  int depth = 0;
+
+  if (!input || input[0] == '\0')
+    return "(null)";
+
+  // Skip leading slashes
+  while (*input == '/')
+    input++;
+
+  while (*input && depth < MAX_PATH_COMPONENTS)
+    {
+      // Get next component
+      const char *start = input;
+      while (*input && *input != '/')
+        input++;
+      size_t len = input - start;
+
+      // Skip over any slashes
+      while (*input == '/')
+        input++;
+
+      if (len == 0)
+        continue; // repeated slashes or trailing slash
+
+      if (len == 1 && start[0] == '.')
+        continue; // skip .
+
+      if (len == 2 && start[0] == '.' && start[1] == '.')
+        {
+          if (depth > 0)
+            depth--; // pop one
+          continue;
+        }
+
+      // Save pointer to this component
+      components[depth++] = start;
+    }
+
+  // Join components
+  char *out = normalized;
+  size_t remaining = NORMALIZED_PATH_MAX;
+
+  if (depth == 0)
+    {
+      snprintf(out, remaining, ".");
+      return normalized;
+    }
+
+  for (int i = 0; i < depth; i++)
+    {
+      size_t len = 0;
+      while (components[i][len] && components[i][len] != '/')
+        len++;
+
+      if (len + 1 >= remaining)
+        break;
+
+      *out++ = '/';
+      memcpy(out, components[i], len);
+      out += len;
+      remaining -= (len + 1);
+    }
+
+  *out = '\0';
+  return normalized;
+}
+
 void
 journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
 {
@@ -268,8 +344,8 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u", entry->ino,
-		     entry->tx_id, entry->action);
+  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s", entry->ino,
+		     entry->tx_id, entry->action, entry->name, normalize_for_log (info->path));
 
   if (journal_enabled)
     {

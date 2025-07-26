@@ -239,7 +239,8 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
     .parent_ino = tdp->dn_stat.st_ino,
     .name = toname,
     .has_mode = true,
-    .mode = fnp->dn_stat.st_mode
+    .mode = fnp->dn_stat.st_mode,
+    .path = tocred->po ? tocred->po->path : ""
   };
   journal_log_metadata(fnp, &info);
 

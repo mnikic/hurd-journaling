@@ -84,7 +84,7 @@ diskfs_S_file_utimens (struct protid *cred,
 			   {
 		             struct journal_entry_info info = {
 		                 .action = JOURNAL_ACTION_UTIME,
-		                 .name = cred && cred->po ? cred->po->path : "(unknown)"
+		                 .path = cred && cred->po ? cred->po->path : ""
 		             };
 		             journal_log_metadata (np, &info);
 		          }

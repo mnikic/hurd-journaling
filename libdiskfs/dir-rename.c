@@ -235,7 +235,8 @@ diskfs_S_dir_rename (struct protid *fromcred,
       .name = toname, 
       .parent_ino = tdp->dn_stat.st_ino,
       .has_mode = true,
-      .mode = fnp->dn_stat.st_mode
+      .mode = fnp->dn_stat.st_mode,
+      .path = tocred->po ? tocred->po->path : ""
   };
   journal_log_metadata (fnp, &info);
 

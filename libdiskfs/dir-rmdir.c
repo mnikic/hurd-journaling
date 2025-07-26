@@ -85,7 +85,8 @@ diskfs_S_dir_rmdir (struct protid *dircred,
       struct journal_entry_info info = {
         .action = JOURNAL_ACTION_RMDIR,
         .name = name,
-        .parent_ino = dnp->dn_stat.st_ino
+        .parent_ino = dnp->dn_stat.st_ino,
+	.path = dircred->po ? dircred->po->path : ""
       };
       journal_log_metadata (np, &info);
 
