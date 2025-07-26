@@ -23,15 +23,14 @@
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_writer.h>
+#include <libdiskfs/journal_policy.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
-#include <libdiskfs/journal_filter.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_inode_scanner.h>
 #include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/diskfs.h>
 
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,40 +47,10 @@
 #include <string.h>
 #include <stdio.h>
 
-#define MAX_PATH_COMPONENTS 128
-#define NORMALIZED_PATH_MAX 1024
-#define MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
-#define MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 
 static volatile uint64_t journal_tx_id = 1;
-static volatile bool journal_shutting_down;
 static volatile bool journal_enabled = false;
 static journal_inode_denylist_t ino_denylist;
-
-static uint64_t
-current_time_ms (void)
-{
-  struct timeval tv;
-  gettimeofday (&tv, NULL);
-  return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
-}
-
-static inline time_t
-safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
-{
-  time_t result = 0;
-
-  if (atime >= MIN_REASONABLE_TIME && atime <= MAX_REASONABLE_TIME)
-    result = atime;
-
-  if (mtime >= MIN_REASONABLE_TIME && mtime <= MAX_REASONABLE_TIME)
-    result = (result > mtime) ? result : mtime;
-
-  if (ctime >= MIN_REASONABLE_TIME && ctime <= MAX_REASONABLE_TIME)
-    result = (result > ctime) ? result : ctime;
-
-  return result;
-}
 
 static void
 denylist_init (void)
@@ -110,145 +79,29 @@ void
 journal_shutdown (void)
 {
   JOURNAL_LOG_DEBUG ("journal_shutdown() called.");
-  journal_shutting_down = true;
+  journal_enabled = false;
 }
 
 static inline bool
 should_log_time (time_t value, int flag_set)
 {
-  return flag_set || (value > MIN_REASONABLE_TIME
-		      && value < MAX_REASONABLE_TIME);
-}
-
-static bool
-should_log_event (const struct node *np,
-		  const struct journal_entry_info *info)
-{
-  if (!journal_enabled)
-    {
-      return false;
-    }
-  if (!np)
-    {
-      JOURNAL_LOG_ERROR
-	("NULL node_ptr received in journal_log_metadata, skipping.");
-      return false;
-    }
-
-  if (!info)
-    {
-      JOURNAL_LOG_ERROR
-	("NULL info pointer received in journal_log_metadata, skipping.");
-      return false;
-    }
-  const struct stat *st = &np->dn_stat;
-
-  if (journal_inode_denylist_contains
-      (&ino_denylist, (journal_ino_t) st->st_ino))
-    {
-      return false;
-    }
-  if (info->parent_ino && journal_inode_denylist_contains
-      (&ino_denylist, (journal_ino_t) info->parent_ino))
-    {
-      return false;
-    }
-  if (!journal_is_safe_stat (st))
-    {
-      JOURNAL_LOG_DEBUG ("Skipped inode %llu (mode %o) as unsafe.",
-			 st->st_ino, st->st_mode);
-      return false;
-    }
-  time_t ts = safe_max_timestamp (st->st_atime, st->st_ctime, st->st_mtime);
-  bool ignore_time = false;
-
-  /* If one of the timestamps changed, check if it's worth logging */
-  if (ts)
-    ignore_time = !journal_filter_should_log (st->st_ino, ts);
-
-  /* If we are ignoring this and the only change was atime/utime, skip it */
-  return !(ignore_time &&
-	   (info->action == JOURNAL_ACTION_ATIME ||
-	    info->action == JOURNAL_ACTION_UTIME));
-}
-
-const char *
-normalize_for_log(const char *input)
-{
-  static char normalized[NORMALIZED_PATH_MAX];
-  const char *components[MAX_PATH_COMPONENTS];
-  int depth = 0;
-
-  if (!input || input[0] == '\0')
-    return "(null)";
-
-  // Skip leading slashes
-  while (*input == '/')
-    input++;
-
-  while (*input && depth < MAX_PATH_COMPONENTS)
-    {
-      // Get next component
-      const char *start = input;
-      while (*input && *input != '/')
-        input++;
-      size_t len = input - start;
-
-      // Skip over any slashes
-      while (*input == '/')
-        input++;
-
-      if (len == 0)
-        continue; // repeated slashes or trailing slash
-
-      if (len == 1 && start[0] == '.')
-        continue; // skip .
-
-      if (len == 2 && start[0] == '.' && start[1] == '.')
-        {
-          if (depth > 0)
-            depth--; // pop one
-          continue;
-        }
-
-      // Save pointer to this component
-      components[depth++] = start;
-    }
-
-  // Join components
-  char *out = normalized;
-  size_t remaining = NORMALIZED_PATH_MAX;
-
-  if (depth == 0)
-    {
-      snprintf(out, remaining, ".");
-      return normalized;
-    }
-
-  for (int i = 0; i < depth; i++)
-    {
-      size_t len = 0;
-      while (components[i][len] && components[i][len] != '/')
-        len++;
-
-      if (len + 1 >= remaining)
-        break;
-
-      *out++ = '/';
-      memcpy(out, components[i], len);
-      out += len;
-      remaining -= (len + 1);
-    }
-
-  *out = '\0';
-  return normalized;
+  return flag_set || (value > JOURNAL_MIN_REASONABLE_TIME
+		      && value < JOURNAL_MAX_REASONABLE_TIME);
 }
 
 void
 journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
 {
+  if (!journal_enabled)
+    {
+      return;
+    }
   const struct node *np = (struct node *) node_ptr;
-  if (!should_log_event (np, info))
+  const char *normalized_path = journal_normalize_path (info->path);
+  char full_path[1024];
+  journal_combine_path_name (normalized_path, info->name, full_path,
+			     sizeof (full_path));
+  if (!journal_should_log_event (np, info, &ino_denylist, full_path))
     return;
 
   const char *name = info->name ? info->name : "";
@@ -271,7 +124,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   journal_payload_bin_t *entry = (journal_payload_bin_t *) buf;
 
   entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
-  entry->timestamp_ms = current_time_ms ();
+  entry->timestamp_ms = journal_current_time_ms ();
 
   const struct stat *st = &np->dn_stat;
   entry->parent_ino = (journal_ino_t) info->parent_ino;
@@ -344,8 +197,9 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s", entry->ino,
-		     entry->tx_id, entry->action, entry->name, normalize_for_log (info->path));
+  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",
+		     entry->ino, entry->tx_id, entry->action, entry->name,
+		     full_path);
 
   if (journal_enabled)
     {
