@@ -283,14 +283,12 @@ void
 journal_replay (journal_inode_denylist_t * denylist)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
-  journal_enabled = false;
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
       JOURNAL_LOG_ERROR
 	("Unable to allocate enough memory for journal replay. Aborting!");
       // Even if replay fails, enable journaling to start capturing future metadata
-      journal_enabled = true;
       return;
     }
 
@@ -347,6 +345,5 @@ journal_replay (journal_inode_denylist_t * denylist)
     }
   journal_graph_free ();
   journal_arena_destroy (arena);
-  journal_enabled = true;
 }
 

@@ -51,7 +51,7 @@
 
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_shutting_down;
-volatile bool journal_enabled = false;
+static volatile bool journal_enabled = false;
 static journal_inode_denylist_t ino_denylist;
 
 static uint64_t
@@ -81,6 +81,7 @@ journal_init (struct store *store)
   denylist_init ();
   journal_io_set_store (store);
   journal_replay (&ino_denylist);
+  journal_enabled = true;
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
 
@@ -102,6 +103,10 @@ static bool
 should_log_event (const struct node *np,
 		  const struct journal_entry_info *info)
 {
+  if (!journal_enabled)
+    {
+      return false;
+    }
   if (!np)
     {
       JOURNAL_LOG_ERROR
