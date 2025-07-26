@@ -54,6 +54,11 @@ while (0)
 #define JOURNAL_LOG_DEBUG(fmt, ...) do { } while (0)
 #endif
 
+#define JOURNAL_MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
+#define JOURNAL_MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
+#define JOURNAL_MAX_PATH_COMPONENTS 128
+#define JOURNAL_NORMALIZED_PATH_MAX 1024
+
 /* Compute the byte offset of a journal entry given its index.  */
 static inline uint64_t
 index_to_offset (const uint64_t index)
@@ -97,6 +102,148 @@ journal_is_safe_stat (const struct stat *st)
     return false;
 
   return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
+}
+
+static inline uint64_t
+journal_current_time_ms (void)
+{
+  struct timeval tv;
+  gettimeofday (&tv, NULL);
+  return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
+static inline const char *
+journal_normalize_path (const char *input)
+{
+  static char normalized[JOURNAL_NORMALIZED_PATH_MAX];
+  const char *components[JOURNAL_MAX_PATH_COMPONENTS];
+  int depth = 0;
+
+  if (!input || input[0] == '\0')
+    return "";
+
+  // Skip leading slashes
+  while (*input == '/')
+    input++;
+
+  while (*input && depth < JOURNAL_MAX_PATH_COMPONENTS)
+    {
+      // Get next component
+      const char *start = input;
+      while (*input && *input != '/')
+	input++;
+      size_t len = input - start;
+
+      // Skip over any slashes
+      while (*input == '/')
+	input++;
+
+      if (len == 0)
+	continue;		// repeated slashes or trailing slash
+
+      if (len == 1 && start[0] == '.')
+	continue;		// skip .
+
+      if (len == 2 && start[0] == '.' && start[1] == '.')
+	{
+	  if (depth > 0)
+	    depth--;		// pop one
+	  continue;
+	}
+
+      // Save pointer to this component
+      components[depth++] = start;
+    }
+
+  // Join components
+  char *out = normalized;
+  size_t remaining = JOURNAL_NORMALIZED_PATH_MAX;
+
+  if (depth == 0)
+    {
+      snprintf (out, remaining, ".");
+      return normalized;
+    }
+
+  for (int i = 0; i < depth; i++)
+    {
+      size_t len = 0;
+      while (components[i][len] && components[i][len] != '/')
+	len++;
+
+      if (len + 1 >= remaining)
+	break;
+
+      *out++ = '/';
+      memcpy (out, components[i], len);
+      out += len;
+      remaining -= (len + 1);
+    }
+
+  *out = '\0';
+  return normalized;
+}
+
+static inline void
+journal_combine_path_name (const char *path, const char *name,
+			   char *out, size_t out_size)
+{
+  if (!out || out_size == 0)
+    return;
+
+  const char *fallback = "?";
+  out[0] = '\0';		// always null-terminate early
+
+  if ((!path || !*path) && (!name || !*name))
+    {
+      snprintf (out, out_size, "%s", fallback);
+      return;
+    }
+
+  if (!name || !*name)
+    {
+      snprintf (out, out_size, "%s", path);
+      return;
+    }
+
+  if (!path || !*path)
+    {
+      snprintf (out, out_size, "%s", name);
+      return;
+    }
+
+  size_t path_len = strlen (path);
+  size_t name_len = strlen (name);
+  bool needs_slash = path[path_len - 1] != '/';
+
+  // If already ends in name, don't append
+  if (path_len >= name_len && strcmp (path + path_len - name_len, name) == 0)
+    {
+      snprintf (out, out_size, "%s", path);
+      return;
+    }
+
+  // Manual safe concatenation (avoids warning)
+  size_t remaining = out_size;
+  size_t written = 0;
+
+  written = snprintf (out, remaining, "%s", path);
+  if (written >= remaining)
+    return;
+
+  remaining -= written;
+  out += written;
+
+  if (needs_slash)
+    {
+      written = snprintf (out, remaining, "/");
+      if (written >= remaining)
+	return;
+      remaining -= written;
+      out += written;
+    }
+
+  snprintf (out, remaining, "%s", name);	// truncate if needed
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */
