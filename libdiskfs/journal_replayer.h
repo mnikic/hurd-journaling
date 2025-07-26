@@ -23,6 +23,6 @@
 #include <libdiskfs/journal_inode_denylist.h>
 
 /* Replay a binary journal file from disk (used during early boot). */
-void journal_replay (const journal_inode_denylist_t *denylist);
+void journal_replay (const journal_inode_denylist_t * denylist);
 
 #endif /* LIBDISKFS_JOURNAL_REPLAYER_H */

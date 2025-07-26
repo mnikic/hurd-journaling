@@ -78,7 +78,7 @@ journal_store_write (const void *buf, size_t size, off_t relative_offset)
 
 //  JOURNAL_LOG_DEBUG
   //  ("Writing %zu bytes to block offset %llu (byte offset %lld)", size,
-    // (unsigned long long) block_offset, (long long) absolute_offset);
+  // (unsigned long long) block_offset, (long long) absolute_offset);
 
   error_t err = store_write (journal_store, block_offset, buf, size, &amount);
 

@@ -110,11 +110,9 @@ initialize_indices (uint64_t * start_index, uint64_t * end_index)
 bool
 journal_write_raw_sync (journal_payload_bin_t * payload_bin)
 {
-  JOURNAL_LOG_DEBUG
-    ("journal_write_raw_sync: got into raw write");
+  JOURNAL_LOG_DEBUG ("journal_write_raw_sync: got into raw write");
   pthread_mutex_lock (&sync_write_lock);
-  JOURNAL_LOG_DEBUG
-    ("journal_write_raw_sync: lock acquired.");
+  JOURNAL_LOG_DEBUG ("journal_write_raw_sync: lock acquired.");
 
   uint64_t start_index = 0, end_index = 0;
   if (!initialize_indices (&start_index, &end_index))
@@ -123,8 +121,7 @@ journal_write_raw_sync (journal_payload_bin_t * payload_bin)
       return false;
     }
 
-  JOURNAL_LOG_DEBUG
-    ("journal_write_raw_sync: indices initialized.");
+  JOURNAL_LOG_DEBUG ("journal_write_raw_sync: indices initialized.");
   const journal_entry_bin_t entry = {
     .magic = JOURNAL_MAGIC,
     .version = JOURNAL_VERSION,
@@ -132,8 +129,7 @@ journal_write_raw_sync (journal_payload_bin_t * payload_bin)
     .crc32 = journal_compute_payload_crc32 (payload_bin)
   };
 
-  JOURNAL_LOG_DEBUG
-    ("journal_write_raw_sync: about to write.");
+  JOURNAL_LOG_DEBUG ("journal_write_raw_sync: about to write.");
   error_t err = journal_write_entry (&entry, end_index);
   if (err)
     {
