@@ -62,6 +62,23 @@ current_time_ms (void)
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
 
+static inline time_t
+safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
+{
+  time_t result = 0;
+
+  if (atime >= MIN_REASONABLE_TIME && atime <= MAX_REASONABLE_TIME)
+    result = atime;
+
+  if (mtime >= MIN_REASONABLE_TIME && mtime <= MAX_REASONABLE_TIME)
+    result = (result > mtime) ? result : mtime;
+
+  if (ctime >= MIN_REASONABLE_TIME && ctime <= MAX_REASONABLE_TIME)
+    result = (result > ctime) ? result : ctime;
+
+  return result;
+}
+
 static void
 denylist_init (void)
 {
@@ -138,21 +155,17 @@ should_log_event (const struct node *np,
 			 st->st_ino, st->st_mode);
       return false;
     }
+  time_t ts = safe_max_timestamp (st->st_atime, st->st_ctime, st->st_mtime);
+  bool ignore_time = false;
 
-  bool ignore_atime = false;
+  /* If one of the timestamps changed, check if it's worth logging */
+  if (ts)
+    ignore_time = !journal_filter_should_log (st->st_ino, ts);
 
-  /* If atime changed, check if it's worth logging */
-  if (should_log_time (st->st_atime, np->dn_set_atime))
-    ignore_atime = !journal_filter_should_log (st->st_ino, st->st_atime);
-
-  /* If we are ignoring this and the only change was atime/utime (not mtime), skip it */
-  if (ignore_atime /*&& !np->dn_set_mtime */  &&
-      (info->action == JOURNAL_ACTION_ATIME ||
-       info->action == JOURNAL_ACTION_UTIME))
-    {
-      return false;		// skip noisy update
-    }
-  return true;
+  /* If we are ignoring this and the only change was atime/utime, skip it */
+  return !(ignore_time &&
+	   (info->action == JOURNAL_ACTION_ATIME ||
+	    info->action == JOURNAL_ACTION_UTIME));
 }
 
 void
