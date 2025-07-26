@@ -118,7 +118,12 @@ apply_node_replay (inode_replay_state_t * state)
   if (state->has_ctime && np->dn_stat.st_ctime < state->ctime)
     {
       APPEND_CHANGE ("ctime");
-      np->dn_stat.st_ctime = state->ctime;
+      // setting explicitly st_ctime value will be ignored by diskfs.
+      // dn_set_ctime flag is instead used without which any update 
+      // (even unrelated to timestamps) becomes (silently) ignored. 
+      // So we are forced to set dn_set_ctime to get anything done!
+      // st_ctime will be set to current (and no other) time by the diskfs if
+      // dn_set_ctime is set to 1. We will set it a bit down for any change.
       changes++;
     }
 
@@ -144,6 +149,7 @@ apply_node_replay (inode_replay_state_t * state)
 			 state->ino, changes, change_desc);
 #else
       np->dn_stat_dirty = 1;
+      np->dn_set_ctime = 1;
       diskfs_node_update (np, 0);
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
 			 ": %d metadata changes applied: [%s]", state->ino,
@@ -158,3 +164,4 @@ apply_node_replay (inode_replay_state_t * state)
   diskfs_nput (np);
   return 0;
 }
+

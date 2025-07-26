@@ -252,19 +252,22 @@ static void
 test (struct journal_arena *arena)
 {
   JOURNAL_LOG_DEBUG ("TESTING: Starting.");
-  time_t now = time (NULL);
   journal_payload_bin_t *payload =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload->ino = 188144;
-  payload->mtime = now + 60;
+  payload->ino = 188212;
+  payload->mtime = 1751718896;
   payload->has_mtime = true;
-  payload->ctime = now + 60;
+  payload->ctime = 1751718896;
   payload->has_ctime = true;
-  payload->st_mode = 0700;
+  payload->st_mode = 0100755;
   payload->has_mode = true;
-  payload->tx_id = 7112;
-  payload->timestamp_ms = now + 60;
-  payload->action = JOURNAL_ACTION_CHMOD;
+  payload->tx_id = 7113;
+  payload->timestamp_ms = time (NULL) + 60;
+  payload->uid = 0;
+  payload->has_uid = true;
+  payload->gid = 0;
+  payload->has_gid = true;
+  payload->action = JOURNAL_ACTION_CHOWN;
 
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
@@ -281,7 +284,6 @@ journal_replay (journal_inode_denylist_t * denylist)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   journal_enabled = false;
-  // There is a stack pressure here, arena is needed.
   struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
   if (!arena)
     {
@@ -347,3 +349,4 @@ journal_replay (journal_inode_denylist_t * denylist)
   journal_arena_destroy (arena);
   journal_enabled = true;
 }
+
