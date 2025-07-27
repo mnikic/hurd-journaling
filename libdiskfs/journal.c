@@ -101,6 +101,8 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   char full_path[JOURNAL_NORMALIZED_PATH_MAX];
   journal_combine_path_name (normalized_path, info->name, full_path,
 			     sizeof (full_path));
+  JOURNAL_LOG_ERROR ("name: %s path: %s normalized: %s full: %s", info->name, info->path, normalized_path, full_path);
+
   if (!journal_should_log_event (np, info, &ino_denylist, full_path))
     return;
 

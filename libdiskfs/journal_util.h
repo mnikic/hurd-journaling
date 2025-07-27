@@ -190,7 +190,7 @@ journal_combine_path_name (const char *path, const char *name,
   if (!out || out_size == 0)
     return;
 
-  const char *fallback = "?";
+  const char *fallback = "";
   out[0] = '\0';		// always null-terminate early
 
   if ((!path || !*path) && (!name || !*name))

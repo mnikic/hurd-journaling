@@ -70,7 +70,7 @@ should_journal_path (const char *path)
 {
   if (!path || *path == '\0')
     {
-      return false;		// Don't journal empty/null paths
+      return true;		// Sometimes we just don't have them!
     }
 
   // System and temporary directories - exact matches and prefixes
@@ -164,12 +164,10 @@ should_journal_path (const char *path)
   static const char *excluded_extensions[] = {
     ".o",			// Object files
     ".a",			// Static libraries
-    ".so",			// Shared libraries (be careful - some are important)
     ".pyc",			// Python bytecode
     ".pyo",			// Python optimized bytecode
     ".pyd",			// Python dynamic libraries
     ".class",			// Java bytecode
-    ".jar",			// Java archives (might want to keep some)
     ".war",			// Web application archives
     ".ear",			// Enterprise application archives
     ".tmp",			// Generic temporary
@@ -185,9 +183,6 @@ should_journal_path (const char *path)
     ".dmp",			// Dump files
     ".core",			// Core dumps
     ".stackdump",		// Stack dumps
-    ".obj",			// MSVC object files
-    ".exe",			// Windows executables (if cross-compiling)
-    ".dll",			// Windows DLLs
     ".pdb",			// Debug databases
     ".ilk",			// Incremental linker files
     ".idb",			// Debug databases
@@ -476,5 +471,5 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  return true; // should_journal_path (full_path);
+  return true;//should_journal_path (full_path);
 }
