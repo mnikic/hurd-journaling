@@ -31,6 +31,7 @@
 #define JOURNAL_MAGIC    0x4A4E4C30	/* "JNL0" */
 #define JOURNAL_VERSION  1
 #define MAX_FIELD_LEN    256
+#define JOURNAL_NORMALIZED_PATH_MAX 1024
 
 typedef uint32_t journal_ino_t;
 typedef uint32_t journal_uid_t;
@@ -82,6 +83,7 @@ struct __attribute__((__packed__)) journal_payload_bin
   char old_name[MAX_FIELD_LEN];
   char new_name[MAX_FIELD_LEN];
   char target[MAX_FIELD_LEN];
+  char path[JOURNAL_NORMALIZED_PATH_MAX];
   char extra[MAX_FIELD_LEN];
 };
 

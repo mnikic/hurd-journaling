@@ -144,8 +144,13 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
   inode_replay_state_t *replay = &ino->replay;
   replay->last_tx = ev->tx_id;
   if (ev->timestamp_ms > replay->last_seen)
-    replay->last_seen = ev->timestamp_ms;
-
+    {
+      replay->last_seen = ev->timestamp_ms;
+      if (ev->path[0] != '\0')
+        {
+          strncpy(replay->resolved_path, ev->path, JOURNAL_NORMALIZED_PATH_MAX);
+        }
+    }
   switch (ev->action)
     {
     case JOURNAL_ACTION_CREATE:
