@@ -257,6 +257,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
 	}
       break;
 
+    case JOURNAL_ACTION_WRITE:
     case JOURNAL_ACTION_TRUNCATE:
     case JOURNAL_ACTION_GROW:
       if (ev->has_size)
