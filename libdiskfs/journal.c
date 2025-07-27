@@ -98,7 +98,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
     }
   const struct node *np = (struct node *) node_ptr;
   const char *normalized_path = journal_normalize_path (info->path);
-  char full_path[1024];
+  char full_path[JOURNAL_NORMALIZED_PATH_MAX];
   journal_combine_path_name (normalized_path, info->name, full_path,
 			     sizeof (full_path));
   if (!journal_should_log_event (np, info, &ino_denylist, full_path))
@@ -196,6 +196,8 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->old_name[sizeof (entry->old_name) - 1] = '\0';
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
+
+  strncpy (entry->path, full_path, sizeof (entry->path));
 
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",
 		     entry->ino, entry->tx_id, entry->action, entry->name,

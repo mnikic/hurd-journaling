@@ -1,4 +1,4 @@
-/* journal_io.c - Low-level journal read and validation logic
+/* journal_io.c - Low-level journal read and write logic
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -75,10 +75,6 @@ journal_store_write (const void *buf, size_t size, off_t relative_offset)
 
   store_offset_t block_offset = absolute_offset / journal_store->block_size;
   size_t amount = 0;
-
-//  JOURNAL_LOG_DEBUG
-  //  ("Writing %zu bytes to block offset %llu (byte offset %lld)", size,
-  // (unsigned long long) block_offset, (long long) absolute_offset);
 
   error_t err = store_write (journal_store, block_offset, buf, size, &amount);
 

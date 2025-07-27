@@ -35,9 +35,6 @@ static const char *build_exclusions[] = {
   // Swift
   ".build", "Packages",
 
-  // Version control (beyond .git)
-  ".svn", ".hg", ".bzr", "CVS",
-
   // IDE and editor directories
   ".idea", ".eclipse", ".metadata",
 
@@ -91,15 +88,6 @@ should_journal_path (const char *path)
     "/boot/",			// Boot files (usually read-only)
     NULL
   };
-
-  // Check exact directory matches (without trailing slash)
-  if (strcmp (path, "/tmp") == 0 ||
-      strcmp (path, "/dev") == 0 ||
-      strcmp (path, "/proc") == 0 ||
-      strcmp (path, "/sys") == 0 || strcmp (path, "/run") == 0)
-    {
-      return false;
-    }
 
   // Check excluded prefixes
   for (int i = 0; excluded_prefixes[i] != NULL; i++)
@@ -226,10 +214,6 @@ should_journal_path (const char *path)
   static const char *excluded_dirs[] = {
     "node_modules",		// Node.js dependencies
     "__pycache__",		// Python cache
-    ".git",			// Git repository data
-    ".svn",			// Subversion
-    ".hg",			// Mercurial
-    ".bzr",			// Bazaar
     "CMakeFiles",		// CMake build files
     ".cmake",			// CMake cache
     "build",			// Generic build directory
@@ -492,5 +476,5 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  return should_journal_path (full_path);
+  return true; // should_journal_path (full_path);
 }

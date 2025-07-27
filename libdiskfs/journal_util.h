@@ -57,7 +57,6 @@ while (0)
 #define JOURNAL_MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
 #define JOURNAL_MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 #define JOURNAL_MAX_PATH_COMPONENTS 128
-#define JOURNAL_NORMALIZED_PATH_MAX 1024
 
 /* Compute the byte offset of a journal entry given its index.  */
 static inline uint64_t
