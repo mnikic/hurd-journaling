@@ -2,18 +2,6 @@
 
 #include <stdatomic.h>
 
-#define FILTER_TABLE_SIZE 2047	// Number of entries in the journal
-#define ATIME_MIN_DELTA_SEC 1
-
-typedef struct __attribute__((aligned (64)))
-{
-  atomic_uint_fast64_t ino;
-  atomic_long last_logged;
-} journal_filter_entry_t;
-
-
-static journal_filter_entry_t filter_table[FILTER_TABLE_SIZE];
-
 static inline size_t
 hash_ino (journal_ino_t ino)
 {
@@ -26,26 +14,31 @@ hash_ino (journal_ino_t ino)
 }
 
 bool
-journal_filter_should_log (journal_ino_t ino, time_t atime)
+journal_filter_should_log (journal_filter_instance_t * instance,
+			   journal_ino_t ino, time_t now)
 {
-  size_t idx = hash_ino (ino);
-  journal_filter_entry_t *entry = &filter_table[idx];
+  if (!instance || !instance->table)
+    return true;
+
+  size_t idx = hash_ino (ino) % instance->size;
+  journal_filter_entry_t *entry = &instance->table[idx];
 
   journal_ino_t current_ino =
     atomic_load_explicit (&entry->ino, memory_order_relaxed);
+
   if (current_ino != ino)
     {
       atomic_store_explicit (&entry->ino, ino, memory_order_relaxed);
-      atomic_store_explicit (&entry->last_logged, atime,
-			     memory_order_relaxed);
+      atomic_store_explicit (&entry->last_logged, now, memory_order_relaxed);
       return true;
     }
 
   time_t last =
     atomic_load_explicit (&entry->last_logged, memory_order_relaxed);
-  if ((atime - last) < ATIME_MIN_DELTA_SEC)
+
+  if ((now - last) < instance->min_delta_sec)
     return false;
 
-  atomic_store_explicit (&entry->last_logged, atime, memory_order_relaxed);
+  atomic_store_explicit (&entry->last_logged, now, memory_order_relaxed);
   return true;
 }

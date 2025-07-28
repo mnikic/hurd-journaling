@@ -58,9 +58,9 @@ denylist_init (void)
   journal_inode_denylist_builder_t builder =
     journal_inode_denylist_builder_init ();
 
-  journal_scan_path_for_inos ("/dev", &builder);
-  journal_scan_path_for_inos ("/tmp", &builder);
-  journal_scan_path_for_inos ("/var/log", &builder);
+  for (int i = 0; journal_excluded_prefixes[i]; i++)
+    journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
+
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
 
@@ -89,6 +89,50 @@ should_log_time (time_t value, int flag_set)
 		      && value < JOURNAL_MAX_REASONABLE_TIME);
 }
 
+static char *
+toString (journal_action_t action)
+{
+  switch (action)
+    {
+
+    case JOURNAL_ACTION_CREATE:
+      return "CREATE";
+    case JOURNAL_ACTION_MKDIR:
+      return "MKDIR";
+    case JOURNAL_ACTION_MKFILE:
+      return "MKFILE";
+    case JOURNAL_ACTION_SYMLINK:
+      return "SYMLINK";
+    case JOURNAL_ACTION_LINK:
+      return "LINK";
+    case JOURNAL_ACTION_UNLINK:
+      return "UNLINK";
+    case JOURNAL_ACTION_RENAME:
+      return "RENAME";
+    case JOURNAL_ACTION_RMDIR:
+      return "RMDIR";
+    case JOURNAL_ACTION_CHMOD:
+      return "CHMOD";
+    case JOURNAL_ACTION_CHOWN:
+      return "CHOWN";
+    case JOURNAL_ACTION_UTIME:
+      return "UTIME";
+    case JOURNAL_ACTION_TRUNCATE:
+      return "TRUNCATE";
+    case JOURNAL_ACTION_GROW:
+      return "GROW";
+    case JOURNAL_ACTION_CHAUTHOR:
+      return "CHAUTHOR";
+    case JOURNAL_ACTION_CHFLAGS:
+      return "FLASGS";
+    case JOURNAL_ACTION_ATIME:
+      return "ATIME";
+    case JOURNAL_ACTION_WRITE:
+      return "WRITE";
+    }
+  return "UNKNOWN";
+}
+
 void
 journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
 {
@@ -101,7 +145,9 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   char full_path[JOURNAL_NORMALIZED_PATH_MAX];
   journal_combine_path_name (normalized_path, info->name, full_path,
 			     sizeof (full_path));
-  JOURNAL_LOG_ERROR ("name: %s path: %s normalized: %s full: %s", info->name, info->path, normalized_path, full_path);
+
+//  if (np->dn_stat.st_ino != 48803 && strncmp(full_path, "/dev", strlen("/dev")) != 0)
+  //  JOURNAL_LOG_ERROR ("ino: %llu action: %s name: %s path: %s normalized: %s full: %s", np->dn_stat.st_ino, toString(info->action), info->name, info->path, normalized_path, full_path);
 
   if (!journal_should_log_event (np, info, &ino_denylist, full_path))
     return;

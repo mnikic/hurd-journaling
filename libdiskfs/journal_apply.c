@@ -76,13 +76,13 @@ apply_node_replay (inode_replay_state_t * state)
       diskfs_nput (np);
       return 0;
     }
-  char * path = state->resolved_path;
+  char *path = state->resolved_path;
   int changes = 0;
   char change_desc[128];
   change_desc[0] = '\0';
   size_t desc_len = 0;
   bool first = true;
- 
+
   if (state->has_uid && state->uid != (uid_t) - 1
       && np->dn_stat.st_uid != state->uid)
     {
@@ -152,13 +152,14 @@ apply_node_replay (inode_replay_state_t * state)
       np->dn_set_ctime = 1;
       diskfs_node_update (np, 0);
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
-			 ": path %s, %d metadata changes applied: [%s]", state->ino, path,
-			 changes, change_desc);
+			 ": path %s, %d metadata changes applied: [%s]",
+			 state->ino, path, changes, change_desc);
 #endif
     }
   else
     {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": path %s, no changes needed", state->ino, path);
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": path %s, no changes needed",
+			 state->ino, path);
     }
 
   diskfs_nput (np);

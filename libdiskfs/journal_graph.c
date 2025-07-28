@@ -147,9 +147,10 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
     {
       replay->last_seen = ev->timestamp_ms;
       if (ev->path[0] != '\0')
-        {
-          strncpy(replay->resolved_path, ev->path, JOURNAL_NORMALIZED_PATH_MAX);
-        }
+	{
+	  strncpy (replay->resolved_path, ev->path,
+		   JOURNAL_NORMALIZED_PATH_MAX);
+	}
     }
   switch (ev->action)
     {
