@@ -40,6 +40,7 @@
 #include <errno.h>
 
 #define JOURNAL_HASH_SIZE 4096
+#define JOURNAL_HASH_SIZE 4096
 
 static inode_graph_node_t *inode_hash[JOURNAL_HASH_SIZE];
 
@@ -49,8 +50,24 @@ hash_ino (journal_ino_t ino)
   return ino % JOURNAL_HASH_SIZE;
 }
 
+static void
+delete_inode (journal_ino_t ino)
+{
+  journal_ino_t h = hash_ino (ino);
+  inode_graph_node_t **cur = &inode_hash[h];
+  while (*cur)
+    {
+      if ((*cur)->ino == ino)
+	{
+	  *cur = (*cur)->next;
+	  return;
+	}
+      cur = &(*cur)->next;
+    }
+}
+
 static inode_graph_node_t *
-get_inode (journal_ino_t ino)
+get_inode (journal_ino_t ino, struct journal_arena *arena)
 {
   journal_ino_t h = hash_ino (ino);
   inode_graph_node_t *cur = inode_hash[h];
@@ -60,9 +77,11 @@ get_inode (journal_ino_t ino)
 	return cur;
       cur = cur->next;
     }
-  inode_graph_node_t *new_node = calloc (1, sizeof (inode_graph_node_t));
+  inode_graph_node_t *new_node =
+    journal_arena_alloc (arena, sizeof (inode_graph_node_t));
   if (!new_node)
     return NULL;
+  memset (new_node, 0, sizeof (inode_graph_node_t));
   new_node->ino = ino;
   new_node->replay.ino = ino;
   new_node->next = inode_hash[h];
@@ -115,43 +134,74 @@ maybe_set_name (inode_replay_state_t * ino,
     }
 }
 
-/*
- * journal_graph_add_event:
- *   Applies a single journal event to the in-memory inode graph.
- *   It updates inode metadata, name, link count, and deletion status based on the action type.
- *
- *   Conservative Deletion Policy:
- *   - An inode is marked as deleted (is_deleted = true) in exactly two cases:
- *       1. RMDIR: The inode is a directory and a successful RMDIR was observed. This implies
- *          the directory was empty at deletion time, and we can safely mark both it and all
- *          of its children as deleted.
- *       2. Reliable UNLINK: The inode was created during the journal window (link_count_reliable == true),
- *          and its link count reaches zero due to one or more UNLINK operations.
- *
- *   - In all other situations  including missing CREATE events, incomplete link history, or ambiguous deletion
- *     is_deleted is not set.
- *
- *   - This conservative approach ensures that no speculative deletions occur. Data is preserved unless its
- *     deletion can be positively confirmed by the journal.
- */
 void
-journal_graph_add_event (const struct journal_payload_bin *ev)
+journal_graph_add_event (const struct journal_payload_bin *ev,
+			 struct journal_arena *arena)
 {
-  inode_graph_node_t *ino = get_inode (ev->ino);
+  if (ev->st_nlink == 0)
+    {
+      delete_inode (ev->ino);
+      return;
+    }
+
+  inode_graph_node_t *ino = get_inode (ev->ino, arena);
   if (!ino)
     return;
 
   inode_replay_state_t *replay = &ino->replay;
+  if (ev->timestamp_ms < replay->last_seen)
+    return;
+
   replay->last_tx = ev->tx_id;
-  if (ev->timestamp_ms > replay->last_seen)
+  replay->last_seen = ev->timestamp_ms;
+  if (ev->path[0] != '\0')
     {
-      replay->last_seen = ev->timestamp_ms;
-      if (ev->path[0] != '\0')
-	{
-	  strncpy (replay->resolved_path, ev->path,
-		   JOURNAL_NORMALIZED_PATH_MAX);
-	}
+      strncpy (replay->resolved_path, ev->path, JOURNAL_NORMALIZED_PATH_MAX);
     }
+
+  // Common fields applied regardless of event type
+  if (ev->has_uid)
+    {
+      replay->uid = ev->uid;
+      replay->has_uid = true;
+    }
+  if (ev->has_gid)
+    {
+      replay->gid = ev->gid;
+      replay->has_gid = true;
+    }
+  if (ev->has_flags)
+    {
+      replay->flags = ev->flags;
+      replay->has_flags = true;
+    }
+  if (ev->has_mode)
+    {
+      replay->st_mode = ev->st_mode;
+      replay->has_st_mode = true;
+    }
+  if (ev->has_size)
+    {
+      replay->st_size = ev->st_size;
+      replay->has_st_size = true;
+    }
+  if (ev->has_mtime && (!replay->has_mtime || ev->mtime > replay->mtime))
+    {
+      replay->has_mtime = true;
+      replay->mtime = ev->mtime;
+    }
+  if (ev->has_ctime && (!replay->has_ctime || ev->ctime > replay->ctime))
+    {
+      replay->has_ctime = true;
+      replay->ctime = ev->ctime;
+    }
+  if (ev->has_atime && (!replay->has_atime || ev->atime > replay->atime))
+    {
+      replay->has_atime = true;
+      replay->atime = ev->atime;
+    }
+  maybe_set_name (replay, ev);
+
   switch (ev->action)
     {
     case JOURNAL_ACTION_CREATE:
@@ -159,10 +209,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
     case JOURNAL_ACTION_MKFILE:
       ino->parent_ino = ev->parent_ino;
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
-      ino->link_count = 1;
-      ino->link_count_reliable = true;
-      replay->is_deleted = false;
-      add_child (get_inode (ev->parent_ino), ev->ino);
+      add_child (get_inode (ev->parent_ino, arena), ev->ino);
       break;
 
     case JOURNAL_ACTION_SYMLINK:
@@ -170,127 +217,33 @@ journal_graph_add_event (const struct journal_payload_bin *ev)
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
       safe_strncpy (replay->symlink_target, ev->target,
 		    sizeof (replay->symlink_target));
-      ino->link_count = 1;
-      ino->link_count_reliable = true;
-      replay->is_deleted = false;
-      add_child (get_inode (ev->parent_ino), ev->ino);
-      break;
-
-    case JOURNAL_ACTION_LINK:
-      ino->link_count++;
+      add_child (get_inode (ev->parent_ino, arena), ev->ino);
       break;
 
     case JOURNAL_ACTION_UNLINK:
-      remove_child (get_inode (ev->parent_ino), ev->ino);
-      ino->link_count--;
-      if (ino->link_count <= 0 && ino->link_count_reliable)
-	{
-	  replay->is_deleted = true;
-	  ino->num_children = 0;
-	  replay->deleted_at_tx = ev->tx_id;
-	  replay->deleted_at_timestamp = ev->timestamp_ms;
-	}
+      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
       break;
 
     case JOURNAL_ACTION_RMDIR:
-      remove_child (get_inode (ev->parent_ino), ev->ino);
-      replay->is_deleted = true;
-      replay->deleted_at_tx = ev->tx_id;
-      replay->deleted_at_timestamp = ev->timestamp_ms;
+      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
       for (int i = 0; i < ino->num_children; i++)
 	{
-	  inode_graph_node_t *child = get_inode (ino->children[i]);
-	  if (child && !child->replay.is_deleted)
-	    {
-	      child->replay.is_deleted = true;
-	      child->replay.deleted_at_tx = ev->tx_id;
-	      child->replay.deleted_at_timestamp = ev->timestamp_ms;
-	    }
+	  delete_inode (ino->children[i]);
 	}
       ino->num_children = 0;
-      break;
+      delete_inode (ev->ino);
+      return;
 
     case JOURNAL_ACTION_RENAME:
-      remove_child (get_inode (ev->src_parent_ino), ev->ino);
-      add_child (get_inode (ev->dst_parent_ino), ev->ino);
+      remove_child (get_inode (ev->src_parent_ino, arena), ev->ino);
+      add_child (get_inode (ev->dst_parent_ino, arena), ev->ino);
       ino->parent_ino = ev->dst_parent_ino;
       safe_strncpy (replay->name, ev->new_name, sizeof (replay->name));
-      break;
-
-    case JOURNAL_ACTION_UTIME:
-    case JOURNAL_ACTION_ATIME:
-      break;
-
-    case JOURNAL_ACTION_CHMOD:
-      if (ev->has_mode)
-	{
-	  replay->st_mode = ev->st_mode;
-	  replay->has_st_mode = true;
-	}
-      break;
-
-    case JOURNAL_ACTION_CHOWN:
-      if (ev->has_uid)
-	{
-	  replay->uid = ev->uid;
-	  replay->has_uid = true;
-	}
-      if (ev->has_gid)
-	{
-	  replay->gid = ev->gid;
-	  replay->has_gid = true;
-	}
-      break;
-
-    case JOURNAL_ACTION_CHFLAGS:
-      if (ev->has_flags)
-	{
-	  replay->flags = ev->flags;
-	  replay->has_flags = true;
-	}
-      break;
-
-    case JOURNAL_ACTION_CHAUTHOR:
-      if (ev->has_uid)
-	{
-	  replay->uid = ev->uid;
-	  replay->has_uid = true;
-	}
-      break;
-
-    case JOURNAL_ACTION_WRITE:
-    case JOURNAL_ACTION_TRUNCATE:
-    case JOURNAL_ACTION_GROW:
-      if (ev->has_size)
-	{
-	  replay->st_size = ev->st_size;
-	  replay->has_st_size = true;
-	}
       break;
 
     default:
       break;
     }
-
-  if (ev->has_mtime && (!replay->has_mtime || ev->mtime > replay->mtime))
-    {
-      replay->has_mtime = true;
-      replay->mtime = ev->mtime;
-    }
-
-  if (ev->has_ctime && (!replay->has_ctime || ev->ctime > replay->ctime))
-    {
-      replay->has_ctime = true;
-      replay->ctime = ev->ctime;
-    }
-
-  if (ev->has_atime && (!replay->has_atime || ev->atime > replay->atime))
-    {
-      replay->has_atime = true;
-      replay->atime = ev->atime;
-    }
-
-  maybe_set_name (replay, ev);
 }
 
 void
@@ -320,17 +273,7 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
       inode_graph_node_t *node = inode_hash[i];
       while (node)
 	{
-	  if (!node->replay.is_deleted)
-	    {
-	      if (count >= JOURNAL_NUM_ENTRIES)
-		{
-		  JOURNAL_LOG_DEBUG
-		    ("journal_graph_get_all: overflow > %llu entries",
-		     JOURNAL_NUM_ENTRIES);
-		  break;
-		}
-	      result[count++] = &node->replay;
-	    }
+	  result[count++] = &node->replay;
 	  node = node->next;
 	}
     }

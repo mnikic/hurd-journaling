@@ -57,6 +57,8 @@ while (0)
 #define JOURNAL_MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
 #define JOURNAL_MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 #define JOURNAL_MAX_PATH_COMPONENTS 128
+#define JOURNAL_FILENAME_MAX NAME_MAX
+#define JOURNAL_PATH_MAX (JOURNAL_NORMALIZED_PATH_MAX - JOURNAL_FILENAME_MAX - 2)
 
 /* Compute the byte offset of a journal entry given its index.  */
 static inline uint64_t
@@ -243,6 +245,50 @@ journal_combine_path_name (const char *path, const char *name,
     }
 
   snprintf (out, remaining, "%s", name);	// truncate if needed
+}
+
+
+/**
+ * Splits a full absolute path into directory path and filename.
+ * - `dir_out` receives the parent directory (e.g., "/foo/bar")
+ * - `file_out` receives the final filename (e.g., "baz.txt")
+ * - Handles edge cases like "/file.txt" → dir="/", file="file.txt"
+ *
+ * Returns true on success, false on invalid input or truncation.
+ */
+static inline bool
+journal_split_path (const char *full_path,
+                    char *dir_out, size_t dir_len,
+                    char *file_out, size_t file_len)
+{
+  if (!full_path || full_path[0] != '/')
+    return false;
+
+  const char *last_slash = strrchr (full_path, '/');
+  if (!last_slash || last_slash == full_path)
+    {
+      // Path is like "/file"
+      if (dir_len < 2 || file_len < strlen(full_path))
+        return false;
+
+      strcpy (dir_out, "/");
+      strncpy (file_out, full_path + 1, file_len - 1);
+      file_out[file_len - 1] = '\0';
+      return true;
+    }
+
+  size_t dir_part_len = last_slash - full_path;
+  size_t file_part_len = strlen (last_slash + 1);
+
+  if (dir_part_len >= dir_len || file_part_len >= file_len)
+    return false;
+
+  strncpy (dir_out, full_path, dir_part_len);
+  dir_out[dir_part_len] = '\0';
+  strncpy (file_out, last_slash + 1, file_len - 1);
+  file_out[file_len - 1] = '\0';
+
+  return true;
 }
 
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */

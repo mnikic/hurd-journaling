@@ -32,13 +32,10 @@
 typedef struct inode_replay_state
 {
   journal_ino_t ino;		/* Always required during replay */
-  bool is_deleted;		/* Strong signal: only set when deletion is certain. Never speculative. */
   char resolved_path[JOURNAL_NORMALIZED_PATH_MAX];
 
   uint64_t last_seen;		/* Last event timestamp (to skip stale entries) */
   uint64_t last_tx;		/* Last transaction affecting this inode */
-  uint64_t deleted_at_tx;
-  uint64_t deleted_at_timestamp;
 
   char name[MAX_FIELD_LEN];
   char symlink_target[MAX_FIELD_LEN];
@@ -86,7 +83,7 @@ typedef struct inode_graph_node
 } inode_graph_node_t;
 
 /* Add a journal event to the graph. Caller retains ownership of the event. */
-void journal_graph_add_event (const struct journal_payload_bin *ev);
+void journal_graph_add_event (const journal_payload_bin_t *ev, struct journal_arena *arena);
 
 /* Free internal graph structures. */
 void journal_graph_free (void);
