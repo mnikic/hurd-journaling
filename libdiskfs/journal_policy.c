@@ -186,8 +186,8 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  /* If event is recorded timestamps are updated. We need to update timestamp_filter.
-     please keep this one last here. */
+  /* Please keep time filtering last. If any event is recorded timestamps are updated. 
+     So we need to update timestamp_filter. */
   time_t ts = safe_max_timestamp (st->st_atime, st->st_ctime, st->st_mtime);
   bool ignore_time = false;
   /* If one of the timestamps changed, check if it's worth logging */
