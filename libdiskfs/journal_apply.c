@@ -22,6 +22,7 @@
 #include <libdiskfs/journal_apply.h>
 #include <libdiskfs/journal_config.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
 #include <inttypes.h>
@@ -37,10 +38,50 @@
     first = false;                                                  \
   } while (0)
 
-error_t
-apply_node_replay (inode_replay_state_t * state)
-{
 
+static error_t
+find_by_path_or_create (journal_ino_t ino, char *path,
+			struct node *restore_root, struct protid *cred,
+			struct node **out)
+{
+  //TODO make a more robust path validation!
+  if (!path && path[0] == '\0')
+    {
+      return EINVAL;
+    }
+  struct node *np = NULL;
+  // Lets try lookup by path if we can!
+  error_t err = diskfs_lookup_path (path, cred, &np);
+  if (!err)
+    {
+      goto OUT;
+    }
+  if (err != ENOENT)
+    {
+      return err;
+    }
+  JOURNAL_LOG_DEBUG ("inode %" PRIu32
+		     ": Node not found. Creating new one. Path: %s",
+		     ino, path);
+  err = journal_path_recreate (path, restore_root, cred, &np);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR ("Failed to recreate file %s. Error: %s",
+			 path, strerror (err));
+      return err;
+    }
+  JOURNAL_LOG_DEBUG ("inode %" PRIu32
+		     ": Recreated path %s. Final file ino: %"
+		     PRIu64, ino, path, np->dn_stat.st_ino);
+OUT:
+  *out = np;
+  return 0;
+}
+
+error_t
+apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
+		   struct protid *cred)
+{
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
     {
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
@@ -48,35 +89,45 @@ apply_node_replay (inode_replay_state_t * state)
 			 state->ino, JOURNAL_REPLAY_MIN_INO);
       return 0;
     }
-
   struct node *np = NULL;
-  error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
-  if (err || !np)
-    {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": lookup failed: %s", state->ino,
-			 strerror (err));
-      return err ? err : ENOENT;
-    }
-
-  if (!journal_is_safe_stat (&np->dn_stat))
-    {
-      diskfs_nput (np);
-      return 0;
-    }
-
-  if ((int64_t) np->dn_stat.st_mtime < 0
-      || (int64_t) np->dn_stat.st_ctime < 0)
-    {
-      diskfs_nput (np);
-      return 0;
-    }
-
-  if ((uint64_t) np->dn_stat.st_ctime >= state->last_seen)
-    {
-      diskfs_nput (np);
-      return 0;
-    }
   char *path = state->resolved_path;
+  error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
+  if (!err && np->dn_stat.st_mode > 0 && np->dn_stat.st_nlink > 0)
+    {
+      if (!journal_is_safe_stat (&np->dn_stat))
+	{
+	  diskfs_nput (np);
+	  return 0;
+	}
+
+      if ((int64_t) np->dn_stat.st_mtime < 0
+	  || (int64_t) np->dn_stat.st_ctime < 0)
+	{
+	  diskfs_nput (np);
+	  return 0;
+	}
+
+      if ((uint64_t) np->dn_stat.st_ctime >= state->last_seen)
+	{
+	  diskfs_nput (np);
+	  return 0;
+	}
+    }
+  else
+    {
+      // First cleanup!
+      if (np)
+	{
+	  diskfs_nput (np);
+	  np = NULL;
+	}
+      // Then action
+      err =
+	find_by_path_or_create (state->ino, path, restore_root, cred, &np);
+      // All has failed
+      if (!np)
+	return err;
+    }
   int changes = 0;
   char change_desc[128];
   change_desc[0] = '\0';
@@ -120,7 +171,7 @@ apply_node_replay (inode_replay_state_t * state)
       APPEND_CHANGE ("ctime");
       // setting explicitly st_ctime value will be ignored by diskfs.
       // dn_set_ctime flag is instead used without which any update 
-      // (even unrelated to timestamps) becomes (silently) ignored. 
+      // becomes (silently) ignored. 
       // So we are forced to set dn_set_ctime to get anything done!
       // st_ctime will be set to current (and no other) time by the diskfs if
       // dn_set_ctime is set to 1. We will set it a bit down for any change.
@@ -158,8 +209,7 @@ apply_node_replay (inode_replay_state_t * state)
     }
   else
     {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": path %s, no changes needed",
-			 state->ino, path);
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": path %s, no changes needed", state->ino, "");	//path);
     }
 
   diskfs_nput (np);

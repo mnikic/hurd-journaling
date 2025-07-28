@@ -29,6 +29,7 @@
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
+#include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/journal_apply.h>
 #include "priv.h"
 
@@ -255,10 +256,10 @@ test (struct journal_arena *arena)
   JOURNAL_LOG_DEBUG ("TESTING: Starting.");
   journal_payload_bin_t *payload =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload->ino = 188212;
-  payload->mtime = 1751718896;
+  payload->ino = 300001;
+  payload->mtime = 1788211200;
   payload->has_mtime = true;
-  payload->ctime = 1751718896;
+  payload->ctime = 1788211200;
   payload->has_ctime = true;
   payload->st_mode = 0100755;
   payload->has_mode = true;
@@ -269,11 +270,46 @@ test (struct journal_arena *arena)
   payload->gid = 0;
   payload->has_gid = true;
   payload->action = JOURNAL_ACTION_CHOWN;
+  payload->st_nlink = 12;
+  strncpy (payload->path,
+	   "/home/loshmi/nonexisting/dir/andanewfile123.txt",
+	   sizeof (payload->path));
+  payload->path[sizeof (payload->path) - 1] = '\0';
+
+  journal_payload_bin_t *payload1 =
+    journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
+  payload1->ino = 300001;
+  payload1->mtime = 1788211210;
+  payload1->has_mtime = true;
+  payload1->ctime = 1788211210;
+  payload1->has_ctime = true;
+  payload1->st_mode = 0100644;
+  payload1->has_mode = true;
+  payload1->tx_id = 7115;
+  payload1->timestamp_ms = time (NULL) + 90;
+  payload1->uid = 0;
+  payload1->has_uid = true;
+  payload1->gid = 0;
+  payload1->has_gid = true;
+  payload1->action = JOURNAL_ACTION_CHOWN;
+
+  // crudical piece of data!!!!!
+  payload1->st_nlink = 0;
+
+  strncpy (payload1->path,
+	   "/home/loshmi/nonexisting/dir/andanewfile123.txt",
+	   sizeof (payload->path));
+  payload->path[sizeof (payload->path) - 1] = '\0';
 
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
     JOURNAL_LOG_DEBUG ("TESTING: Payload inserted.");
+  if (!journal_write_raw_sync (payload1))
+    JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
+  else
+    JOURNAL_LOG_DEBUG ("TESTING: Payload 1 inserted.");
+
 }
 
 /*
@@ -315,18 +351,40 @@ journal_replay (journal_inode_denylist_t * denylist)
 
       sort_entries (&list);
       for (size_t i = 0; i < list.count; ++i)
-	journal_graph_add_event (list.entries[i]);
+	journal_graph_add_event (list.entries[i], arena);
 
       inode_replay_state_t **entries;
       size_t count = journal_graph_get_all (&entries, arena);
 
-      JOURNAL_LOG_DEBUG ("Starting restoration of metadata");
+      JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
+
+      struct protid *cred = NULL;
+      struct node *root = diskfs_root_node;
+      diskfs_nref (root);
+
+      err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+      if (err)
+	{
+	  JOURNAL_LOG_ERROR
+	    ("Aborting replay. Couldn't create root credentials due to an error: %s. No entries replayed.",
+	     strerror (err));
+	  goto DEREF;
+	}
+
+      JOURNAL_LOG_DEBUG ("Got %u entries to relay.", count);
 
       for (size_t i = 0; i < count; ++i)
-	apply_node_replay (entries[i]);
-
+	{
+	  err = apply_node_replay (entries[i], root, cred);
+	  if (err)
+	    JOURNAL_LOG_ERROR ("Error while restoring node: %u. Error: %s.",
+			       entries[i]->ino, strerror (err));
+	}
       JOURNAL_LOG_DEBUG ("Done with restoration.");
 
+      ports_port_deref (cred);
+    DEREF:
+      diskfs_nput (root);
     CLEANUP:
       diskfs_sync_everything (1);
       diskfs_set_hypermetadata (1, 1);

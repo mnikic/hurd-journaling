@@ -31,4 +31,8 @@ error_t
 diskfs_lookup_path (const char *path, struct protid *cred,
 		    struct node **out_np);
 
+error_t
+journal_path_recreate (const char *path, struct node *restore_root,
+                       struct protid *cred, struct node **out);
+
 #endif /* LIBDISKFS_JOURNAL_FS_HELPER_H */

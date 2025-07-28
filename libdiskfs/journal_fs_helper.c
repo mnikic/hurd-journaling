@@ -19,6 +19,8 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
+#include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_fs_helper.h>
 #include <pthread.h>
 
@@ -122,3 +124,194 @@ diskfs_lookup_path (const char *path, struct protid *cred,
   *out_np = current;
   return 0;
 }
+
+/**
+ * Create a file named `filename` under `dir`, using Hurd diskfs APIs.
+ *
+ * `dir` must be UNLOCKED on entry.
+ * If the file already exists, the existing node is returned locked via `*out`.
+ * If the file is created, the new node is returned locked via `*out`.
+ *
+ * Caller must unlock and `diskfs_nput(*out)` after use.
+ */
+static error_t
+make_file (struct node *dir, const char *filename, struct protid *cred,
+	   struct node **out)
+{
+  error_t err;
+  struct node *new_node = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  pthread_mutex_lock (&dir->lock);
+
+  err = diskfs_lookup (dir, filename, CREATE, &new_node, ds, cred);
+  if (err == EAGAIN || err == 0)
+    {
+      *out = new_node;
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return 0;
+    }
+  else if (err != ENOENT)
+    {
+      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s", strerror(err));
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return err;
+    }
+
+  mode_t mode = S_IFREG | 0644;
+  err = diskfs_create_node (dir, filename, mode, &new_node, cred, ds);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR ("create_node failed: %s", strerror(err));
+      diskfs_drop_dirstat (dir, ds);
+      pthread_mutex_unlock (&dir->lock);
+      return err;
+    }
+
+  diskfs_node_update (new_node, 1);
+  *out = new_node;
+
+  diskfs_drop_dirstat (dir, ds);
+  pthread_mutex_unlock (&dir->lock);
+  return 0;
+}
+
+/**
+ * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
+ *
+ * `root` must be UNLOCKED on entry.
+ * If the directory already exists, the existing node is returned locked via `*out`.
+ * If the directory is created, the new node is returned locked via `*out`.
+ *
+ * Caller must `diskfs_nput(*out)` after use.
+ */
+static error_t
+make_dir (struct node *root, const char *dirname, struct protid *cred,
+	  struct node **out)
+{
+  error_t err = 0;
+  struct node *new_node = NULL;
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+
+  pthread_mutex_lock (&root->lock);
+
+  err = diskfs_lookup (root, dirname, CREATE, &new_node, ds, cred);
+  if (err == EAGAIN || err == 0)
+    {
+      JOURNAL_LOG_DEBUG ("Directory already exists.");
+      *out = new_node;
+      err = 0;
+      goto cleanup;
+    }
+  else if (err != ENOENT)
+    {
+      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s.", strerror (err));
+      goto cleanup;
+    }
+
+  mode_t mode = S_IFDIR | 0755;
+  err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR("create_node failed: %s.", strerror(err));
+      goto cleanup;
+    }
+
+  diskfs_node_update (new_node, 1);
+  *out = new_node;
+
+cleanup:
+  diskfs_drop_dirstat (root, ds);
+  pthread_mutex_unlock (&root->lock);
+  return err;
+}
+
+/**
+ * Recursively create all intermediate directories in a path relative to `root`.
+ * Uses Hurd diskfs APIs to create directories one component at a time.
+ *
+ * Returns a locked node corresponding to the final path component via `*out_node`.
+ * Caller must `diskfs_nput(*out_node)` after use.
+ */
+static error_t
+mkdir_p (struct node *root, const char *path, struct protid *cred,
+	 struct node **out_node)
+{
+  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX )
+    return ENAMETOOLONG;
+
+  char path_copy[JOURNAL_NORMALIZED_PATH_MAX ];
+  strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX );
+  path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
+
+  char *token = strtok (path_copy, "/");
+  struct node *prev_node = NULL;
+  if (!token)
+    {
+      *out_node = root;
+      return 0;
+    }
+  diskfs_nref(root);  
+  while (token != NULL)
+    {
+      JOURNAL_LOG_DEBUG("Token: %s", token);
+      struct node *next_node = NULL;
+      error_t err = make_dir (root, token, cred, &next_node);
+      if (err)
+	{
+          JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d", token, err);
+	  if (prev_node)
+	    diskfs_nput (prev_node);
+	  return err;
+	}
+
+      pthread_mutex_unlock (&next_node->lock);
+      if (prev_node)
+	diskfs_nput (prev_node);
+
+      prev_node = root;
+      root = next_node;
+      token = strtok (NULL, "/");
+    }
+
+  *out_node = root;
+  return 0;
+}
+
+/**
+ * Recreates a file at path using mkdir_p and make_file.
+ * Returns locked node via `*out` if successful.
+ * Caller must `diskfs_nput(*out)`.
+ */
+error_t
+journal_path_recreate (const char *path, struct node *restore_root,
+                       struct protid *cred, struct node **out)
+{
+  if (!path || path[0] == '\0')
+    return EINVAL;
+
+  char dir_path[JOURNAL_PATH_MAX];
+  char file_name[JOURNAL_FILENAME_MAX + 1];
+
+  if (!journal_split_path (path, dir_path, sizeof (dir_path),
+                           file_name, sizeof (file_name)))
+    return EINVAL;
+
+  struct node *dir = NULL;
+  struct node *file = NULL;
+  JOURNAL_LOG_DEBUG ("Name: %s, dir: %s", file_name, dir_path);
+  error_t err = mkdir_p (restore_root, dir_path, cred, &dir);
+  if (err)
+    return err;
+
+  err = make_file (dir, file_name, cred, &file);
+  diskfs_nput (dir);
+  if (err)
+    return err;
+
+  *out = file;
+  return 0;
+}
+
