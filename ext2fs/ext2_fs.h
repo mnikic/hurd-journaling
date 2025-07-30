@@ -100,6 +100,11 @@
 #define EXT2_FRAGS_PER_BLOCK(s)		(EXT2_BLOCK_SIZE(s) / EXT2_FRAG_SIZE(s))
 
 /*
+ * Journal magic
+ */
+#define EXT2_JNL_MAGIC                0x484C4E4A 
+
+/*
  * ACL structures
  */
 struct ext2_acl_header	/* Header of Access Control Lists */
@@ -134,6 +139,18 @@ struct ext2_group_desc
 	__u16	bg_used_dirs_count;	/* Directories count */
 	__u16	bg_pad;
 	__u32	bg_reserved[3];
+};
+
+
+/*
+ * Structure of a journal block
+ */
+struct ext2_journal_hint
+{
+  __u32 start_block;  // Block offset of journal area
+  __u32 block_count;  // Size in blocks
+  __u32 crc32;        // Optional CRC to verify hint
+  __u32 magic;        // Optional magic number for validation
 };
 
 /*
@@ -407,7 +424,11 @@ struct ext2_super_block {
 	__u16	s_reserved_word_pad;
 	__u32	s_default_mount_opts;
 	__u32	s_first_meta_bg; 	/* First metablock block group */
-	__u32	s_reserved[190];	/* Padding to the end of the block */
+        union {
+          struct ext2_journal_hint journal_hint;
+          __u32 s_reserved_prefix[4]; // Legacy fallback
+        };
+	__u32	s_reserved[186];	/* Padding to the end of the block */
 };
 
 /*

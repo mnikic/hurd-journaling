@@ -33,6 +33,6 @@ diskfs_lookup_path (const char *path, struct protid *cred,
 
 error_t
 journal_path_recreate (const char *path, struct node *restore_root,
-                       struct protid *cred, struct node **out);
+		       struct protid *cred, struct node **out);
 
 #endif /* LIBDISKFS_JOURNAL_FS_HELPER_H */

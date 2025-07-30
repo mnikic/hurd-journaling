@@ -90,8 +90,8 @@ initialize_indices (uint64_t * start_index, uint64_t * end_index)
       return true;
     }
 
-  if (hdr.start_index >= JOURNAL_NUM_ENTRIES ||
-      hdr.end_index >= JOURNAL_NUM_ENTRIES)
+  if (hdr.start_index >= journal_num_entries ||
+      hdr.end_index >= journal_num_entries)
     {
       JOURNAL_LOG_ERROR ("journal_write_raw: header indices out of bounds");
       *start_index = 0;
@@ -136,9 +136,9 @@ journal_write_raw_sync (journal_payload_bin_t * payload_bin)
       return false;
     }
 
-  uint64_t next_index = (end_index + 1) % JOURNAL_NUM_ENTRIES;
+  uint64_t next_index = (end_index + 1) % journal_num_entries;
   if (next_index == start_index)
-    start_index = (start_index + 1) % JOURNAL_NUM_ENTRIES;
+    start_index = (start_index + 1) % journal_num_entries;
 
   if (!persist_header_with_retry (start_index, next_index, 3))
     {

@@ -83,7 +83,8 @@ typedef struct inode_graph_node
 } inode_graph_node_t;
 
 /* Add a journal event to the graph. Caller retains ownership of the event. */
-void journal_graph_add_event (const journal_payload_bin_t *ev, struct journal_arena *arena);
+void journal_graph_add_event (const journal_payload_bin_t * ev,
+			      struct journal_arena *arena);
 
 /* Free internal graph structures. */
 void journal_graph_free (void);
@@ -91,6 +92,7 @@ void journal_graph_free (void);
 /* Return a list of all resolved replay states (allocated in arena).
    Caller gets ownership of the list. */
 size_t journal_graph_get_all (inode_replay_state_t *** out_list,
-			      struct journal_arena *arena);
+			      struct journal_arena *arena,
+			      size_t max_elements);
 
 #endif /* LIBDISKFS_JOURNAL_GRAPH_H */

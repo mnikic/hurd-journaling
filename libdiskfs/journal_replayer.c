@@ -46,13 +46,15 @@
 #define REPLAY_STATE_SIZE  sizeof (inode_replay_state_t *)
 #define AVG_STRING_SIZE    128
 #define AVG_STRINGS_PER_ENTRY 2
-#define ARENA_SIZE (ALIGN_UP (\
-                          (JOURNAL_NUM_ENTRIES * (\
-                              ENTRY_SIZE\
-                            + PAYLOAD_PTR_SIZE\
-                            + GRAPH_NODE_SIZE\
-                            + REPLAY_STATE_SIZE\
-                            + (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE))), 8) * 1.5)
+
+static inline size_t
+arena_size (void)
+{
+  return ALIGN_UP (journal_num_entries *
+		   (ENTRY_SIZE + PAYLOAD_PTR_SIZE + GRAPH_NODE_SIZE +
+		    REPLAY_STATE_SIZE +
+		    (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE)), 8) * 1.5;
+}
 
 struct journal_entries
 {
@@ -85,8 +87,8 @@ fetch_and_validate_header (journal_header_t * out)
       return false;
     }
 
-  if (out->start_index >= JOURNAL_NUM_ENTRIES
-      || out->end_index >= JOURNAL_NUM_ENTRIES)
+  if (out->start_index >= journal_num_entries
+      || out->end_index >= journal_num_entries)
     {
       JOURNAL_LOG_DEBUG ("journal_node_read: header indices out of bounds.");
       return false;
@@ -196,8 +198,8 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   out_entries->count = 0;
   out_entries->entries =
-    journal_arena_alloc (arena, JOURNAL_NUM_ENTRIES * PAYLOAD_PTR_SIZE);
-  out_entries->capacity = JOURNAL_NUM_ENTRIES;
+    journal_arena_alloc (arena, journal_num_entries * PAYLOAD_PTR_SIZE);
+  out_entries->capacity = journal_num_entries;
   if (!out_entries->entries)
     {
       JOURNAL_LOG_ERROR ("Failed to allocate journal entry list");
@@ -244,7 +246,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
     NEXT:
-      index = (index + 1) % JOURNAL_NUM_ENTRIES;
+      index = (index + 1) % journal_num_entries;
     }
 
   return true;
@@ -317,10 +319,10 @@ test (struct journal_arena *arena)
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay (journal_inode_denylist_t * denylist)
+journal_replay (journal_inode_denylist_t * denylist, journal_config_t config)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
-  struct journal_arena *arena = journal_arena_create (ARENA_SIZE);
+  struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)
     {
       JOURNAL_LOG_ERROR
@@ -354,7 +356,8 @@ journal_replay (journal_inode_denylist_t * denylist)
 	journal_graph_add_event (list.entries[i], arena);
 
       inode_replay_state_t **entries;
-      size_t count = journal_graph_get_all (&entries, arena);
+      size_t count =
+	journal_graph_get_all (&entries, arena, journal_num_entries);
 
       JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
 

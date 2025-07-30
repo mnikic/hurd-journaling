@@ -26,12 +26,14 @@
 #include <libdiskfs/diskfs.h>
 #include <hurd/store.h>
 
-void journal_io_set_store (struct store *store);
+void journal_io_set_store (struct store *store, journal_config_t cfg);
 
 error_t journal_write_header (const journal_header_t * hdr);
+
 error_t journal_read_header (journal_header_t * out_hdr);
 
 error_t journal_write_entry (const journal_entry_bin_t * entry, size_t index);
+
 error_t journal_read_entry (journal_entry_bin_t * out_entry, size_t index);
 
 #endif /* LIBDISKFS_JOURNAL_IO_H */
