@@ -60,15 +60,6 @@ while (0)
 #define JOURNAL_FILENAME_MAX NAME_MAX
 #define JOURNAL_PATH_MAX (JOURNAL_NORMALIZED_PATH_MAX - JOURNAL_FILENAME_MAX - 2)
 
-/* Compute the byte offset of a journal entry given its index.  */
-static inline uint64_t
-index_to_offset (const uint64_t index)
-{
-  return JOURNAL_RESERVED_SPACE
-    + (index % (uint64_t) JOURNAL_NUM_ENTRIES)
-    * (uint64_t) JOURNAL_ENTRY_SIZE;
-}
-
 static inline uint32_t
 journal_compute_header_crc32 (const journal_header_t * hdr)
 {
@@ -258,8 +249,8 @@ journal_combine_path_name (const char *path, const char *name,
  */
 static inline bool
 journal_split_path (const char *full_path,
-                    char *dir_out, size_t dir_len,
-                    char *file_out, size_t file_len)
+		    char *dir_out, size_t dir_len,
+		    char *file_out, size_t file_len)
 {
   if (!full_path || full_path[0] != '/')
     return false;
@@ -268,8 +259,8 @@ journal_split_path (const char *full_path,
   if (!last_slash || last_slash == full_path)
     {
       // Path is like "/file"
-      if (dir_len < 2 || file_len < strlen(full_path))
-        return false;
+      if (dir_len < 2 || file_len < strlen (full_path))
+	return false;
 
       strcpy (dir_out, "/");
       strncpy (file_out, full_path + 1, file_len - 1);
@@ -287,6 +278,24 @@ journal_split_path (const char *full_path,
   dir_out[dir_part_len] = '\0';
   strncpy (file_out, last_slash + 1, file_len - 1);
   file_out[file_len - 1] = '\0';
+
+  return true;
+}
+
+static inline bool
+journal_is_valid_path (const char *path)
+{
+  if (!path || path[0] == '\0')
+    return false;
+
+  if (path[0] != '/')
+    return false;
+
+  if (strlen (path) <= 2)
+    return false;
+
+  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
+    return false;
 
   return true;
 }

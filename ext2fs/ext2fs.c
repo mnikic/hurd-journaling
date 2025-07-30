@@ -251,8 +251,18 @@ main (int argc, char **argv)
     ext2_panic ("no root node!");
   pthread_mutex_unlock (&diskfs_root_node->lock);
 
-  /* Has to happen after the root is unlocked, and before RPCs are unleashed. */
-  journal_init (store);
+  // extract fields from sblock->journal_hint
+  if (sblock->journal_hint.magic == EXT2_JNL_MAGIC) {
+    struct journal_config config;
+    memset(&config, 0, sizeof(config));
+    config.start_block = sblock->journal_hint.start_block;
+    config.block_count = sblock->journal_hint.block_count;
+
+    /* Has to happen after the root is unlocked, and before RPCs are unleashed. */
+    journal_init (store, config);
+  } else
+    fprintf(stderr, "[EXT2FS] journaling disabled: invalid magic 0x%x\n", sblock->journal_hint.magic);
+
 
   /* Now that we are all set up to handle requests, and diskfs_root_node is
      set properly, it is safe to export our fsys control port to the

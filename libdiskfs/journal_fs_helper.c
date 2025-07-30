@@ -154,7 +154,7 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
     }
   else if (err != ENOENT)
     {
-      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s", strerror(err));
+      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
       pthread_mutex_unlock (&dir->lock);
       return err;
@@ -164,7 +164,7 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
   err = diskfs_create_node (dir, filename, mode, &new_node, cred, ds);
   if (err)
     {
-      JOURNAL_LOG_ERROR ("create_node failed: %s", strerror(err));
+      JOURNAL_LOG_ERROR ("create_node failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
       pthread_mutex_unlock (&dir->lock);
       return err;
@@ -215,7 +215,7 @@ make_dir (struct node *root, const char *dirname, struct protid *cred,
   err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
   if (err)
     {
-      JOURNAL_LOG_ERROR("create_node failed: %s.", strerror(err));
+      JOURNAL_LOG_ERROR ("create_node failed: %s.", strerror (err));
       goto cleanup;
     }
 
@@ -239,11 +239,11 @@ static error_t
 mkdir_p (struct node *root, const char *path, struct protid *cred,
 	 struct node **out_node)
 {
-  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX )
+  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
 
-  char path_copy[JOURNAL_NORMALIZED_PATH_MAX ];
-  strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX );
+  char path_copy[JOURNAL_NORMALIZED_PATH_MAX];
+  strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX);
   path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
 
   char *token = strtok (path_copy, "/");
@@ -253,15 +253,16 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
       *out_node = root;
       return 0;
     }
-  diskfs_nref(root);  
+  diskfs_nref (root);
   while (token != NULL)
     {
-      JOURNAL_LOG_DEBUG("Token: %s", token);
+      JOURNAL_LOG_DEBUG ("Token: %s", token);
       struct node *next_node = NULL;
       error_t err = make_dir (root, token, cred, &next_node);
       if (err)
 	{
-          JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d", token, err);
+	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
+			     token, err);
 	  if (prev_node)
 	    diskfs_nput (prev_node);
 	  return err;
@@ -287,7 +288,7 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
  */
 error_t
 journal_path_recreate (const char *path, struct node *restore_root,
-                       struct protid *cred, struct node **out)
+		       struct protid *cred, struct node **out)
 {
   if (!path || path[0] == '\0')
     return EINVAL;
@@ -296,7 +297,7 @@ journal_path_recreate (const char *path, struct node *restore_root,
   char file_name[JOURNAL_FILENAME_MAX + 1];
 
   if (!journal_split_path (path, dir_path, sizeof (dir_path),
-                           file_name, sizeof (file_name)))
+			   file_name, sizeof (file_name)))
     return EINVAL;
 
   struct node *dir = NULL;
@@ -314,4 +315,3 @@ journal_path_recreate (const char *path, struct node *restore_root,
   *out = file;
   return 0;
 }
-

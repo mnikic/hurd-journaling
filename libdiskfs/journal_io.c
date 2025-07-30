@@ -19,6 +19,7 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
+#include <libdiskfs/journal.h>
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_util.h>
@@ -34,36 +35,41 @@
 #include <unistd.h>
 
 
-// New "raw" journal location
-#define JOURNAL_BLOCK_OFFSET 1033728ULL
-#define JOURNAL_BLOCK_SIZE_BYTES 4096ULL
-#define JOURNAL_BASE_OFFSET_BYTES (JOURNAL_BLOCK_OFFSET * JOURNAL_BLOCK_SIZE_BYTES)
-
 static struct store *journal_store = NULL;
+static journal_config_t config;
+static size_t journal_span_bytes;
+
+static inline off_t
+journal_base_offset_bytes (void)
+{
+  return (off_t) config.start_block * journal_store->block_size;
+}
 
 void
-journal_io_set_store (struct store *store)
+journal_io_set_store (struct store *store, journal_config_t cfg)
 {
   journal_store = store;
+  config = cfg;
+  journal_span_bytes = journal_store->block_size * cfg.block_count;
   JOURNAL_LOG_DEBUG ("journal io store set.");
 }
 
-static error_t
+static inline error_t
 journal_store_write (const void *buf, size_t size, off_t relative_offset)
 {
   if (!journal_store)
     return EIO;
 
   if (!buf || (off_t) relative_offset < 0
-      || relative_offset + size > RAW_DEVICE_SIZE)
+      || relative_offset + size > journal_span_bytes)
     {
       JOURNAL_LOG_DEBUG
 	("Invalid write args: buf=%p, relative_offset=%lld, size=%zu (max=%zu)",
-	 buf, (long long) relative_offset, size, (size_t) RAW_DEVICE_SIZE);
+	 buf, (long long) relative_offset, size, journal_span_bytes);
       return EINVAL;
     }
 
-  off_t absolute_offset = JOURNAL_BASE_OFFSET_BYTES + relative_offset;
+  off_t absolute_offset = journal_base_offset_bytes () + relative_offset;
 
   if (absolute_offset % journal_store->block_size != 0)
     {
@@ -90,15 +96,14 @@ journal_store_write (const void *buf, size_t size, off_t relative_offset)
 }
 
 error_t
-journal_write_entry (const journal_entry_bin_t * entry, size_t block_index)
+journal_write_entry (const journal_entry_bin_t * entry, size_t index)
 {
   if (!entry)
     return EINVAL;
 
-  // Entry index 0 starts *after* the header.
-  off_t relative_offset =
-    JOURNAL_RESERVED_SPACE +
-    (block_index % JOURNAL_NUM_ENTRIES) * JOURNAL_ENTRY_SIZE;
+  off_t relative_offset = journal_reserved_space +
+    (index % journal_num_entries) * JOURNAL_ENTRY_SIZE;
+
   return journal_store_write (entry, sizeof (journal_entry_bin_t),
 			      relative_offset);
 }
@@ -109,8 +114,31 @@ journal_write_header (const journal_header_t * hdr)
   if (!journal_store || !hdr)
     return EINVAL;
 
-  // Header always at relative offset 0
   return journal_store_write (hdr, JOURNAL_HEADER_SIZE, 0);
+}
+
+static inline error_t
+journal_store_read (void *out_buf, size_t size, off_t relative_offset)
+{
+  if (!journal_store || !out_buf
+      || relative_offset + size > journal_span_bytes)
+    return EINVAL;
+
+  off_t absolute_offset = journal_base_offset_bytes () + relative_offset;
+  if (absolute_offset % journal_store->block_size != 0)
+    return EINVAL;
+
+  void *buf = NULL;
+  size_t len = 0;
+  error_t err =
+    store_read (journal_store, absolute_offset / journal_store->block_size,
+		size, &buf, &len);
+  if (err || len < size)
+    return EIO;
+
+  memcpy (out_buf, buf, size);
+  vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
+  return 0;
 }
 
 error_t
@@ -119,26 +147,11 @@ journal_read_entry (journal_entry_bin_t * out_entry, size_t block_index)
   if (!journal_store || !out_entry)
     return EINVAL;
 
-  off_t offset = JOURNAL_BASE_OFFSET_BYTES + JOURNAL_RESERVED_SPACE +
-    (block_index % JOURNAL_NUM_ENTRIES) * JOURNAL_ENTRY_SIZE;
+  off_t relative_offset = journal_reserved_space +
+    (block_index % journal_num_entries) * JOURNAL_ENTRY_SIZE;
 
-  void *buf = NULL;
-  size_t len = 0;
-  error_t err = store_read (journal_store,
-			    offset / journal_store->block_size,
-			    JOURNAL_ENTRY_SIZE, &buf, &len);
-  if (err)
-    return err;
-
-  if (len < sizeof (journal_entry_bin_t))
-    {
-      vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
-      return EIO;
-    }
-
-  memcpy (out_entry, buf, sizeof (journal_entry_bin_t));
-  vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
-  return 0;
+  return journal_store_read (out_entry, sizeof (journal_entry_bin_t),
+			     relative_offset);
 }
 
 error_t
@@ -147,24 +160,5 @@ journal_read_header (journal_header_t * out_hdr)
   if (!journal_store || !out_hdr)
     return EINVAL;
 
-  off_t offset = JOURNAL_BASE_OFFSET_BYTES;	// Header is always at the beginning of the journal area
-
-  void *buf = NULL;
-  size_t len = 0;
-  error_t err = store_read (journal_store,
-			    offset / journal_store->block_size,
-			    JOURNAL_RESERVED_SPACE,
-			    &buf, &len);
-  if (err)
-    return err;
-
-  if (len < sizeof (journal_header_t))
-    {
-      vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
-      return EIO;
-    }
-
-  memcpy (out_hdr, buf, sizeof (journal_header_t));
-  vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
-  return 0;
+  return journal_store_read (out_hdr, sizeof (journal_header_t), 0);
 }

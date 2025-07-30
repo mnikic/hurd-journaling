@@ -40,7 +40,6 @@
 #include <errno.h>
 
 #define JOURNAL_HASH_SIZE 4096
-#define JOURNAL_HASH_SIZE 4096
 
 static inode_graph_node_t *inode_hash[JOURNAL_HASH_SIZE];
 
@@ -256,11 +255,11 @@ journal_graph_free (void)
 
 size_t
 journal_graph_get_all (inode_replay_state_t *** out_list,
-		       struct journal_arena *arena)
+		       struct journal_arena *arena, size_t max_elements)
 {
   size_t count = 0;
   inode_replay_state_t **result =
-    journal_arena_alloc (arena, JOURNAL_NUM_ENTRIES * sizeof (*result));
+    journal_arena_alloc (arena, max_elements * sizeof (*result));
   if (!result)
     {
       JOURNAL_LOG_ERROR ("journal_graph_get_all: arena out of memory");

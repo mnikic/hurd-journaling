@@ -31,6 +31,8 @@
 #define JOURNAL_MAGIC    0x4A4E4C30	/* "JNL0" */
 #define JOURNAL_VERSION  1
 #define MAX_FIELD_LEN    256
+#define JOURNAL_ENTRY_SIZE 4096ULL
+#define JOURNAL_HEADER_SIZE 4096ULL
 #define JOURNAL_NORMALIZED_PATH_MAX 1024
 
 typedef uint32_t journal_ino_t;

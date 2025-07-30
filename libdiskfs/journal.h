@@ -50,6 +50,12 @@ typedef enum
   JOURNAL_ACTION_UNKNOWN,
 } journal_action_t;
 
+typedef struct journal_config
+{
+  uint32_t start_block;
+  uint32_t block_count;
+} journal_config_t;
+
 /* Metadata event structure passed to the journaling system.  */
 struct journal_entry_info
 {
@@ -87,7 +93,7 @@ struct journal_entry_info
 };
 
 /* Initialize the journaling system.  */
-void journal_init (struct store *store);
+void journal_init (struct store *store, journal_config_t cfg);
 
 /* Shutdown and cleanup journaling resources.  */
 void journal_shutdown (void);

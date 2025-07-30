@@ -31,5 +31,7 @@
 #include <pthread.h>
 
 extern volatile size_t journal_dropped_events;
+extern size_t journal_num_entries;
+extern size_t journal_reserved_space;
 
 #endif /* LIBDISKFS_JOURNAL_GLOBALS_H */

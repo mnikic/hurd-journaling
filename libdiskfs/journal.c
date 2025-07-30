@@ -51,6 +51,8 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
 static journal_inode_denylist_t ino_denylist;
+size_t journal_num_entries;
+size_t journal_reserved_space;
 
 static void
 denylist_init (void)
@@ -58,19 +60,31 @@ denylist_init (void)
   journal_inode_denylist_builder_t builder =
     journal_inode_denylist_builder_init ();
 
-  for (int i = 0; journal_excluded_prefixes[i]; i++)
-    journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
+//  for (int i = 0; journal_excluded_prefixes[i]; i++)
+  //  journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
 
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
 
 void
-journal_init (struct store *store)
+journal_init (struct store *store, journal_config_t cfg)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
+
+  journal_reserved_space = JOURNAL_HEADER_SIZE;
+  journal_num_entries =
+    (cfg.block_count * store->block_size -
+     journal_reserved_space) / JOURNAL_ENTRY_SIZE;
+  if (journal_num_entries < 10)
+    {
+      JOURNAL_LOG_ERROR ("Not enough space for journaling!");
+      return;
+    }
+  JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
+		     journal_num_entries);
   denylist_init ();
-  journal_io_set_store (store);
-  journal_replay (&ino_denylist);
+  journal_io_set_store (store, cfg);
+  journal_replay (&ino_denylist, cfg);
   journal_enabled = true;
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
@@ -89,12 +103,11 @@ should_log_time (time_t value, int flag_set)
 		      && value < JOURNAL_MAX_REASONABLE_TIME);
 }
 
-static char *
+static inline char *
 toString (journal_action_t action)
 {
   switch (action)
     {
-
     case JOURNAL_ACTION_CREATE:
       return "CREATE";
     case JOURNAL_ACTION_MKDIR:
