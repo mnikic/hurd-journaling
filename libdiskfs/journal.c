@@ -21,6 +21,7 @@
 
 #include <libdiskfs/journal.h>
 #include <libdiskfs/journal_io.h>
+#include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_writer.h>
 #include <libdiskfs/journal_policy.h>
@@ -51,8 +52,7 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
 static journal_inode_denylist_t ino_denylist;
-size_t journal_num_entries;
-size_t journal_reserved_space;
+journal_layout_t journal_layout;
 
 static void
 denylist_init (void)
@@ -67,24 +67,32 @@ denylist_init (void)
 }
 
 void
-journal_init (struct store *store, journal_config_t cfg)
+journal_init (struct store *store, journal_config_t config)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
 
-  journal_reserved_space = JOURNAL_HEADER_SIZE;
-  journal_num_entries =
-    (cfg.block_count * store->block_size -
-     journal_reserved_space) / JOURNAL_ENTRY_SIZE;
-  if (journal_num_entries < 10)
+  journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
+  journal_layout.header_size = JOURNAL_HEADER_SIZE;
+  journal_layout.device_block_size = store->block_size;
+  journal_layout.device_block_count = config.block_count;
+  journal_layout.device_start_block = config.start_block;
+  journal_layout.device_start_byte = config.start_block * store->block_size;
+  journal_layout.entry_size = JOURNAL_ENTRY_SIZE;
+  journal_layout.device_span_bytes =
+    journal_layout.device_block_count * journal_layout.device_block_size;
+  journal_layout.num_entries =
+    (journal_layout.device_span_bytes - journal_layout.reserved_space)
+    / journal_layout.entry_size;
+  if (journal_layout.num_entries < 100)
     {
       JOURNAL_LOG_ERROR ("Not enough space for journaling!");
       return;
     }
   JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
-		     journal_num_entries);
+		     journal_layout.num_entries);
   denylist_init ();
-  journal_io_set_store (store, cfg);
-  journal_replay (&ino_denylist, cfg);
+  journal_io_set_store (store);
+  journal_replay (&ino_denylist);
   journal_enabled = true;
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }

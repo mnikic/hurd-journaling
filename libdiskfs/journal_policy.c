@@ -2,7 +2,7 @@
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/journal_util.h>
 
-#define FILTER_TABLE_ENTRIES 2047
+#define FILTER_TABLE_ENTRIES 1024
 
 static journal_filter_entry_t write_table[FILTER_TABLE_ENTRIES];
 static journal_filter_entry_t timestamp_table[FILTER_TABLE_ENTRIES];

@@ -21,6 +21,7 @@
 
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/diskfs.h>
@@ -255,11 +256,12 @@ journal_graph_free (void)
 
 size_t
 journal_graph_get_all (inode_replay_state_t *** out_list,
-		       struct journal_arena *arena, size_t max_elements)
+		       struct journal_arena *arena)
 {
   size_t count = 0;
   inode_replay_state_t **result =
-    journal_arena_alloc (arena, max_elements * sizeof (*result));
+    journal_arena_alloc (arena,
+			 journal_layout.num_entries * sizeof (*result));
   if (!result)
     {
       JOURNAL_LOG_ERROR ("journal_graph_get_all: arena out of memory");
