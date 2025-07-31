@@ -303,7 +303,7 @@ test (struct journal_arena *arena)
   strncpy (payload1->path,
 	   "/home/loshmi/nonexisting/dir/andanewfile123.txt",
 	   sizeof (payload->path));
-  payload->path[sizeof (payload->path) - 1] = '\0';
+  payload1->path[sizeof (payload1->path) - 1] = '\0';
 
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
