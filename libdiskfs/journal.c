@@ -91,6 +91,12 @@ journal_init (struct store *store, journal_config_t config)
   JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
 		     journal_layout.num_entries);
   denylist_init ();
+  JOURNAL_LOG_DEBUG ("device_block_size: %u", journal_layout.device_block_size);
+  JOURNAL_LOG_DEBUG ("device_block_count: %u", journal_layout.device_block_count);
+  JOURNAL_LOG_DEBUG ("device_start_block: %u", journal_layout.device_start_block);
+  JOURNAL_LOG_DEBUG ("device_start_byte: %llu", journal_layout.device_start_byte);
+  JOURNAL_LOG_DEBUG ("device_san_bytes: %u", journal_layout.device_span_bytes);
+
   journal_io_set_store (store);
   journal_replay (&ino_denylist);
   journal_enabled = true;
