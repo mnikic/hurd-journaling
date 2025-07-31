@@ -19,6 +19,7 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
+#include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_util.h>
@@ -50,7 +51,7 @@
 static inline size_t
 arena_size (void)
 {
-  return ALIGN_UP (journal_num_entries *
+  return ALIGN_UP (journal_layout.num_entries *
 		   (ENTRY_SIZE + PAYLOAD_PTR_SIZE + GRAPH_NODE_SIZE +
 		    REPLAY_STATE_SIZE +
 		    (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE)), 8) * 1.5;
@@ -87,8 +88,8 @@ fetch_and_validate_header (journal_header_t * out)
       return false;
     }
 
-  if (out->start_index >= journal_num_entries
-      || out->end_index >= journal_num_entries)
+  if (out->start_index >= journal_layout.num_entries
+      || out->end_index >= journal_layout.num_entries)
     {
       JOURNAL_LOG_DEBUG ("journal_node_read: header indices out of bounds.");
       return false;
@@ -136,7 +137,7 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
 
 static bool
 add_event_to_list (struct journal_entries *list,
-		   struct journal_payload_bin *entry)
+		   journal_payload_bin_t * payload)
 {
   if (list->count == list->capacity)
     {
@@ -144,7 +145,7 @@ add_event_to_list (struct journal_entries *list,
 			 list->count);
       return false;
     }
-  list->entries[list->count++] = entry;
+  list->entries[list->count++] = payload;
   return true;
 }
 
@@ -198,8 +199,9 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   out_entries->count = 0;
   out_entries->entries =
-    journal_arena_alloc (arena, journal_num_entries * PAYLOAD_PTR_SIZE);
-  out_entries->capacity = journal_num_entries;
+    journal_arena_alloc (arena,
+			 journal_layout.num_entries * PAYLOAD_PTR_SIZE);
+  out_entries->capacity = journal_layout.num_entries;
   if (!out_entries->entries)
     {
       JOURNAL_LOG_ERROR ("Failed to allocate journal entry list");
@@ -246,7 +248,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
     NEXT:
-      index = (index + 1) % journal_num_entries;
+      index = (index + 1) % journal_layout.num_entries;
     }
 
   return true;
@@ -319,7 +321,7 @@ test (struct journal_arena *arena)
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay (journal_inode_denylist_t * denylist, journal_config_t config)
+journal_replay (journal_inode_denylist_t * denylist)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   struct journal_arena *arena = journal_arena_create (arena_size ());
@@ -356,8 +358,7 @@ journal_replay (journal_inode_denylist_t * denylist, journal_config_t config)
 	journal_graph_add_event (list.entries[i], arena);
 
       inode_replay_state_t **entries;
-      size_t count =
-	journal_graph_get_all (&entries, arena, journal_num_entries);
+      size_t count = journal_graph_get_all (&entries, arena);
 
       JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
 

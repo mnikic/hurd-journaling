@@ -10,7 +10,7 @@
 #include <dirent.h>
 
 #define MAX_PATH_LEN 256
-#define MAX_STACK_DEPTH 64
+#define MAX_STACK_DEPTH 128
 
 typedef struct
 {
@@ -115,8 +115,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->
-					  dn_stat.st_ino);
+					  (journal_ino_t) start_np->dn_stat.
+					  st_ino);
       count++;
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;

@@ -26,7 +26,7 @@
 #include <libdiskfs/diskfs.h>
 #include <hurd/store.h>
 
-void journal_io_set_store (struct store *store, journal_config_t cfg);
+void journal_io_set_store (struct store *store);
 
 error_t journal_write_header (const journal_header_t * hdr);
 

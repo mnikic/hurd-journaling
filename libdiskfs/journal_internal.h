@@ -1,4 +1,4 @@
-/* journal_globals.h - Global journaling flags and shared synchronization state.
+/* journal_internal.h - Internal journal struct definitions
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -19,19 +19,23 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
-#ifndef LIBDISKFS_JOURNAL_GLOBALS_H
-#define LIBDISKFS_JOURNAL_GLOBALS_H
-
-#include <libdiskfs/journal_inode_denylist.h>
-#include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_internal.h>
+#ifndef LIBDISKFS_JOURNAL_INTERNAL_H
+#define LIBDISKFS_JOURNAL_INTERNAL_H
 
 #include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <pthread.h>
+#include <sys/types.h>
 
-extern volatile size_t journal_dropped_events;
-extern journal_layout_t journal_layout;
+typedef struct journal_layout
+{
+  size_t reserved_space;
+  size_t num_entries;
+  size_t header_size;
+  size_t entry_size;
+  size_t device_start_block;
+  off_t device_start_byte;
+  size_t device_block_count;
+  size_t device_block_size;
+  size_t device_span_bytes;
+} journal_layout_t;
 
-#endif /* LIBDISKFS_JOURNAL_GLOBALS_H */
+#endif /* LIBDISKFS_JOURNAL_INTERNAL_H */

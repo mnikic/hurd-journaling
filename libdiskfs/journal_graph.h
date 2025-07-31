@@ -92,7 +92,6 @@ void journal_graph_free (void);
 /* Return a list of all resolved replay states (allocated in arena).
    Caller gets ownership of the list. */
 size_t journal_graph_get_all (inode_replay_state_t *** out_list,
-			      struct journal_arena *arena,
-			      size_t max_elements);
+			      struct journal_arena *arena);
 
 #endif /* LIBDISKFS_JOURNAL_GRAPH_H */
