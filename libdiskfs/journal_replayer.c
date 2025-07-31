@@ -26,7 +26,6 @@
 #include <libdiskfs/crc32.h>
 #include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_writer.h>
-#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
@@ -181,7 +180,6 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-			    const journal_inode_denylist_t * denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -227,12 +225,6 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
       journal_payload_bin_t *payload = &entry->payload;
-      if (journal_inode_denylist_contains (denylist, payload->ino))
-	{
-	  JOURNAL_LOG_DEBUG ("Ino %u is in a deny list. Skipping tx %llu.",
-			     payload->ino, payload->tx_id);
-	  goto NEXT;
-	}
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
 	  || payload->tx_id == 0 || payload->timestamp_ms == 0
 	  || !(payload->has_mtime || payload->has_atime
@@ -247,7 +239,6 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	{
 	  return false;
 	}
-    NEXT:
       index = (index + 1) % journal_layout.num_entries;
     }
 
@@ -321,7 +312,7 @@ test (struct journal_arena *arena)
  * Reconstructs inode graph and applies metadata changes in early boot.
  */
 void
-journal_replay (journal_inode_denylist_t * denylist)
+journal_replay (void)
 {
   JOURNAL_LOG_DEBUG ("Starting journal validation.");
   struct journal_arena *arena = journal_arena_create (arena_size ());
@@ -343,7 +334,7 @@ journal_replay (journal_inode_denylist_t * denylist)
 	JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
       test (arena);
       struct journal_entries list = { 0 };
-      bool success = fetch_and_validate_journal (arena, denylist, &list);
+      bool success = fetch_and_validate_journal (arena, &list);
       if (!success)
 	{
 	  JOURNAL_LOG_ERROR

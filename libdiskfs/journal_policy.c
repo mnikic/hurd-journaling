@@ -19,7 +19,7 @@ static journal_filter_instance_t timestamp_filter = {
   .table = timestamp_table,
 };
 
-bool
+static bool
 should_journal_path (const char *path)
 {
   if (!path || *path == '\0')
@@ -129,7 +129,6 @@ safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
 bool
 journal_should_log_event (const struct node *np,
 			  const struct journal_entry_info *info,
-			  journal_inode_denylist_t * ino_denylist,
 			  char *full_path)
 {
   if (!np)
@@ -147,17 +146,6 @@ journal_should_log_event (const struct node *np,
     }
 
   const struct stat *st = &np->dn_stat;
-
-  if (journal_inode_denylist_contains
-      (ino_denylist, (journal_ino_t) st->st_ino))
-    {
-      return false;
-    }
-  if (info->parent_ino && journal_inode_denylist_contains
-      (ino_denylist, (journal_ino_t) info->parent_ino))
-    {
-      return false;
-    }
 
   if (!journal_is_safe_stat (st))
     {

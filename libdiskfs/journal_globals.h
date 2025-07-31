@@ -22,7 +22,6 @@
 #ifndef LIBDISKFS_JOURNAL_GLOBALS_H
 #define LIBDISKFS_JOURNAL_GLOBALS_H
 
-#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_internal.h>
 

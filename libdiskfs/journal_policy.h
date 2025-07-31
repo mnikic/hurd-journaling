@@ -23,7 +23,6 @@
 #define LIBDISKFS_JOURNAL_POLICY_H
 
 #include <stdbool.h>
-#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/diskfs.h>
 #include <journal.h>
 
@@ -49,7 +48,6 @@ static const char *const journal_excluded_prefixes[] = {
 bool
 journal_should_log_event (const struct node *np,
 			  const struct journal_entry_info *info,
-			  journal_inode_denylist_t * ino_denylist,
 			  char *full_path);
 
 #endif /*  LIBDISKFS_JOURNAL_POLICY_H */

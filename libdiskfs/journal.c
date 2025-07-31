@@ -28,8 +28,6 @@
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
 #include <libdiskfs/journal_util.h>
-#include <libdiskfs/journal_inode_scanner.h>
-#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/diskfs.h>
 
 #include <stdbool.h>
@@ -51,20 +49,7 @@
 
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
-static journal_inode_denylist_t ino_denylist;
 journal_layout_t journal_layout;
-
-static void
-denylist_init (void)
-{
-  journal_inode_denylist_builder_t builder =
-    journal_inode_denylist_builder_init ();
-
-//  for (int i = 0; journal_excluded_prefixes[i]; i++)
-  //  journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
-
-  ino_denylist = journal_inode_denylist_finalize (&builder);
-}
 
 void
 journal_init (struct store *store, journal_config_t config)
@@ -90,15 +75,10 @@ journal_init (struct store *store, journal_config_t config)
     }
   JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
 		     journal_layout.num_entries);
-  denylist_init ();
-  JOURNAL_LOG_DEBUG ("device_block_size: %u", journal_layout.device_block_size);
-  JOURNAL_LOG_DEBUG ("device_block_count: %u", journal_layout.device_block_count);
-  JOURNAL_LOG_DEBUG ("device_start_block: %u", journal_layout.device_start_block);
-  JOURNAL_LOG_DEBUG ("device_start_byte: %llu", journal_layout.device_start_byte);
-  JOURNAL_LOG_DEBUG ("device_san_bytes: %u", journal_layout.device_span_bytes);
+  
 
   journal_io_set_store (store);
-  journal_replay (&ino_denylist);
+  journal_replay ();
   journal_enabled = true;
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
@@ -173,10 +153,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   journal_combine_path_name (normalized_path, info->name, full_path,
 			     sizeof (full_path));
 
-//  if (np->dn_stat.st_ino != 48803 && strncmp(full_path, "/dev", strlen("/dev")) != 0)
-  //  JOURNAL_LOG_ERROR ("ino: %llu action: %s name: %s path: %s normalized: %s full: %s", np->dn_stat.st_ino, toString(info->action), info->name, info->path, normalized_path, full_path);
-
-  if (!journal_should_log_event (np, info, &ino_denylist, full_path))
+  if (!journal_should_log_event (np, info, full_path))
     return;
 
   const char *name = info->name ? info->name : "";
