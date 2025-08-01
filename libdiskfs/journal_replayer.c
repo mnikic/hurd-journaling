@@ -235,7 +235,10 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	     payload->action, payload->ino, index, payload->tx_id);
 	  return false;
 	}
-      JOURNAL_LOG_DEBUG ("Entry: ino=%u, action=%u, tx_id = %llu, name=%s, path=%s", payload->ino, payload->action, payload->tx_id, payload->name, payload->path);
+      JOURNAL_LOG_DEBUG
+	("Entry: ino=%u, action=%u, tx_id = %llu, name=%s, path=%s",
+	 payload->ino, payload->action, payload->tx_id, payload->name,
+	 payload->path);
       if (!add_event_to_list (out_entries, payload))
 	{
 	  return false;
@@ -321,83 +324,86 @@ journal_replay (void)
     {
       JOURNAL_LOG_ERROR
 	("Unable to allocate enough memory for journal replay. Aborting!");
-      // Even if replay fails, enable journaling to start capturing future metadata
       return;
     }
 
-  if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) == 0)
+  if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) != 0)
     {
-      error_t err = diskfs_set_readonly (0);
-      if (err)
-	JOURNAL_LOG_ERROR ("Failed to set diskfs_readonly = 0: %s (%d)",
-			   strerror (err), err);
-      else
-	JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-      //test (arena);
-      struct journal_entries list = { 0 };
-      bool success = fetch_and_validate_journal (arena, &list);
-      if (!success)
-	{
-	  JOURNAL_LOG_ERROR
-	    ("Aborting replay due to validation failure. No entries replayed.");
-	  goto CLEANUP;
-	}
-
-      JOURNAL_LOG_DEBUG ("Validation completed successfully.");
-
-      sort_entries (&list);
-      for (size_t i = 0; i < list.count; ++i)
-	journal_graph_add_event (list.entries[i], arena);
-
-      inode_replay_state_t **entries;
-      size_t count = journal_graph_get_all (&entries, arena);
-
-      JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
-
-      struct protid *cred = NULL;
-      struct node *root = diskfs_root_node;
-      diskfs_nref (root);
-
-      err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
-      if (err)
-	{
-	  JOURNAL_LOG_ERROR
-	    ("Aborting replay. Couldn't create root credentials due to an error: %s. No entries replayed.",
-	     strerror (err));
-	  goto DEREF;
-	}
-
-      JOURNAL_LOG_DEBUG ("Got %u entries to relay.", count);
-
-      for (size_t i = 0; i < count; ++i)
-	{
-	  err = apply_node_replay (entries[i], root, cred);
-	  if (err)
-	    JOURNAL_LOG_ERROR ("Error while restoring node: %u. Error: %s.",
-			       entries[i]->ino, strerror (err));
-	}
-      JOURNAL_LOG_DEBUG ("Done with restoration.");
-
-      ports_port_deref (cred);
-    DEREF:
-      diskfs_nput (root);
-    CLEANUP:
-      diskfs_sync_everything (1);
-      diskfs_set_hypermetadata (1, 1);
-      _diskfs_diskdirty = 0;
-      err = diskfs_set_readonly (1);
-      if (err)
-	JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
-			   strerror (err), err);
-      else
-	JOURNAL_LOG_DEBUG ("Filesystem set back to readonly");
-
-      pthread_rwlock_unlock (&diskfs_fsys_lock);
+      JOURNAL_LOG_ERROR
+	("Didn't manage to acquire fsys lock. Journal replay aborted.");
+      journal_arena_destroy (arena);
+      return;
     }
+  error_t err = diskfs_set_readonly (0);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR
+	("Failed to set diskfs_readonly = 0: %s (%d). Aborting replay.",
+	 strerror (err), err);
+      goto UNLOCK;
+    }
+  JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
+  //test (arena);
+  struct journal_entries list = { 0 };
+  bool success = fetch_and_validate_journal (arena, &list);
+  if (!success)
+    {
+      JOURNAL_LOG_ERROR
+	("Aborting replay due to validation failure. No entries replayed.");
+      goto CLEANUP;
+    }
+
+  JOURNAL_LOG_DEBUG ("Validation completed successfully.");
+
+  sort_entries (&list);
+  for (size_t i = 0; i < list.count; ++i)
+    journal_graph_add_event (list.entries[i], arena);
+
+  inode_replay_state_t **entries;
+  size_t count = journal_graph_get_all (&entries, arena);
+
+  JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
+
+  struct protid *cred = NULL;
+  struct node *root = diskfs_root_node;
+  diskfs_nref (root);
+
+  err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR
+	("Aborting replay. Couldn't create root credentials due to an error: %s. No entries replayed.",
+	 strerror (err));
+      goto DEREF;
+    }
+
+  JOURNAL_LOG_DEBUG ("Got %u entries to replay.", count);
+
+  for (size_t i = 0; i < count; ++i)
+    {
+      err = apply_node_replay (entries[i], root, cred);
+      if (err)
+	JOURNAL_LOG_ERROR ("Error while restoring node: %u. Error: %s.",
+			   entries[i]->ino, strerror (err));
+    }
+  JOURNAL_LOG_DEBUG ("Done with restoration.");
+
+  ports_port_deref (cred);
+DEREF:
+  diskfs_nput (root);
+CLEANUP:
+  diskfs_sync_everything (1);
+  diskfs_set_hypermetadata (1, 1);
+  _diskfs_diskdirty = 0;
+  err = diskfs_set_readonly (1);
+  if (err)
+    JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
+		       strerror (err), err);
   else
-    {
-      JOURNAL_LOG_DEBUG ("didnt unlock :(");
-    }
+    JOURNAL_LOG_DEBUG ("Filesystem set back to readonly");
+
   journal_graph_free ();
+UNLOCK:
+  pthread_rwlock_unlock (&diskfs_fsys_lock);
   journal_arena_destroy (arena);
 }
