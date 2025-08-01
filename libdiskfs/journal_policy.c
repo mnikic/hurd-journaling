@@ -19,6 +19,103 @@ static journal_filter_instance_t timestamp_filter = {
   .table = timestamp_table,
 };
 
+
+/* Expects name to be non null and non empty! */
+static bool
+should_journal_name(const char *name)
+{
+  static const char *excluded_hidden[] = {
+    ".DS_Store", ".Thumbs.db", ".directory", ".gvfs",
+    ".cache", ".tmp", ".temp", ".lock", ".pid", ".swp", ".swo", ".swn",
+    ".swx", NULL
+  };
+
+  size_t len = strlen(name);
+
+  for (int i = 0; excluded_hidden[i]; i++)
+    {
+      size_t suffix_len = strlen(excluded_hidden[i]);
+      if (len >= suffix_len &&
+          strcmp(name + len - suffix_len, excluded_hidden[i]) == 0)
+        return false;
+    }
+
+  static const char *excluded_extensions[] = {
+    ".o", ".a", ".pyc", ".pyo", ".pyd", ".class", ".war", ".ear",
+    ".tmp", ".temp", ".bak", ".backup", ".orig", ".rej", ".log",
+    ".pid", ".lock", ".cache", ".dmp", ".core", ".stackdump",
+    ".pdb", ".ilk", ".idb", ".tlog", ".lastbuildstate",
+    ".unsuccessfulbuild", ".manifest", ".dpkg-new", ".dpkg-tmp",
+    ".s", ".lo", ".la", ".so", ".ko", ".mod", ".cmd", ".sym", ".map", ".bin",
+    ".elf", ".gz", ".xz", ".zst", ".d", NULL
+  };
+
+  const char *ext = strrchr(name, '.');
+  if (ext)
+    for (int i = 0; excluded_extensions[i]; i++)
+      if (strcmp(ext, excluded_extensions[i]) == 0)
+        return false;
+
+  // Vim/Emacs backup patterns
+  if ((len > 0 && name[len - 1] == '~') ||
+      (name[0] == '#' && len > 1 && name[len - 1] == '#'))
+    return false;
+
+  return true;
+}
+
+/* Expects path to be non null and non empty! */
+static bool
+should_journal_dir_path(const char *path)
+{
+  // Directory prefix filtering
+  for (int i = 0; journal_excluded_prefixes[i]; i++)
+    if (strncmp(path, journal_excluded_prefixes[i],
+                strlen(journal_excluded_prefixes[i])) == 0)
+      return false;
+
+  static const char *excluded_dirs[] = {
+    "node_modules", "__pycache__", "CMakeFiles", ".cmake",
+    "build", "Build", "BUILD", "target", "dist", "out",
+    "bin", "obj", ".deps", ".libs", "autom4te.cache",
+    ".tox", ".venv", "venv", "env", ".env", "coverage",
+    ".nyc_output", ".pytest_cache", "__tests__", ".tests", "tests",
+    NULL
+  };
+
+  char *path_copy = strdup(path);
+  if (!path_copy)
+    return true;
+
+  char *token = strtok(path_copy, "/");
+  while (token)
+    {
+      for (int i = 0; excluded_dirs[i]; i++)
+        if (strcmp(token, excluded_dirs[i]) == 0)
+          {
+            free(path_copy);
+            return false;
+          }
+      token = strtok(NULL, "/");
+    }
+  free(path_copy);
+
+  // Build system-specific subpaths
+  if (strstr(path, "/.gradle/") ||
+      strstr(path, "/build/") ||
+      strstr(path, "/.m2/repository/") ||
+      strstr(path, "/target/debug/") ||
+      strstr(path, "/target/release/") ||
+      strstr(path, "/go/pkg/mod/") ||
+      strstr(path, "/.gocache/") ||
+      strstr(path, "/.npm/") ||
+      strstr(path, "/.yarn/"))
+    return false;
+
+  return true;
+}
+
+
 static bool
 should_journal_path (const char *path)
 {
@@ -44,10 +141,15 @@ should_journal_path (const char *path)
     NULL
   };
 
-  if (filename[0] == '.')
-    for (int i = 0; excluded_hidden[i]; i++)
-      if (strcmp (filename, excluded_hidden[i]) == 0)
+  for (int i = 0; excluded_hidden[i]; i++)
+    {
+      size_t len = strlen (filename);
+      size_t suffix_len = strlen (excluded_hidden[i]);
+
+      if (len >= suffix_len &&
+	  strcmp (filename + len - suffix_len, excluded_hidden[i]) == 0)
 	return false;
+    }
 
   static const char *excluded_extensions[] = {
     ".o", ".a", ".pyc", ".pyo", ".pyd", ".class", ".war", ".ear",
@@ -55,7 +157,8 @@ should_journal_path (const char *path)
     ".pid", ".lock", ".cache", ".dmp", ".core", ".stackdump",
     ".pdb", ".ilk", ".idb", ".tlog", ".lastbuildstate",
     ".unsuccessfulbuild", ".manifest", ".dpkg-new", ".dpkg-tmp",
-    NULL
+    ".s", ".lo", ".la", ".so", ".ko", ".mod", ".cmd", ".sym", ".map", ".bin",
+    ".elf", ".gz", ".xz", ".zst", ".d", NULL
   };
 
   const char *ext = strrchr (filename, '.');
@@ -160,8 +263,8 @@ journal_should_log_event (const struct node *np,
        info->action == JOURNAL_ACTION_UTIME ||
        info->action == JOURNAL_ACTION_WRITE))
     {
-      JOURNAL_LOG_DEBUG ("Skipped node %llu low-value event with no path",
-			 st->st_ino);
+      //JOURNAL_LOG_DEBUG ("Skipped node %llu low-value event with no path",
+	//		 st->st_ino);
       return false;
     }
 
@@ -170,10 +273,25 @@ journal_should_log_event (const struct node *np,
     {
       return false;
     }
-  if (!should_journal_path (full_path))
-    {
-      return false;
-    }
+  if (full_path && full_path[0] != '\0')
+  {
+    if (!should_journal_dir_path(full_path))
+      {
+      JOURNAL_LOG_DEBUG ("Skipped node %llu path %s is rejected.",
+			 st->st_ino, full_path);
+        return false; // Explicitly reject
+      }
+  }
+  if (info->name && info->name[0] != '\0')
+  {
+    if (!should_journal_name(info->name))
+      {
+
+      JOURNAL_LOG_DEBUG ("Skipped node %llu name %s is rejected.",
+			 st->st_ino, info->name);
+        return false; // Explicitly reject
+      }
+  }
 
   /* Please keep time filtering last. If any event is recorded timestamps are updated. 
      So we need to update timestamp_filter when things pass eveything else. */
@@ -184,7 +302,7 @@ journal_should_log_event (const struct node *np,
     ignore_time =
       !journal_filter_should_log (&timestamp_filter, st->st_ino, ts);
 
-  /* If we are ignoring this and the only change was atime/utime, skip it */
+  /* If we don't think its worth logging and the change was only atime/utime, skip it */
   if (ignore_time &&
       (info->action == JOURNAL_ACTION_ATIME ||
        info->action == JOURNAL_ACTION_UTIME))

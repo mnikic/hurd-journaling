@@ -28,20 +28,21 @@
 
 // Prefixes to exclude from journaling based on path
 static const char *const journal_excluded_prefixes[] = {
-  "/tmp/",
-  "/dev/",
-  "/proc/",
-  "/sys/",
-  "/run/",
-  "/var/tmp/",
-  "/var/run/",
-  "/var/lock/",
-  "/var/cache/",
+  "/tmp",
+  "/hurd",
+  "/dev",
+  "/proc",
+  "/sys",
+  "/run",
+  "/var/tmp",
+  "/var/run",
+  "/var/lock",
+  "/var/cache",
   "/var/lib/dpkg",
-  "/var/log/",
-  "/usr/lib/",
-  "/lib/",
-  "/boot/",
+  "/var/log",
+  "/usr/lib",
+  "/lib",
+  "/boot",
   NULL
 };
 
