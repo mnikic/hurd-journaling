@@ -28,6 +28,8 @@
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_inode_scanner.h>
+#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/diskfs.h>
 
 #include <stdbool.h>
@@ -49,12 +51,13 @@
 
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
+static journal_inode_denylist_t ino_denylist;
 journal_layout_t journal_layout;
 
 static inline bool
 layout_init (struct store *store, journal_config_t config)
 {
-  JOURNAL_LOG_DEBUG ("journal_init() called.");
+
   journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
   journal_layout.header_size = JOURNAL_HEADER_SIZE;
   journal_layout.device_block_size = store->block_size;
@@ -77,14 +80,28 @@ layout_init (struct store *store, journal_config_t config)
   return true;
 }
 
+static void
+denylist_init (void)
+{
+  journal_inode_denylist_builder_t builder =
+    journal_inode_denylist_builder_init ();
+
+  for (int i = 0; journal_excluded_prefixes[i]; i++)
+    journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
+
+  ino_denylist = journal_inode_denylist_finalize (&builder);
+}
+
 void
 journal_init (struct store *store, journal_config_t config)
 {
   JOURNAL_LOG_DEBUG ("journal_init() called.");
   if (!layout_init (store, config))
     return;
+
+  denylist_init ();
   journal_io_set_store (store);
-  journal_replay ();
+  journal_replay (&ino_denylist);
   journal_enabled = true;
   JOURNAL_LOG_DEBUG ("Done initializing.");
 }
@@ -160,7 +177,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   //journal_combine_path_name (normalized_path, info->name, full_path,
   //                         sizeof (full_path));
 
-  if (!journal_should_log_event (np, info, normalized_path))
+  if (!journal_should_log_event (np, info, &ino_denylist, normalized_path))
     return;
 
   const char *name = info->name ? info->name : "";

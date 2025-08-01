@@ -1,4 +1,4 @@
-/* journal_globals.h - Global journaling flags and shared synchronization state.
+/* journal_inode_scanner.h - Scanner for files.
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -19,19 +19,13 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
-#ifndef LIBDISKFS_JOURNAL_GLOBALS_H
-#define LIBDISKFS_JOURNAL_GLOBALS_H
+#ifndef LIBDISKFS_JOURNAL_INODE_SCANNER_H
+#define LIBDISKFS_JOURNAL_INODE_SCANNER_H
 
 #include <libdiskfs/journal_inode_denylist.h>
-#include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_internal.h>
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <pthread.h>
+error_t
+journal_scan_path_for_inos (const char *dir_path,
+			    journal_inode_denylist_builder_t * builder);
 
-extern volatile size_t journal_dropped_events;
-extern journal_layout_t journal_layout;
-
-#endif /* LIBDISKFS_JOURNAL_GLOBALS_H */
+#endif /*  LIBDISKFS_JOURNAL_INODE_SCANNER_H */

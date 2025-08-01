@@ -19,7 +19,6 @@ static journal_filter_instance_t timestamp_filter = {
   .table = timestamp_table,
 };
 
-
 /* Expects name to be non null and non empty! */
 static bool
 should_journal_name(const char *name)
@@ -115,100 +114,6 @@ should_journal_dir_path(const char *path)
   return true;
 }
 
-
-static bool
-should_journal_path (const char *path)
-{
-  if (!path || *path == '\0')
-    return true;		// Best-effort journaling fallback
-
-  for (int i = 0; journal_excluded_prefixes[i]; i++)
-    if (strncmp
-	(path, journal_excluded_prefixes[i],
-	 strlen (journal_excluded_prefixes[i])) == 0)
-      return false;
-
-  const char *filename = strrchr (path, '/');
-  filename = filename ? filename + 1 : path;
-
-  if (*filename == '\0')
-    return true;
-
-  static const char *excluded_hidden[] = {
-    ".DS_Store", ".Thumbs.db", ".directory", ".gvfs",
-    ".cache", ".tmp", ".temp", ".lock", ".pid", ".swp", ".swo", ".swn",
-    ".swx",
-    NULL
-  };
-
-  for (int i = 0; excluded_hidden[i]; i++)
-    {
-      size_t len = strlen (filename);
-      size_t suffix_len = strlen (excluded_hidden[i]);
-
-      if (len >= suffix_len &&
-	  strcmp (filename + len - suffix_len, excluded_hidden[i]) == 0)
-	return false;
-    }
-
-  static const char *excluded_extensions[] = {
-    ".o", ".a", ".pyc", ".pyo", ".pyd", ".class", ".war", ".ear",
-    ".tmp", ".temp", ".bak", ".backup", ".orig", ".rej", ".log",
-    ".pid", ".lock", ".cache", ".dmp", ".core", ".stackdump",
-    ".pdb", ".ilk", ".idb", ".tlog", ".lastbuildstate",
-    ".unsuccessfulbuild", ".manifest", ".dpkg-new", ".dpkg-tmp",
-    ".s", ".lo", ".la", ".so", ".ko", ".mod", ".cmd", ".sym", ".map", ".bin",
-    ".elf", ".gz", ".xz", ".zst", ".d", NULL
-  };
-
-  const char *ext = strrchr (filename, '.');
-  if (ext)
-    for (int i = 0; excluded_extensions[i]; i++)
-      if (strcmp (ext, excluded_extensions[i]) == 0)
-	return false;
-
-  static const char *excluded_dirs[] = {
-    "node_modules", "__pycache__", "CMakeFiles", ".cmake",
-    "build", "Build", "BUILD", "target", "dist", "out",
-    "bin", "obj", ".deps", ".libs", "autom4te.cache",
-    ".tox", ".venv", "venv", "env", ".env", "coverage",
-    ".nyc_output", ".pytest_cache", "__tests__", ".tests", "tests",
-    NULL
-  };
-
-  char *path_copy = strdup (path);
-  if (!path_copy)
-    return true;
-
-  char *token = strtok (path_copy, "/");
-  while (token)
-    {
-      for (int i = 0; excluded_dirs[i]; i++)
-	if (strcmp (token, excluded_dirs[i]) == 0)
-	  {
-	    free (path_copy);
-	    return false;
-	  }
-      token = strtok (NULL, "/");
-    }
-  free (path_copy);
-
-  // Build tool and language-specific cache patterns
-  if (strstr (path, "/.gradle/") || strstr (path, "/build/") ||
-      strstr (path, "/.m2/repository/") ||
-      strstr (path, "/target/debug/") || strstr (path, "/target/release/") ||
-      strstr (path, "/go/pkg/mod/") || strstr (path, "/.gocache/") ||
-      strstr (path, "/.npm/") || strstr (path, "/.yarn/"))
-    return false;
-
-  size_t len = strlen (filename);
-  if ((len > 0 && filename[len - 1] == '~') ||
-      (filename[0] == '#' && len > 1 && filename[len - 1] == '#'))
-    return false;		// Vim/Emacs backups
-
-  return true;
-}
-
 static inline time_t
 safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
 {
@@ -229,9 +134,29 @@ safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
   return result;
 }
 
+static inline bool 
+should_journal_filename_fallback (const char *name, const char *path)
+{
+  const char *filename = NULL;
+
+  if (name && name[0])
+    filename = name;
+  else if (path && path[0])
+    {
+      const char *slash = strrchr(path, '/');
+      filename = slash ? slash + 1 : path;
+    }
+
+  if (!filename || !filename[0])
+    return true;
+
+  return should_journal_name(filename);
+}
+
 bool
 journal_should_log_event (const struct node *np,
 			  const struct journal_entry_info *info,
+			  journal_inode_denylist_t * ino_denylist,
 			  const char *full_path)
 {
   if (!np)
@@ -249,6 +174,17 @@ journal_should_log_event (const struct node *np,
     }
 
   const struct stat *st = &np->dn_stat;
+
+  if (journal_inode_denylist_contains
+      (ino_denylist, (journal_ino_t) st->st_ino))
+    {
+      return false;
+    }
+  if (info->parent_ino && journal_inode_denylist_contains
+      (ino_denylist, (journal_ino_t) info->parent_ino))
+    {
+      return false;
+    }
 
   if (!journal_is_safe_stat (st))
     {
@@ -282,16 +218,8 @@ journal_should_log_event (const struct node *np,
         return false; // Explicitly reject
       }
   }
-  if (info->name && info->name[0] != '\0')
-  {
-    if (!should_journal_name(info->name))
-      {
-
-      JOURNAL_LOG_DEBUG ("Skipped node %llu name %s is rejected.",
-			 st->st_ino, info->name);
-        return false; // Explicitly reject
-      }
-  }
+  if (!should_journal_filename_fallback(info->name, full_path))
+    return false;
 
   /* Please keep time filtering last. If any event is recorded timestamps are updated. 
      So we need to update timestamp_filter when things pass eveything else. */

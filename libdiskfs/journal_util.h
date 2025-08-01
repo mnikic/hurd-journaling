@@ -24,6 +24,7 @@
 
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/diskfs.h>
+#include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/crc32.h>
 #include <libdiskfs/journal_globals.h>
 

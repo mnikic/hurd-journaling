@@ -20,7 +20,9 @@
 #ifndef LIBDISKFS_JOURNAL_REPLAYER_H
 #define LIBDISKFS_JOURNAL_REPLAYER_H
 
-/* Replay journal file from disk (used during early boot). */
-void journal_replay (void);
+#include <libdiskfs/journal_inode_denylist.h>
+
+/* Replay a binary journal file from disk (used during early boot). */
+void journal_replay (journal_inode_denylist_t * denylist);
 
 #endif /* LIBDISKFS_JOURNAL_REPLAYER_H */
