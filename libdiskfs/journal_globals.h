@@ -32,6 +32,5 @@
 
 extern volatile size_t journal_dropped_events;
 extern journal_layout_t journal_layout;
-extern FILE *journal_log_file;
 
 #endif /* LIBDISKFS_JOURNAL_GLOBALS_H */

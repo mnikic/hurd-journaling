@@ -121,12 +121,13 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
 	  diskfs_nput (np);
 	  np = NULL;
 	}
+      return 0;
       // Then action
-      err =
-	find_by_path_or_create (state->ino, path, restore_root, cred, &np);
+      //err =
+      //find_by_path_or_create (state->ino, path, restore_root, cred, &np);
       // All has failed
-      if (!np)
-	return err;
+      //if (!np)
+      //return err;
     }
   int changes = 0;
   char change_desc[128];

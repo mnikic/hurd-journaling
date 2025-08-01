@@ -42,9 +42,12 @@ void
 journal_io_set_store (struct store *store)
 {
   journal_store = store;
-  JOURNAL_LOG_DEBUG ("start byte offset: %llu", journal_layout.device_start_byte);
-  JOURNAL_LOG_DEBUG ("start block offset: %u", journal_layout.device_start_block);
-  JOURNAL_LOG_DEBUG ("start block count: %u", journal_layout.device_block_count);
+  JOURNAL_LOG_DEBUG ("start byte offset: %llu",
+		     journal_layout.device_start_byte);
+  JOURNAL_LOG_DEBUG ("start block offset: %u",
+		     journal_layout.device_start_block);
+  JOURNAL_LOG_DEBUG ("start block count: %u",
+		     journal_layout.device_block_count);
   JOURNAL_LOG_DEBUG ("start num entries: %u", journal_layout.num_entries);
   JOURNAL_LOG_DEBUG ("journal io store set.");
 }
@@ -128,26 +131,27 @@ journal_store_read (void *out_buf, size_t size, off_t relative_offset)
   size_t len = 0;
 
   error_t err = store_read (journal_store,
-                            absolute_offset / journal_layout.device_block_size,
-                            size, &buf, &len);
+			    absolute_offset /
+			    journal_layout.device_block_size,
+			    size, &buf, &len);
 
   if (err)
     {
       if (buf)
-        vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
+	vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
       return err;
     }
 
   if (len < size)
     {
-      JOURNAL_LOG_ERROR("Partial read: requested %zu, got %zu", size, len);
-      memset(out_buf, 0, size); // optional: zero to avoid using junk
-      memcpy(out_buf, buf, len); // copy what we got
+      JOURNAL_LOG_ERROR ("Partial read: requested %zu, got %zu", size, len);
+      memset (out_buf, 0, size);	// optional: zero to avoid using junk
+      memcpy (out_buf, buf, len);	// copy what we got
       vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
-      return EIO; // or return 0 if you're OK with partial reads
+      return EIO;		// or return 0 if you're OK with partial reads
     }
 
-  memcpy(out_buf, buf, size);
+  memcpy (out_buf, buf, size);
   vm_deallocate (mach_task_self (), (vm_address_t) buf, len);
   return 0;
 }
@@ -170,6 +174,5 @@ journal_read_header (journal_header_t * out_hdr)
 {
   if (!journal_store || !out_hdr)
     return EINVAL;
-  JOURNAL_LOG_DEBUG("Reading journal header (size=%zu)", sizeof(*out_hdr));
   return journal_store_read (out_hdr, sizeof (journal_header_t), 0);
 }

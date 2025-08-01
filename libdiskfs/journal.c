@@ -50,17 +50,10 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
 journal_layout_t journal_layout;
-FILE * journal_log_file = NULL;
 
-void
-journal_init (struct store *store, journal_config_t config)
+static inline bool
+layout_init (struct store *store, journal_config_t config)
 {
-#if JOURNAL_DEBUG
-  journal_log_file = fopen ("/var/log/journal_debug.log", "w");
-  if (!journal_log_file)
-    JOURNAL_LOG_DEBUG ("Failed to open journal_debug.log for writing");
-#endif
-
   JOURNAL_LOG_DEBUG ("journal_init() called.");
   journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
   journal_layout.header_size = JOURNAL_HEADER_SIZE;
@@ -77,12 +70,19 @@ journal_init (struct store *store, journal_config_t config)
   if (journal_layout.num_entries < 100)
     {
       JOURNAL_LOG_ERROR ("Not enough space for journaling!");
-      return;
+      return false;
     }
   JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
 		     journal_layout.num_entries);
+  return true;
+}
 
-
+void
+journal_init (struct store *store, journal_config_t config)
+{
+  JOURNAL_LOG_DEBUG ("journal_init() called.");
+  if (!layout_init (store, config))
+    return;
   journal_io_set_store (store);
   journal_replay ();
   journal_enabled = true;
@@ -142,6 +142,7 @@ toString (journal_action_t action)
       return "ATIME";
     case JOURNAL_ACTION_WRITE:
       return "WRITE";
+    default:
     }
   return "UNKNOWN";
 }
@@ -169,12 +170,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   const char *target = info->target ? info->target : "";
 
   size_t total_size = sizeof (journal_payload_bin_t);
-  if (total_size > JOURNAL_ENTRY_SIZE)
-    {
-      JOURNAL_LOG_ERROR ("Entry too large, dropped.");
-      return;
-    }
-
   char *buf = calloc (1, total_size);
   if (!buf)
     return;
@@ -255,7 +250,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  snprintf(entry->path, sizeof(entry->path), "%s", normalized_path);
+  snprintf (entry->path, sizeof (entry->path), "%s", normalized_path);
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",
 		     entry->ino, entry->tx_id, entry->action, entry->name,
 		     normalized_path);

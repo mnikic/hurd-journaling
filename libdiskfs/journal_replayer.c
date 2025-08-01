@@ -235,10 +235,6 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	     payload->action, payload->ino, index, payload->tx_id);
 	  return false;
 	}
-      JOURNAL_LOG_DEBUG
-	("Entry: ino=%u, action=%u, tx_id = %llu, name=%s, path=%s",
-	 payload->ino, payload->action, payload->tx_id, payload->name,
-	 payload->path);
       if (!add_event_to_list (out_entries, payload))
 	{
 	  return false;
@@ -292,7 +288,7 @@ test (struct journal_arena *arena)
   payload1->has_gid = true;
   payload1->action = JOURNAL_ACTION_CHOWN;
 
-  // crudical piece of data!!!!!
+  // crucial piece of data!!!!!
   payload1->st_nlink = 0;
 
   strncpy (payload1->path,

@@ -43,14 +43,10 @@ while (0)
 
 #if JOURNAL_DEBUG
 #define JOURNAL_LOG_DEBUG(fmt, ...)                                          \
-  do {                                                                       \
-    fprintf(stderr, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__);           \
-    fflush(stderr);                                                         \
-    if (journal_log_file) {                                                 \
-      fprintf(journal_log_file, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__); \
-      fflush(journal_log_file);                                             \
-    }                                                                        \
-  } while (0)
+	do {                                                                       \
+		fprintf(stderr, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__);           \
+		fflush(stderr);                                                         \
+	} while (0)
 #else
 #define JOURNAL_LOG_DEBUG(fmt, ...) do { } while (0)
 #endif
