@@ -33,12 +33,13 @@ journal_inode_denylist_builder_init (void)
   return builder;
 }
 
-void
+bool
 journal_inode_denylist_builder_add (builder_t * builder, journal_ino_t ino)
 {
   if (ino >= MAX_INODE_VALUE)
-    return;
+    return false;
   builder->bits[ino / 8] |= (1 << (ino % 8));
+  return true;
 }
 
 journal_inode_denylist_t

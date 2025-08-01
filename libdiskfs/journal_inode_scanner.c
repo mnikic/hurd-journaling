@@ -82,15 +82,15 @@ journal_scan_path_for_inos (const char *root_path,
   err = diskfs_lookup_path (root_path, cred, &start_np);
   if (err)
     {
-      JOURNAL_LOG_DEBUG ("scan_path_for_inos: failed to open '%s'",
-			 root_path);
+      JOURNAL_LOG_DEBUG ("scan_path_for_inos: failed to open '%s'. Error: %s.",
+			 root_path, strerror(err));
       goto cleanup_creds;
     }
 
   if (!S_ISDIR (start_np->dn_stat.st_mode))
     {
-      JOURNAL_LOG_DEBUG ("scan_path_for_inos: '%s' is not a directory",
-			 root_path);
+      JOURNAL_LOG_DEBUG ("scan_path_for_inos: '%s' is not a directory. Its mode is %ox0.",
+			 root_path, start_np->dn_stat.st_mode);
       diskfs_nput (start_np);
       err = ENOTDIR;
       goto cleanup_creds;
@@ -159,9 +159,11 @@ journal_scan_path_for_inos (const char *root_path,
 	  mode_t mode = child_np->dn_stat.st_mode;
 	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
 
-	  journal_inode_denylist_builder_add (builder, ino);
-	  JOURNAL_LOG_DEBUG ("denylist: found node %u (%s)", (unsigned) ino,
-			     name);
+	  if (!journal_inode_denylist_builder_add (builder, ino))
+	    {
+	      JOURNAL_LOG_DEBUG ("denylist: couldnt add %u (%s)", (unsigned) ino,
+	  		     name);
+            }
 	  count++;
 
 	  if (S_ISDIR (mode))
@@ -186,7 +188,7 @@ journal_scan_path_for_inos (const char *root_path,
       diskfs_nput (start_np);
     }
 
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: complete. Found %u inos.", count);
+  JOURNAL_LOG_DEBUG ("scan_path_for_inos: done with %s. Found %u inos.", root_path, count);
 
   struct node *remaining_np = NULL;
   while (stack_pop (&remaining_np, NULL))

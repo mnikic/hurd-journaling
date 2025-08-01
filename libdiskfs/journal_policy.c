@@ -213,8 +213,8 @@ journal_should_log_event (const struct node *np,
   {
     if (!should_journal_dir_path(full_path))
       {
-      JOURNAL_LOG_DEBUG ("Skipped node %llu path %s is rejected.",
-			 st->st_ino, full_path);
+//      JOURNAL_LOG_DEBUG ("Skipped node %llu path %s is rejected.",
+//			 st->st_ino, full_path);
         return false; // Explicitly reject
       }
   }

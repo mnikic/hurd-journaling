@@ -43,7 +43,7 @@ typedef struct
 journal_inode_denylist_builder_t journal_inode_denylist_builder_init (void);
 
 /** Add an inode to the denylist builder. */
-void journal_inode_denylist_builder_add (journal_inode_denylist_builder_t *
+bool journal_inode_denylist_builder_add (journal_inode_denylist_builder_t *
 					 builder, journal_ino_t ino);
 
 /** Finalize the builder into a read-only denylist view. */
