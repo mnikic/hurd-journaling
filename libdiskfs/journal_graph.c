@@ -49,9 +49,14 @@ hash_ino (journal_ino_t ino)
 {
   return ino % JOURNAL_HASH_SIZE;
 }
+static inode_graph_node_t *
+node_lookup(journal_ino_t ino)
+{
+  return inode_hash[hash_ino (ino)];
+}
 
 static void
-delete_inode (journal_ino_t ino)
+remove_inode (journal_ino_t ino)
 {
   journal_ino_t h = hash_ino (ino);
   inode_graph_node_t **cur = &inode_hash[h];
@@ -134,13 +139,49 @@ maybe_set_name (inode_replay_state_t * ino,
     }
 }
 
+static void
+delete_inode_iterative(journal_ino_t root_ino)
+{
+  // Stack to hold inodes to delete
+  journal_ino_t stack[4096];
+  int top = 0;
+
+  // Push the root inode
+  stack[top++] = root_ino;
+
+  while (top > 0)
+    {
+      journal_ino_t ino = stack[--top];
+      inode_graph_node_t *node = node_lookup (ino);
+      if (!node)
+        continue;
+
+      // Push all children onto the stack for later deletion
+      for (int i = 0; i < node->num_children; i++)
+        {
+          stack[top++] = node->children[i];
+
+          // Optional: guard against overflow
+          if (top >= 4096)
+            {
+              JOURNAL_LOG_ERROR("delete_inode_iterative: stack overflow");
+              return;
+            }
+        }
+      node->num_children = 0;
+      remove_inode (ino);
+    }
+}
+
+
 void
 journal_graph_add_event (const struct journal_payload_bin *ev,
 			 struct journal_arena *arena)
 {
   if (ev->st_nlink == 0)
     {
-      delete_inode (ev->ino);
+      JOURNAL_LOG_DEBUG("Deleting inode %u from metadata event due to st_nlink=0", ev->ino);
+      delete_inode_iterative(ev->ino);
       return;
     }
 
@@ -221,17 +262,9 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       break;
 
     case JOURNAL_ACTION_UNLINK:
-      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
-      break;
-
     case JOURNAL_ACTION_RMDIR:
-      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
-      for (int i = 0; i < ino->num_children; i++)
-	{
-	  delete_inode (ino->children[i]);
-	}
-      ino->num_children = 0;
-      delete_inode (ev->ino);
+      remove_child(get_inode(ev->parent_ino, arena), ev->ino);
+      delete_inode_iterative(ev->ino);
       return;
 
     case JOURNAL_ACTION_RENAME:

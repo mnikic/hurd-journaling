@@ -48,6 +48,6 @@ static const char *const journal_excluded_prefixes[] = {
 bool
 journal_should_log_event (const struct node *np,
 			  const struct journal_entry_info *info,
-			  char *full_path);
+			  const char *full_path);
 
 #endif /*  LIBDISKFS_JOURNAL_POLICY_H */

@@ -235,6 +235,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	     payload->action, payload->ino, index, payload->tx_id);
 	  return false;
 	}
+      JOURNAL_LOG_DEBUG ("Entry: ino=%u, action=%u, tx_id = %llu, name=%s, path=%s", payload->ino, payload->action, payload->tx_id, payload->name, payload->path);
       if (!add_event_to_list (out_entries, payload))
 	{
 	  return false;
@@ -332,7 +333,7 @@ journal_replay (void)
 			   strerror (err), err);
       else
 	JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-      test (arena);
+      //test (arena);
       struct journal_entries list = { 0 };
       bool success = fetch_and_validate_journal (arena, &list);
       if (!success)

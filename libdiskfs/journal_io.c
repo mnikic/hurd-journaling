@@ -78,10 +78,6 @@ journal_store_write (const void *buf, size_t size, off_t relative_offset)
   store_offset_t block_offset =
     absolute_offset / journal_layout.device_block_size;
   size_t amount = 0;
-  JOURNAL_LOG_DEBUG("writing entry at rel_offset=%lld abs_offset=%lld size=%zu",
-  (long long)relative_offset,
-  (long long)absolute_offset,
-  sizeof(journal_entry_bin_t));
   error_t err = store_write (journal_store, block_offset, buf, size, &amount);
 
   if (err || amount != size)
@@ -131,7 +127,6 @@ journal_store_read (void *out_buf, size_t size, off_t relative_offset)
   void *buf = NULL;
   size_t len = 0;
 
-  JOURNAL_LOG_ERROR("Reading from: %llu", absolute_offset);
   error_t err = store_read (journal_store,
                             absolute_offset / journal_layout.device_block_size,
                             size, &buf, &len);

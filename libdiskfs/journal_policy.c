@@ -129,7 +129,7 @@ safe_max_timestamp (time_t atime, time_t mtime, time_t ctime)
 bool
 journal_should_log_event (const struct node *np,
 			  const struct journal_entry_info *info,
-			  char *full_path)
+			  const char *full_path)
 {
   if (!np)
     {
@@ -149,7 +149,7 @@ journal_should_log_event (const struct node *np,
 
   if (!journal_is_safe_stat (st))
     {
-      JOURNAL_LOG_DEBUG ("Skipped inode %llu (mode %o) as unsafe.",
+      JOURNAL_LOG_DEBUG ("Skipped node %llu (mode %o) as unsafe.",
 			 st->st_ino, st->st_mode);
       return false;
     }
@@ -160,7 +160,8 @@ journal_should_log_event (const struct node *np,
        info->action == JOURNAL_ACTION_UTIME ||
        info->action == JOURNAL_ACTION_WRITE))
     {
-      JOURNAL_LOG_DEBUG ("Skipped low-value event with no path");
+      JOURNAL_LOG_DEBUG ("Skipped node %llu low-value event with no path",
+			 st->st_ino);
       return false;
     }
 
@@ -175,7 +176,7 @@ journal_should_log_event (const struct node *np,
     }
 
   /* Please keep time filtering last. If any event is recorded timestamps are updated. 
-     So we need to update timestamp_filter. */
+     So we need to update timestamp_filter when things pass eveything else. */
   time_t ts = safe_max_timestamp (st->st_atime, st->st_ctime, st->st_mtime);
   bool ignore_time = false;
   /* If one of the timestamps changed, check if it's worth logging */

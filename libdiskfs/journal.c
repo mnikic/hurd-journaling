@@ -50,12 +50,18 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
 journal_layout_t journal_layout;
+FILE * journal_log_file = NULL;
 
 void
 journal_init (struct store *store, journal_config_t config)
 {
-  JOURNAL_LOG_DEBUG ("journal_init() called.");
+#if JOURNAL_DEBUG
+  journal_log_file = fopen ("/var/log/journal_debug.log", "w");
+  if (!journal_log_file)
+    JOURNAL_LOG_DEBUG ("Failed to open journal_debug.log for writing");
+#endif
 
+  JOURNAL_LOG_DEBUG ("journal_init() called.");
   journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
   journal_layout.header_size = JOURNAL_HEADER_SIZE;
   journal_layout.device_block_size = store->block_size;
@@ -75,7 +81,7 @@ journal_init (struct store *store, journal_config_t config)
     }
   JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
 		     journal_layout.num_entries);
-  
+
 
   journal_io_set_store (store);
   journal_replay ();
@@ -149,11 +155,11 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
     }
   const struct node *np = (struct node *) node_ptr;
   const char *normalized_path = journal_normalize_path (info->path);
-  char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-  journal_combine_path_name (normalized_path, info->name, full_path,
-			     sizeof (full_path));
+  //char full_path[JOURNAL_NORMALIZED_PATH_MAX];
+  //journal_combine_path_name (normalized_path, info->name, full_path,
+  //                         sizeof (full_path));
 
-  if (!journal_should_log_event (np, info, full_path))
+  if (!journal_should_log_event (np, info, normalized_path))
     return;
 
   const char *name = info->name ? info->name : "";
@@ -249,11 +255,10 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->new_name[sizeof (entry->new_name) - 1] = '\0';
   entry->target[sizeof (entry->target) - 1] = '\0';
 
-  strncpy (entry->path, full_path, sizeof (entry->path));
-
+  snprintf(entry->path, sizeof(entry->path), "%s", normalized_path);
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",
 		     entry->ino, entry->tx_id, entry->action, entry->name,
-		     full_path);
+		     normalized_path);
 
   if (journal_enabled)
     {
