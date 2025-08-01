@@ -40,20 +40,24 @@
 #include <string.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
-#define ENTRY_SIZE       sizeof (journal_entry_bin_t)
-#define PAYLOAD_PTR_SIZE   sizeof (journal_payload_bin_t *)
+#define POINTER_SIZE   sizeof (void *)
 #define GRAPH_NODE_SIZE    sizeof (inode_graph_node_t)
-#define REPLAY_STATE_SIZE  sizeof (inode_replay_state_t *)
-#define AVG_STRING_SIZE    128
+#define AVG_STRING_SIZE    256
 #define AVG_STRINGS_PER_ENTRY 2
+#define AVG_STRING_MEMORY_PER_ENTRY (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE)
 
-static inline size_t
-arena_size (void)
+#define MEMORY_NEEDED_PER_ENTRY \
+  (JOURNAL_ENTRY_SIZE + GRAPH_NODE_SIZE + POINTER_SIZE + AVG_STRING_MEMORY_PER_ENTRY)
+
+#define ARENA_OVERPROVISION_PERCENT 50
+
+#define ARENA_MEMORY(num_entries) \
+  ALIGN_UP(((num_entries) * MEMORY_NEEDED_PER_ENTRY * (100 + ARENA_OVERPROVISION_PERCENT)) / 100, 8)
+
+static inline size_t 
+arena_size(void)
 {
-  return ALIGN_UP (journal_layout.num_entries *
-		   (ENTRY_SIZE + PAYLOAD_PTR_SIZE + GRAPH_NODE_SIZE +
-		    REPLAY_STATE_SIZE +
-		    (AVG_STRINGS_PER_ENTRY * AVG_STRING_SIZE)), 8) * 1.5;
+  return ARENA_MEMORY(journal_layout.num_entries);
 }
 
 struct journal_entries
@@ -171,7 +175,7 @@ static void
 sort_entries (struct journal_entries *list)
 {
   qsort (list->entries, list->count,
-	 PAYLOAD_PTR_SIZE, compare_entries_by_time_then_txid);
+	 POINTER_SIZE, compare_entries_by_time_then_txid);
 }
 
 /*
@@ -198,7 +202,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
   out_entries->count = 0;
   out_entries->entries =
     journal_arena_alloc (arena,
-			 journal_layout.num_entries * PAYLOAD_PTR_SIZE);
+			 journal_layout.num_entries * POINTER_SIZE);
   out_entries->capacity = journal_layout.num_entries;
   if (!out_entries->entries)
     {
@@ -211,7 +215,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   while (index != end_index)
     {
-      journal_entry_bin_t *entry = journal_arena_alloc (arena, ENTRY_SIZE);
+      journal_entry_bin_t *entry = journal_arena_alloc (arena, JOURNAL_ENTRY_SIZE);
       if (!entry)
 	{
 	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",

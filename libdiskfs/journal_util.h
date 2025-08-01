@@ -288,7 +288,7 @@ journal_is_valid_path (const char *path)
   if (path[0] != '/')
     return false;
 
-  if (strlen (path) <= 2)
+  if (strlen (path) <= 4)
     return false;
 
   if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)

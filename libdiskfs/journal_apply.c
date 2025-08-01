@@ -45,7 +45,7 @@ find_by_path_or_create (journal_ino_t ino, char *path,
 			struct node **out)
 {
   //TODO make a more robust path validation!
-  if (!path && path[0] == '\0')
+  if (!journal_is_valid_path (path))
     {
       return EINVAL;
     }
@@ -120,6 +120,11 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
 	{
 	  diskfs_nput (np);
 	  np = NULL;
+	}
+      if (!journal_is_valid_path (path))
+	{
+	  JOURNAL_LOG_DEBUG ("Inode: %u cannot be found AND has an invalid path: %s. Skipping.",
+			     state->ino, path);
 	}
       return 0;
       // Then action
