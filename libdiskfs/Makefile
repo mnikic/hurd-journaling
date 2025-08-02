@@ -36,7 +36,7 @@ IOSRCS= io-async-icky.c io-async.c io-duplicate.c io-get-conch.c io-revoke.c \
 	journal.c crc32.c journal_writer.c journal_replayer.c journal_filter.c \
 	journal_graph.c journal_arena.c journal_io.c journal_apply.c \
 	journal_inode_denylist.c journal_fs_helper.c journal_inode_scanner.c \
-	journal_policy.c
+	journal_policy.c journal_cache.c
 FSYSSRCS=fsys-getroot.c fsys-goaway.c fsys-startup.c fsys-getfile.c \
 	fsys-options.c fsys-syncfs.c fsys-forward.c \
 	fsys-get-children.c fsys-get-source.c

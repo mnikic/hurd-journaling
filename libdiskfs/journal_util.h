@@ -103,7 +103,7 @@ journal_current_time_ms (void)
 }
 
 // Simple hash function (FNV-1a variant)
-static uint32_t
+static inline uint32_t
 journal_hash_path (const char *path)
 {
   uint32_t hash = 2166136261U;

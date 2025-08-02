@@ -3,7 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/time.h>
-#include <libdiskfs/journal_utils.h>
+#include <libdiskfs/journal_cache.h>
+#include <libdiskfs/journal_util.h>
 #include <stdlib.h>
 
 static bool
@@ -13,6 +14,30 @@ is_entry_expired (journal_cache_t * cache, journal_cache_entry_t * entry,
   if (current_time == 0 || entry->timestamp == 0)
     return false;
   return (current_time - entry->timestamp) > cache->ttl_ms;
+}
+
+journal_cache_t
+journal_cache_init (journal_cache_entry_t * buffer, size_t size,
+		    uint64_t ttl_ms)
+{
+  journal_cache_t cache = { 0 };
+  if (!buffer)
+    return cache;
+  if ((size & (size - 1)) != 0)
+    {
+      JOURNAL_LOG_ERROR ("Cache size must be power of two");
+      return cache;
+    }
+
+  memset (buffer, 0, sizeof (journal_cache_entry_t) * size);
+  cache.entries = buffer;
+  cache.size = size;
+  cache.mask = size - 1;
+  cache.ttl_ms = ttl_ms;
+  cache.initialized = true;
+  cache.hits = 0;
+  cache.misses = 0;
+  return cache;
 }
 
 bool
@@ -32,8 +57,10 @@ journal_cache_check (journal_cache_t * cache, const char *path,
       journal_cache_entry_t *entry = &cache->entries[index];
 
       if (entry->hash == 0)
-	return false;
-
+	{
+	  cache->misses++;
+	  return false;
+	}
       if (entry->hash == hash && strcmp (entry->path, path) == 0)
 	{
 	  if (is_entry_expired (cache, entry, current_time))
