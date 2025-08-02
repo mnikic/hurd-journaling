@@ -102,6 +102,19 @@ journal_current_time_ms (void)
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
 
+// Simple hash function (FNV-1a variant)
+static uint32_t
+journal_hash_path (const char *path)
+{
+  uint32_t hash = 2166136261U;
+  while (*path)
+    {
+      hash ^= (uint32_t) * path++;
+      hash *= 16777619U;
+    }
+  return hash;
+}
+
 static inline const char *
 journal_normalize_path (const char *input)
 {
