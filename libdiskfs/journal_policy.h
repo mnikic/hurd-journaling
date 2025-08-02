@@ -53,4 +53,10 @@ journal_should_log_event (const struct node *np,
 			  journal_inode_denylist_t * ino_denylist,
 			  const char *full_path);
 
+bool
+journal_good_dir_path (const char *path);
+
+bool
+journal_good_filename (const char *path);
+
 #endif /*  LIBDISKFS_JOURNAL_POLICY_H */

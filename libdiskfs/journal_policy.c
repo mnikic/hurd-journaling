@@ -19,9 +19,10 @@ static journal_filter_instance_t timestamp_filter = {
   .table = timestamp_table,
 };
 
+//TODO cache the results for name and path, these are expensive
 /* Expects name to be non null and non empty! */
-static bool
-should_journal_name(const char *name)
+bool
+journal_good_filename(const char *name)
 {
   static const char *excluded_hidden[] = {
     ".DS_Store", ".Thumbs.db", ".directory", ".gvfs",
@@ -64,8 +65,8 @@ should_journal_name(const char *name)
 }
 
 /* Expects path to be non null and non empty! */
-static bool
-should_journal_dir_path(const char *path)
+bool
+journal_good_dir_path (const char *path)
 {
   // Directory prefix filtering
   for (int i = 0; journal_excluded_prefixes[i]; i++)
@@ -147,10 +148,11 @@ should_journal_filename_fallback (const char *name, const char *path)
       filename = slash ? slash + 1 : path;
     }
 
+  // At journal log time, we should allow nameless and pathless entries
   if (!filename || !filename[0])
     return true;
 
-  return should_journal_name(filename);
+  return journal_good_filename (filename);
 }
 
 bool
@@ -186,7 +188,7 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  if (!journal_is_safe_stat (st))
+  if (!journal_is_safe_stat (st->st_mode))
     {
       JOURNAL_LOG_DEBUG ("Skipped node %llu (mode %o) as unsafe.",
 			 st->st_ino, st->st_mode);
@@ -211,7 +213,7 @@ journal_should_log_event (const struct node *np,
     }
   if (full_path && full_path[0] != '\0')
   {
-    if (!should_journal_dir_path(full_path))
+    if (!journal_good_dir_path (full_path))
       {
 //      JOURNAL_LOG_DEBUG ("Skipped node %llu path %s is rejected.",
 //			 st->st_ino, full_path);

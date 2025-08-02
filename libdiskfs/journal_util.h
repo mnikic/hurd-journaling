@@ -77,21 +77,21 @@ journal_compute_payload_crc32 (const journal_payload_bin_t * payload)
 
 /* Check if a given stat structure describes a journal-safe file.  */
 static inline bool
-journal_is_safe_stat (const struct stat *st)
+journal_is_safe_stat (const uint32_t mode)
 {
-  if (st->st_mode == 0)
+  if (mode == 0)
     return false;
 
-  if (S_ISBLK (st->st_mode) || S_ISCHR (st->st_mode))
+  if (S_ISBLK (mode) || S_ISCHR (mode))
     return false;
 
-  if (S_ISFIFO (st->st_mode) || S_ISSOCK (st->st_mode))
+  if (S_ISFIFO (mode) || S_ISSOCK (mode))
     return false;
 
-  if (S_ISLNK (st->st_mode))
+  if (S_ISLNK (mode))
     return false;
 
-  return S_ISREG (st->st_mode) || S_ISDIR (st->st_mode);
+  return S_ISREG (mode) || S_ISDIR (mode);
 }
 
 static inline uint64_t
@@ -246,54 +246,57 @@ journal_combine_path_name (const char *path, const char *name,
  * Returns true on success, false on invalid input or truncation.
  */
 static inline bool
-journal_split_path (const char *full_path,
-		    char *dir_out, size_t dir_len,
-		    char *file_out, size_t file_len)
+journal_split_path(const char *full_path,
+                   char *dir_out, size_t dir_len,
+                   char *file_out, size_t file_len)
 {
   if (!full_path || full_path[0] != '/')
-    return false;
+    {
+      JOURNAL_LOG_DEBUG("journal_split_path: path is NULL or not absolute: '%s'", full_path);
+      return false;
+    }
 
-  const char *last_slash = strrchr (full_path, '/');
+  const char *last_slash = strrchr(full_path, '/');
+
+  // Reject root path "/"
+  if (last_slash == full_path && full_path[1] == '\0')
+    {
+      JOURNAL_LOG_DEBUG("journal_split_path: cannot split root path '/'");
+      return false;
+    }
+
+  // Case: "/file"
   if (!last_slash || last_slash == full_path)
     {
-      // Path is like "/file"
-      if (dir_len < 2 || file_len < strlen (full_path))
-	return false;
+      size_t file_part_len = strlen(full_path + 1);
 
-      strcpy (dir_out, "/");
-      strncpy (file_out, full_path + 1, file_len - 1);
+      if (dir_len < 2 || file_len <= file_part_len)
+        {
+          JOURNAL_LOG_DEBUG("journal_split_path: buffer too small for '/file' case");
+          return false;
+        }
+
+      strcpy(dir_out, "/");
+      strncpy(file_out, full_path + 1, file_len - 1);
       file_out[file_len - 1] = '\0';
       return true;
     }
 
+  // Normal case: "/path/to/file"
   size_t dir_part_len = last_slash - full_path;
-  size_t file_part_len = strlen (last_slash + 1);
+  size_t file_part_len = strlen(last_slash + 1);
 
   if (dir_part_len >= dir_len || file_part_len >= file_len)
-    return false;
+    {
+      JOURNAL_LOG_DEBUG("journal_split_path: buffer too small for full_path='%s'", full_path);
+      return false;
+    }
 
-  strncpy (dir_out, full_path, dir_part_len);
+  strncpy(dir_out, full_path, dir_part_len);
   dir_out[dir_part_len] = '\0';
-  strncpy (file_out, last_slash + 1, file_len - 1);
+
+  strncpy(file_out, last_slash + 1, file_len - 1);
   file_out[file_len - 1] = '\0';
-
-  return true;
-}
-
-static inline bool
-journal_is_valid_path (const char *path)
-{
-  if (!path || path[0] == '\0')
-    return false;
-
-  if (path[0] != '/')
-    return false;
-
-  if (strlen (path) <= 4)
-    return false;
-
-  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
-    return false;
 
   return true;
 }

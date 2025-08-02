@@ -161,7 +161,6 @@ delete_inode_iterative(journal_ino_t root_ino)
         {
           stack[top++] = node->children[i];
 
-          // Optional: guard against overflow
           if (top >= 4096)
             {
               JOURNAL_LOG_ERROR("delete_inode_iterative: stack overflow");
@@ -198,6 +197,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
   if (ev->path[0] != '\0')
     {
       strncpy (replay->resolved_path, ev->path, JOURNAL_NORMALIZED_PATH_MAX);
+      strncpy (replay->name, ev->name, sizeof (ev->name));
     }
 
   // Common fields applied regardless of event type

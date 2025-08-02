@@ -236,6 +236,13 @@ fetch_and_validate_journal (struct journal_arena *arena,
 			     payload->ino, payload->tx_id);
 	  goto NEXT;
 	}
+      if (!journal_is_safe_stat (payload->st_mode)) 
+	{
+	  JOURNAL_LOG_ERROR
+	    ("Invalid mode on a journal entry ino=%u mode=%o. Aborting.",
+	     payload->ino, payload->st_mode);
+	  return false;
+	}
       if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
 	  || payload->tx_id == 0 || payload->timestamp_ms == 0
 	  || !(payload->has_mtime || payload->has_atime
@@ -263,7 +270,7 @@ test (struct journal_arena *arena)
   JOURNAL_LOG_DEBUG ("TESTING: Starting.");
   journal_payload_bin_t *payload =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload->ino = 300001;
+  payload->ino = 999999;
   payload->mtime = 1788211200;
   payload->has_mtime = true;
   payload->ctime = 1788211200;
@@ -279,13 +286,17 @@ test (struct journal_arena *arena)
   payload->action = JOURNAL_ACTION_CHOWN;
   payload->st_nlink = 12;
   strncpy (payload->path,
-	   "/home/loshmi/nonexisting/dir/andanewfile123.txt",
+	   "/tmp/loshmi/nonexisting/dir/andanewfile123.txt",
 	   sizeof (payload->path));
   payload->path[sizeof (payload->path) - 1] = '\0';
+  strncpy (payload->name,
+	   "andanewfile123.txt",
+	   sizeof (payload->name));
+  payload->path[sizeof (payload->name) - 1] = '\0';
 
   journal_payload_bin_t *payload1 =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload1->ino = 300001;
+  payload1->ino = 999998;
   payload1->mtime = 1788211210;
   payload1->has_mtime = true;
   payload1->ctime = 1788211210;
@@ -301,13 +312,17 @@ test (struct journal_arena *arena)
   payload1->action = JOURNAL_ACTION_CHOWN;
 
   // crucial piece of data!!!!!
-  payload1->st_nlink = 0;
+  payload1->st_nlink = 3;
 
   strncpy (payload1->path,
-	   "/home/loshmi/nonexisting/dir/andanewfile123.txt",
-	   sizeof (payload->path));
+	   "/home/loshmi/",
+	   sizeof (payload1->path));
   payload1->path[sizeof (payload1->path) - 1] = '\0';
 
+  strncpy (payload1->name,
+	   "something.o",
+	   sizeof (payload1->name));
+  payload->path[sizeof (payload1->name) - 1] = '\0';
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
@@ -351,7 +366,7 @@ journal_replay (journal_inode_denylist_t * denylist)
       goto UNLOCK;
     }
   JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-  //test (arena);
+  test (arena);
   struct journal_entries list = { 0 };
   bool success = fetch_and_validate_journal (arena, denylist, &list);
   if (!success)
@@ -391,8 +406,8 @@ journal_replay (journal_inode_denylist_t * denylist)
     {
       err = apply_node_replay (entries[i], root, cred);
       if (err)
-	JOURNAL_LOG_ERROR ("Error while restoring node: %u. Error: %s.",
-			   entries[i]->ino, strerror (err));
+	JOURNAL_LOG_ERROR ("Error while restoring node: %u name: %s path:%s Error: %s.",
+			   entries[i]->ino, entries[i]->name, entries[i]->resolved_path, strerror (err));
     }
   JOURNAL_LOG_DEBUG ("Done with restoration.");
 
