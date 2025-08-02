@@ -28,7 +28,7 @@ typedef struct journal_filter_instance
  * a minimum delta (in seconds) between accepted updates for the same inode.
  *
  * @ino: inode number to check
- * @ctime: proposed ctime update
+ * @time: proposed time update
  *
  * Returns: true if update should be logged, false if filtered out
  */
