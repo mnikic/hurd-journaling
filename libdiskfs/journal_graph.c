@@ -53,7 +53,14 @@ hash_ino (journal_ino_t ino)
 static inode_graph_node_t *
 node_lookup (journal_ino_t ino)
 {
-  return inode_hash[hash_ino (ino)];
+  inode_graph_node_t *cur = inode_hash[hash_ino (ino)];
+  while (cur)
+    {
+      if (cur->ino == ino)
+	return cur;
+      cur = cur->next;
+    }
+  return NULL;
 }
 
 static void
@@ -94,8 +101,8 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
   memset (new_node, 0, sizeof (inode_graph_node_t));
   new_node->ino = ino;
   new_node->replay.ino = ino;
-  new_node->next = inode_hash[h];
   new_node->is_real = false;
+  new_node->next = inode_hash[h];
   inode_hash[h] = new_node;
   return new_node;
 }
@@ -103,16 +110,18 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
 static bool
 add_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
+  for (size_t i = 0; i < parent->num_children; ++i)
+    if (parent->children[i] == child_ino)
+      return true;
+
   if (parent->num_children < JOURNAL_GRAPH_NODE_MAX_CHILDREN)
     {
-      for (size_t i = 0; i < parent->num_children; ++i)
-	if (parent->children[i] == child_ino)
-	  return true;
       parent->children[parent->num_children++] = child_ino;
       return true;
     }
+
   JOURNAL_LOG_ERROR
-    ("Node %u has the maxium number of children and cannot add more!!! child: %u dropped",
+    ("Node %u has the maximum number of children and cannot add more! Child %u dropped",
      parent->ino, child_ino);
   return false;
 }
@@ -120,16 +129,18 @@ add_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 static void
 remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
-  for (int i = 0; i < parent->num_children; ++i)
+  for (size_t i = 0; i < parent->num_children; ++i)
     {
       if (parent->children[i] == child_ino)
 	{
-	  for (int j = i; j < parent->num_children - 1; ++j)
+	  for (size_t j = i; j < parent->num_children - 1; ++j)
 	    parent->children[j] = parent->children[j + 1];
 	  parent->num_children--;
-	  break;
+	  return;
 	}
     }
+  JOURNAL_LOG_DEBUG ("remove_child: child %u not found in parent %u",
+		     child_ino, parent->ino);
 }
 
 static void
@@ -146,11 +157,11 @@ static void
 maybe_set_name (inode_replay_state_t * ino,
 		const struct journal_payload_bin *ev)
 {
-  if (strlen (ino->name) == 0)
+  if (ino->name[0] == '\0')
     {
-      if (strlen (ev->name) > 0)
+      if (ev->name[0] != '\0')
 	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
-      else if (strlen (ev->new_name) > 0)
+      else if (ev->new_name[0] != '\0')
 	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
     }
 }
@@ -158,11 +169,9 @@ maybe_set_name (inode_replay_state_t * ino,
 static bool
 delete_inode_iterative (journal_ino_t root_ino)
 {
-  // Stack to hold inodes to delete
   journal_ino_t stack[4096];
   int top = 0;
 
-  // Push the root inode
   stack[top++] = root_ino;
 
   while (top > 0)
@@ -172,16 +181,14 @@ delete_inode_iterative (journal_ino_t root_ino)
       if (!node)
 	continue;
 
-      // Push all children onto the stack for later deletion
-      for (int i = 0; i < node->num_children; i++)
+      for (size_t i = 0; i < node->num_children; i++)
 	{
-	  stack[top++] = node->children[i];
-
 	  if (top >= 4096)
 	    {
 	      JOURNAL_LOG_ERROR ("delete_inode_iterative: stack overflow");
-	      return true;
+	      return false;
 	    }
+	  stack[top++] = node->children[i];
 	}
       node->num_children = 0;
       remove_inode (ino);
@@ -211,13 +218,14 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
   ino->is_real = true;
   replay->last_tx = ev->tx_id;
   replay->last_seen = ev->timestamp_ms;
+
   if (ev->path[0] != '\0')
     {
-      strncpy (replay->resolved_path, ev->path, JOURNAL_NORMALIZED_PATH_MAX);
-      strncpy (replay->name, ev->name, sizeof (ev->name));
+      safe_strncpy (replay->resolved_path, ev->path,
+		    JOURNAL_NORMALIZED_PATH_MAX);
+      safe_strncpy (replay->name, ev->name, sizeof (replay->name));
     }
 
-  // Common fields applied regardless of event type
   if (ev->has_uid)
     {
       replay->uid = ev->uid;
@@ -243,21 +251,25 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       replay->st_size = ev->st_size;
       replay->has_st_size = true;
     }
+
   if (ev->has_mtime && (!replay->has_mtime || ev->mtime > replay->mtime))
     {
       replay->has_mtime = true;
       replay->mtime = ev->mtime;
     }
+
   if (ev->has_ctime && (!replay->has_ctime || ev->ctime > replay->ctime))
     {
       replay->has_ctime = true;
       replay->ctime = ev->ctime;
     }
+
   if (ev->has_atime && (!replay->has_atime || ev->atime > replay->atime))
     {
       replay->has_atime = true;
       replay->atime = ev->atime;
     }
+
   maybe_set_name (replay, ev);
 
   switch (ev->action)
@@ -266,14 +278,12 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
     case JOURNAL_ACTION_MKDIR:
     case JOURNAL_ACTION_MKFILE:
       ino->parent_ino = ev->parent_ino;
-      safe_strncpy (replay->name, ev->name, sizeof (replay->name));
       if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
 	return false;
       break;
 
     case JOURNAL_ACTION_SYMLINK:
       ino->parent_ino = ev->parent_ino;
-      safe_strncpy (replay->name, ev->name, sizeof (replay->name));
       safe_strncpy (replay->symlink_target, ev->target,
 		    sizeof (replay->symlink_target));
       if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
@@ -303,8 +313,7 @@ void
 journal_graph_free (void)
 {
   for (int i = 0; i < JOURNAL_HASH_SIZE; ++i)
-    inode_hash[i] = NULL;
-  // Memory is owned by arena
+    inode_hash[i] = NULL;	// Memory owned by arena
 }
 
 size_t
@@ -313,8 +322,10 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.num_entries
-						       * sizeof (*result));
+						       journal_layout.
+						       num_entries *
+						       sizeof (*result));
+
   if (!result)
     {
       JOURNAL_LOG_ERROR ("journal_graph_get_all: arena out of memory");
