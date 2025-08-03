@@ -26,7 +26,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define JOURNAL_GRAPH_NODE_MAX_CHILDREN 32
+#define JOURNAL_GRAPH_NODE_MAX_CHILDREN 1024
 
 /* Final resolved state for a single inode, used during replay */
 typedef struct inode_replay_state
@@ -79,11 +79,13 @@ typedef struct inode_graph_node
 
   inode_replay_state_t replay;
 
+  bool is_real;
+
   struct inode_graph_node *next;
 } inode_graph_node_t;
 
 /* Add a journal event to the graph. Caller retains ownership of the event. */
-void journal_graph_add_event (const journal_payload_bin_t * ev,
+bool journal_graph_add_event (const journal_payload_bin_t * ev,
 			      struct journal_arena *arena);
 
 /* Free internal graph structures. */

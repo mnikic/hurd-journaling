@@ -55,10 +55,10 @@
 #define ARENA_MEMORY(num_entries) \
   ALIGN_UP(((num_entries) * MEMORY_NEEDED_PER_ENTRY * (100 + ARENA_OVERPROVISION_PERCENT)) / 100, 8)
 
-static inline size_t 
-arena_size(void)
+static inline size_t
+arena_size (void)
 {
-  return ARENA_MEMORY(journal_layout.num_entries);
+  return ARENA_MEMORY (journal_layout.num_entries);
 }
 
 struct journal_entries
@@ -202,8 +202,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   out_entries->count = 0;
   out_entries->entries =
-    journal_arena_alloc (arena,
-			 journal_layout.num_entries * POINTER_SIZE);
+    journal_arena_alloc (arena, journal_layout.num_entries * POINTER_SIZE);
   out_entries->capacity = journal_layout.num_entries;
   if (!out_entries->entries)
     {
@@ -216,7 +215,8 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   while (index != end_index)
     {
-      journal_entry_bin_t *entry = journal_arena_alloc (arena, JOURNAL_ENTRY_SIZE);
+      journal_entry_bin_t *entry =
+	journal_arena_alloc (arena, JOURNAL_ENTRY_SIZE);
       if (!entry)
 	{
 	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
@@ -236,7 +236,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 			     payload->ino, payload->tx_id);
 	  goto NEXT;
 	}
-      if (!journal_is_safe_stat (payload->st_mode)) 
+      if (!journal_is_safe_stat (payload->st_mode))
 	{
 	  JOURNAL_LOG_ERROR
 	    ("Invalid mode on a journal entry ino=%u mode=%o. Aborting.",
@@ -289,9 +289,7 @@ test (struct journal_arena *arena)
 	   "/tmp/loshmi/nonexisting/dir/andanewfile123.txt",
 	   sizeof (payload->path));
   payload->path[sizeof (payload->path) - 1] = '\0';
-  strncpy (payload->name,
-	   "andanewfile123.txt",
-	   sizeof (payload->name));
+  strncpy (payload->name, "andanewfile123.txt", sizeof (payload->name));
   payload->path[sizeof (payload->name) - 1] = '\0';
 
   journal_payload_bin_t *payload1 =
@@ -314,14 +312,10 @@ test (struct journal_arena *arena)
   // crucial piece of data!!!!!
   payload1->st_nlink = 3;
 
-  strncpy (payload1->path,
-	   "/home/loshmi/",
-	   sizeof (payload1->path));
+  strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
   payload1->path[sizeof (payload1->path) - 1] = '\0';
 
-  strncpy (payload1->name,
-	   "something.o",
-	   sizeof (payload1->name));
+  strncpy (payload1->name, "something.o", sizeof (payload1->name));
   payload->path[sizeof (payload1->name) - 1] = '\0';
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
@@ -366,7 +360,7 @@ journal_replay (journal_inode_denylist_t * denylist)
       goto UNLOCK;
     }
   JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-  test (arena);
+  //test (arena);
   struct journal_entries list = { 0 };
   bool success = fetch_and_validate_journal (arena, denylist, &list);
   if (!success)
@@ -380,7 +374,14 @@ journal_replay (journal_inode_denylist_t * denylist)
 
   sort_entries (&list);
   for (size_t i = 0; i < list.count; ++i)
-    journal_graph_add_event (list.entries[i], arena);
+    {
+      if (!journal_graph_add_event (list.entries[i], arena))
+	{
+	  JOURNAL_LOG_ERROR
+	    ("Aborting replay due to inability to add to the graph. No entries replayed.");
+	  goto CLEANUP;
+	}
+    }
 
   inode_replay_state_t **entries;
   size_t count = journal_graph_get_all (&entries, arena);
@@ -406,8 +407,10 @@ journal_replay (journal_inode_denylist_t * denylist)
     {
       err = apply_node_replay (entries[i], root, cred);
       if (err)
-	JOURNAL_LOG_ERROR ("Error while restoring node: %u name: %s path:%s Error: %s.",
-			   entries[i]->ino, entries[i]->name, entries[i]->resolved_path, strerror (err));
+	JOURNAL_LOG_ERROR
+	  ("Error while restoring node: %u name: %s path:%s Error: %s.",
+	   entries[i]->ino, entries[i]->name, entries[i]->resolved_path,
+	   strerror (err));
     }
   JOURNAL_LOG_DEBUG ("Done with restoration.");
 

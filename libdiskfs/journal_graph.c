@@ -49,8 +49,9 @@ hash_ino (journal_ino_t ino)
 {
   return ino % JOURNAL_HASH_SIZE;
 }
+
 static inode_graph_node_t *
-node_lookup(journal_ino_t ino)
+node_lookup (journal_ino_t ino)
 {
   return inode_hash[hash_ino (ino)];
 }
@@ -85,20 +86,35 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
   inode_graph_node_t *new_node =
     journal_arena_alloc (arena, sizeof (inode_graph_node_t));
   if (!new_node)
-    return NULL;
+    {
+      JOURNAL_LOG_ERROR
+	("Out of memory. Not able to allocate a graph node. Aborting.");
+      return NULL;
+    }
   memset (new_node, 0, sizeof (inode_graph_node_t));
   new_node->ino = ino;
   new_node->replay.ino = ino;
   new_node->next = inode_hash[h];
+  new_node->is_real = false;
   inode_hash[h] = new_node;
   return new_node;
 }
 
-static void
+static bool
 add_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
   if (parent->num_children < JOURNAL_GRAPH_NODE_MAX_CHILDREN)
-    parent->children[parent->num_children++] = child_ino;
+    {
+      for (size_t i = 0; i < parent->num_children; ++i)
+	if (parent->children[i] == child_ino)
+	  return true;
+      parent->children[parent->num_children++] = child_ino;
+      return true;
+    }
+  JOURNAL_LOG_ERROR
+    ("Node %u has the maxium number of children and cannot add more!!! child: %u dropped",
+     parent->ino, child_ino);
+  return false;
 }
 
 static void
@@ -139,8 +155,8 @@ maybe_set_name (inode_replay_state_t * ino,
     }
 }
 
-static void
-delete_inode_iterative(journal_ino_t root_ino)
+static bool
+delete_inode_iterative (journal_ino_t root_ino)
 {
   // Stack to hold inodes to delete
   journal_ino_t stack[4096];
@@ -154,44 +170,45 @@ delete_inode_iterative(journal_ino_t root_ino)
       journal_ino_t ino = stack[--top];
       inode_graph_node_t *node = node_lookup (ino);
       if (!node)
-        continue;
+	continue;
 
       // Push all children onto the stack for later deletion
       for (int i = 0; i < node->num_children; i++)
-        {
-          stack[top++] = node->children[i];
+	{
+	  stack[top++] = node->children[i];
 
-          if (top >= 4096)
-            {
-              JOURNAL_LOG_ERROR("delete_inode_iterative: stack overflow");
-              return;
-            }
-        }
+	  if (top >= 4096)
+	    {
+	      JOURNAL_LOG_ERROR ("delete_inode_iterative: stack overflow");
+	      return true;
+	    }
+	}
       node->num_children = 0;
       remove_inode (ino);
     }
+  return true;
 }
 
-
-void
+bool
 journal_graph_add_event (const struct journal_payload_bin *ev,
 			 struct journal_arena *arena)
 {
   if (ev->st_nlink == 0)
     {
-      JOURNAL_LOG_DEBUG("Deleting inode %u from metadata event due to st_nlink=0", ev->ino);
-      delete_inode_iterative(ev->ino);
-      return;
+      JOURNAL_LOG_DEBUG
+	("Deleting inode %u from metadata event due to st_nlink=0", ev->ino);
+      return delete_inode_iterative (ev->ino);
     }
 
   inode_graph_node_t *ino = get_inode (ev->ino, arena);
   if (!ino)
-    return;
+    return false;
 
   inode_replay_state_t *replay = &ino->replay;
   if (ev->timestamp_ms < replay->last_seen)
-    return;
+    return true;
 
+  ino->is_real = true;
   replay->last_tx = ev->tx_id;
   replay->last_seen = ev->timestamp_ms;
   if (ev->path[0] != '\0')
@@ -250,7 +267,8 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
     case JOURNAL_ACTION_MKFILE:
       ino->parent_ino = ev->parent_ino;
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
-      add_child (get_inode (ev->parent_ino, arena), ev->ino);
+      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
+	return false;
       break;
 
     case JOURNAL_ACTION_SYMLINK:
@@ -258,18 +276,19 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
       safe_strncpy (replay->symlink_target, ev->target,
 		    sizeof (replay->symlink_target));
-      add_child (get_inode (ev->parent_ino, arena), ev->ino);
+      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
+	return false;
       break;
 
     case JOURNAL_ACTION_UNLINK:
     case JOURNAL_ACTION_RMDIR:
-      remove_child(get_inode(ev->parent_ino, arena), ev->ino);
-      delete_inode_iterative(ev->ino);
-      return;
+      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
+      return delete_inode_iterative (ev->ino);
 
     case JOURNAL_ACTION_RENAME:
       remove_child (get_inode (ev->src_parent_ino, arena), ev->ino);
-      add_child (get_inode (ev->dst_parent_ino, arena), ev->ino);
+      if (!add_child (get_inode (ev->dst_parent_ino, arena), ev->ino))
+	return false;
       ino->parent_ino = ev->dst_parent_ino;
       safe_strncpy (replay->name, ev->new_name, sizeof (replay->name));
       break;
@@ -277,6 +296,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
     default:
       break;
     }
+  return true;
 }
 
 void
@@ -292,9 +312,9 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 		       struct journal_arena *arena)
 {
   size_t count = 0;
-  inode_replay_state_t **result =
-    journal_arena_alloc (arena,
-			 journal_layout.num_entries * sizeof (*result));
+  inode_replay_state_t **result = journal_arena_alloc (arena,
+						       journal_layout.num_entries
+						       * sizeof (*result));
   if (!result)
     {
       JOURNAL_LOG_ERROR ("journal_graph_get_all: arena out of memory");
@@ -307,7 +327,8 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
       inode_graph_node_t *node = inode_hash[i];
       while (node)
 	{
-	  result[count++] = &node->replay;
+	  if (node->is_real)
+	    result[count++] = &node->replay;
 	  node = node->next;
 	}
     }
