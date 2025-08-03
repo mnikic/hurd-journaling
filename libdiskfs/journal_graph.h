@@ -26,8 +26,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define JOURNAL_GRAPH_NODE_MAX_CHILDREN 1024
-
 /* Final resolved state for a single inode, used during replay */
 typedef struct inode_replay_state
 {
@@ -74,9 +72,9 @@ typedef struct inode_graph_node
   int link_count;
   bool link_count_reliable;
 
-  journal_ino_t children[JOURNAL_GRAPH_NODE_MAX_CHILDREN];
-  int num_children;
-
+  journal_ino_t *children;
+  size_t num_children;
+  size_t children_capacity;
   inode_replay_state_t replay;
 
   bool is_real;

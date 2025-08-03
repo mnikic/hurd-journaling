@@ -18,7 +18,6 @@
 
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
-
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_internal.h>
@@ -108,22 +107,35 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
 }
 
 static bool
-add_child (inode_graph_node_t * parent, journal_ino_t child_ino)
+add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
+	   struct journal_arena *arena)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
     if (parent->children[i] == child_ino)
       return true;
 
-  if (parent->num_children < JOURNAL_GRAPH_NODE_MAX_CHILDREN)
+  if (parent->num_children == parent->children_capacity)
     {
-      parent->children[parent->num_children++] = child_ino;
-      return true;
+      size_t new_capacity =
+	parent->children_capacity == 0 ? 4 : parent->children_capacity * 2;
+      size_t bytes = new_capacity * sizeof (journal_ino_t);
+      journal_ino_t *new_array = journal_arena_alloc (arena, bytes);
+      if (!new_array)
+	{
+	  JOURNAL_LOG_ERROR
+	    ("add_child: out of memory expanding children array for inode %u",
+	     parent->ino);
+	  return false;
+	}
+      if (parent->children)
+	memcpy (new_array, parent->children,
+		parent->num_children * sizeof (journal_ino_t));
+      parent->children = new_array;
+      parent->children_capacity = new_capacity;
     }
 
-  JOURNAL_LOG_ERROR
-    ("Node %u has the maximum number of children and cannot add more! Child %u dropped",
-     parent->ino, child_ino);
-  return false;
+  parent->children[parent->num_children++] = child_ino;
+  return true;
 }
 
 static void
@@ -278,7 +290,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
     case JOURNAL_ACTION_MKDIR:
     case JOURNAL_ACTION_MKFILE:
       ino->parent_ino = ev->parent_ino;
-      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
+      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino, arena))
 	return false;
       break;
 
@@ -286,7 +298,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       ino->parent_ino = ev->parent_ino;
       safe_strncpy (replay->symlink_target, ev->target,
 		    sizeof (replay->symlink_target));
-      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino))
+      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino, arena))
 	return false;
       break;
 
@@ -297,7 +309,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 
     case JOURNAL_ACTION_RENAME:
       remove_child (get_inode (ev->src_parent_ino, arena), ev->ino);
-      if (!add_child (get_inode (ev->dst_parent_ino, arena), ev->ino))
+      if (!add_child (get_inode (ev->dst_parent_ino, arena), ev->ino, arena))
 	return false;
       ino->parent_ino = ev->dst_parent_ino;
       safe_strncpy (replay->name, ev->new_name, sizeof (replay->name));
