@@ -226,7 +226,7 @@ journal_split_path (const char *full_path,
       return false;
     }
 
-  // Case: "/file"
+  // Case: "/file" (no internal slashes)
   if (!last_slash || last_slash == full_path)
     {
       size_t file_part_len = strlen (full_path + 1);
@@ -247,7 +247,7 @@ journal_split_path (const char *full_path,
   size_t dir_part_len = last_slash - full_path;
   size_t file_part_len = strlen (last_slash + 1);
 
-  if (dir_part_len >= dir_len || file_part_len >= file_len)
+  if (dir_part_len + 1 > dir_len || file_part_len + 1 > file_len)
     {
       JOURNAL_LOG_DEBUG
 	("journal_split_path: buffer too small for full_path='%s'",
@@ -255,7 +255,9 @@ journal_split_path (const char *full_path,
       return false;
     }
 
-  safe_strncpy (dir_out, full_path, dir_part_len);
+  memcpy (dir_out, full_path, dir_part_len);
+  dir_out[dir_part_len] = '\0';
+
   safe_strncpy (file_out, last_slash + 1, file_len);
 
   return true;
