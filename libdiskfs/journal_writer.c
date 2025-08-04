@@ -72,7 +72,7 @@ persist_header_with_retry (uint64_t start_index,
 static bool
 initialize_indices (uint64_t * start_index, uint64_t * end_index)
 {
-  struct journal_header hdr = { 0 };
+  journal_header_t hdr = { 0 };
   error_t err = journal_read_header (&hdr);
   if (err != 0)
     {
@@ -126,7 +126,7 @@ journal_write_raw_sync (journal_payload_bin_t * payload_bin)
     .payload = *payload_bin,
     .crc32 = journal_compute_payload_crc32 (payload_bin)
   };
-  JOURNAL_LOG_DEBUG("write: index=%llu crc=0x%08x", end_index, entry.crc32);
+  JOURNAL_LOG_DEBUG ("write: index=%llu crc=0x%08x", end_index, entry.crc32);
   error_t err = journal_write_entry (&entry, end_index);
   if (err)
     {

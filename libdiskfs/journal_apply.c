@@ -93,8 +93,7 @@ journal_resolve_full_path (const char *path, const char *name,
 
   if (!name || name[0] == '\0')
     {
-      strncpy (out_buf, path, buf_len);
-      out_buf[buf_len - 1] = '\0';
+      safe_strncpy (out_buf, path, buf_len);
       return 0;
     }
 
@@ -113,8 +112,7 @@ journal_resolve_full_path (const char *path, const char *name,
       if (strcmp (end, name) == 0 && strchr (end, '/') == NULL)
 	{
 	  // Path already ends with name
-	  strncpy (out_buf, path, buf_len);
-	  out_buf[buf_len - 1] = '\0';
+	  safe_strncpy (out_buf, path, buf_len);
 	  return 0;
 	}
       else if (strcmp (end, name) != 0 && strchr (end, '/') == NULL)
@@ -126,9 +124,7 @@ journal_resolve_full_path (const char *path, const char *name,
 	}
     }
 
-  // Safe concatenation without snprintf warning
-  strncpy (out_buf, path, buf_len);
-  out_buf[buf_len - 1] = '\0';
+  safe_strncpy (out_buf, path, buf_len);
 
   if (path[path_len - 1] != '/')
     strncat (out_buf, "/", buf_len - strlen (out_buf) - 1);
@@ -265,8 +261,7 @@ find_by_path_or_create2 (inode_replay_state_t * state,
   if (state->name[0] == '\0')
     {
       // Safe copy of resolved path
-      strncpy (full_path, path, sizeof (full_path));
-      full_path[sizeof (full_path) - 1] = '\0';
+      safe_strncpy (full_path, path, sizeof (full_path));
     }
   else
     {

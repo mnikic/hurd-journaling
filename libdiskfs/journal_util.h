@@ -58,6 +58,16 @@ while (0)
 #define JOURNAL_FILENAME_MAX NAME_MAX
 #define JOURNAL_PATH_MAX (JOURNAL_NORMALIZED_PATH_MAX - JOURNAL_FILENAME_MAX - 2)
 
+static inline void
+safe_strncpy (char *dst, const char *src, size_t size)
+{
+  if (size == 0)
+    return;
+  size_t len = strnlen (src, size - 1);
+  memcpy (dst, src, len);
+  dst[len] = '\0';
+}
+
 static inline uint32_t
 journal_compute_header_crc32 (const journal_header_t * hdr)
 {
@@ -259,57 +269,57 @@ journal_combine_path_name (const char *path, const char *name,
  * Returns true on success, false on invalid input or truncation.
  */
 static inline bool
-journal_split_path(const char *full_path,
-                   char *dir_out, size_t dir_len,
-                   char *file_out, size_t file_len)
+journal_split_path (const char *full_path,
+		    char *dir_out, size_t dir_len,
+		    char *file_out, size_t file_len)
 {
   if (!full_path || full_path[0] != '/')
     {
-      JOURNAL_LOG_DEBUG("journal_split_path: path is NULL or not absolute: '%s'", full_path);
+      JOURNAL_LOG_DEBUG
+	("journal_split_path: path is NULL or not absolute: '%s'", full_path);
       return false;
     }
 
-  const char *last_slash = strrchr(full_path, '/');
+  const char *last_slash = strrchr (full_path, '/');
 
   // Reject root path "/"
   if (last_slash == full_path && full_path[1] == '\0')
     {
-      JOURNAL_LOG_DEBUG("journal_split_path: cannot split root path '/'");
+      JOURNAL_LOG_DEBUG ("journal_split_path: cannot split root path '/'");
       return false;
     }
 
   // Case: "/file"
   if (!last_slash || last_slash == full_path)
     {
-      size_t file_part_len = strlen(full_path + 1);
+      size_t file_part_len = strlen (full_path + 1);
 
       if (dir_len < 2 || file_len <= file_part_len)
-        {
-          JOURNAL_LOG_DEBUG("journal_split_path: buffer too small for '/file' case");
-          return false;
-        }
+	{
+	  JOURNAL_LOG_DEBUG
+	    ("journal_split_path: buffer too small for '/file' case");
+	  return false;
+	}
 
-      strcpy(dir_out, "/");
-      strncpy(file_out, full_path + 1, file_len - 1);
-      file_out[file_len - 1] = '\0';
+      strcpy (dir_out, "/");
+      safe_strncpy (file_out, full_path + 1, file_len);
       return true;
     }
 
   // Normal case: "/path/to/file"
   size_t dir_part_len = last_slash - full_path;
-  size_t file_part_len = strlen(last_slash + 1);
+  size_t file_part_len = strlen (last_slash + 1);
 
   if (dir_part_len >= dir_len || file_part_len >= file_len)
     {
-      JOURNAL_LOG_DEBUG("journal_split_path: buffer too small for full_path='%s'", full_path);
+      JOURNAL_LOG_DEBUG
+	("journal_split_path: buffer too small for full_path='%s'",
+	 full_path);
       return false;
     }
 
-  strncpy(dir_out, full_path, dir_part_len);
-  dir_out[dir_part_len] = '\0';
-
-  strncpy(file_out, last_slash + 1, file_len - 1);
-  file_out[file_len - 1] = '\0';
+  safe_strncpy (dir_out, full_path, dir_part_len);
+  safe_strncpy (file_out, last_slash + 1, file_len);
 
   return true;
 }

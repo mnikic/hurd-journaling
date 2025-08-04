@@ -165,7 +165,7 @@ toString (journal_action_t action)
 }
 
 void
-journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
 {
   if (!journal_enabled)
     {
@@ -239,18 +239,11 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
     }
 
   entry->action = info->action;
-  strncpy (entry->name, name, sizeof (entry->name) - 1);
-  strncpy (entry->extra, extra, sizeof (entry->extra) - 1);
-  strncpy (entry->old_name, old_name, sizeof (entry->old_name) - 1);
-  strncpy (entry->new_name, new_name, sizeof (entry->new_name) - 1);
-  strncpy (entry->target, target, sizeof (entry->target) - 1);
-
-  // Null-terminate just to be safe
-  entry->name[sizeof (entry->name) - 1] = '\0';
-  entry->extra[sizeof (entry->extra) - 1] = '\0';
-  entry->old_name[sizeof (entry->old_name) - 1] = '\0';
-  entry->new_name[sizeof (entry->new_name) - 1] = '\0';
-  entry->target[sizeof (entry->target) - 1] = '\0';
+  safe_strncpy (entry->name, name, sizeof (entry->name));
+  safe_strncpy (entry->extra, extra, sizeof (entry->extra));
+  safe_strncpy (entry->old_name, old_name, sizeof (entry->old_name));
+  safe_strncpy (entry->new_name, new_name, sizeof (entry->new_name));
+  safe_strncpy (entry->target, target, sizeof (entry->target));
 
   snprintf (entry->path, sizeof (entry->path), "%s", normalized_path);
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",

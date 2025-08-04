@@ -156,16 +156,6 @@ remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 }
 
 static void
-safe_strncpy (char *dst, const char *src, size_t size)
-{
-  if (size == 0)
-    return;
-  size_t len = strnlen (src, size - 1);
-  memcpy (dst, src, len);
-  dst[len] = '\0';
-}
-
-static void
 maybe_set_name (inode_replay_state_t * ino,
 		const struct journal_payload_bin *ev)
 {
@@ -347,9 +337,8 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.
-						       num_entries *
-						       sizeof (*result));
+						       journal_layout.num_entries
+						       * sizeof (*result));
 
   if (!result)
     {

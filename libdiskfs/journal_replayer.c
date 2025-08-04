@@ -292,12 +292,10 @@ test (struct journal_arena *arena)
   payload->has_gid = true;
   payload->action = JOURNAL_ACTION_CHOWN;
   payload->st_nlink = 12;
-  strncpy (payload->path,
-	   "/tmp/loshmi/nonexisting/dir/andanewfile123.txt",
-	   sizeof (payload->path));
-  payload->path[sizeof (payload->path) - 1] = '\0';
-  strncpy (payload->name, "andanewfile123.txt", sizeof (payload->name));
-  payload->path[sizeof (payload->name) - 1] = '\0';
+  safe_strncpy (payload->path,
+		"/tmp/loshmi/nonexisting/dir/andanewfile123.txt",
+		sizeof (payload->path));
+  safe_strncpy (payload->name, "andanewfile123.txt", sizeof (payload->name));
 
   journal_payload_bin_t *payload1 =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
@@ -318,11 +316,9 @@ test (struct journal_arena *arena)
   // crucial piece of data!!!!!
   payload1->st_nlink = 3;
 
-  strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
-  payload1->path[sizeof (payload1->path) - 1] = '\0';
+  safe_strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
 
-  strncpy (payload1->name, "something.o", sizeof (payload1->name));
-  payload->path[sizeof (payload1->name) - 1] = '\0';
+  safe_strncpy (payload1->name, "something.o", sizeof (payload1->name));
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
