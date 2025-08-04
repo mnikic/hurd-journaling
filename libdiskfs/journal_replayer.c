@@ -253,6 +253,14 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	     payload->action, payload->ino, index, payload->tx_id);
 	  return false;
 	}
+      if (payload->ino == 244973 || payload->ino == 212628
+	  || payload->ino == 212611 || payload->ino == 212622
+	  || payload->ino == 244344)
+	JOURNAL_LOG_DEBUG
+	  ("$$$$$$$$$$$$$$$ entry: action=%u ino=%u at index %llu (tx_id %llu) timestamp %llu parent %u name %s path %s ctime: %llu",
+	   payload->action, payload->ino, index, payload->tx_id,
+	   payload->timestamp_ms, payload->parent_ino, payload->name,
+	   payload->path, payload->ctime);
       if (!add_event_to_list (out_entries, payload))
 	{
 	  return false;
@@ -276,7 +284,6 @@ test (struct journal_arena *arena)
   payload->ctime = 1788211200;
   payload->has_ctime = true;
   payload->st_mode = 0100755;
-  payload->has_mode = true;
   payload->tx_id = 7113;
   payload->timestamp_ms = time (NULL) + 60;
   payload->uid = 0;
@@ -300,7 +307,6 @@ test (struct journal_arena *arena)
   payload1->ctime = 1788211210;
   payload1->has_ctime = true;
   payload1->st_mode = 0100644;
-  payload1->has_mode = true;
   payload1->tx_id = 7115;
   payload1->timestamp_ms = time (NULL) + 90;
   payload1->uid = 0;

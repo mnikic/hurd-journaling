@@ -173,10 +173,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
     }
   const struct node *np = (struct node *) node_ptr;
   const char *normalized_path = journal_normalize_path (info->path);
-  //char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-  //journal_combine_path_name (normalized_path, info->name, full_path,
-  //                         sizeof (full_path));
-
   if (!journal_should_log_event (np, info, &ino_denylist, normalized_path))
     return;
 
@@ -206,6 +202,7 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
   entry->st_size = st->st_size;
   entry->st_nlink = st->st_nlink;
   entry->st_blocks = st->st_blocks;
+  entry->st_gen = st->st_gen;
 
   if (should_log_time (st->st_mtime, np->dn_set_mtime))
     {
@@ -221,18 +218,6 @@ journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
     {
       entry->atime = st->st_atime;
       entry->has_atime = true;
-    }
-
-  if (info->has_mode)
-    {
-      entry->st_mode = info->mode;
-      entry->has_mode = true;
-    }
-
-  if (info->has_size)
-    {
-      entry->st_size = info->size;
-      entry->has_size = true;
     }
 
   if (info->has_uid)

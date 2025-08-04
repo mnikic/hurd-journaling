@@ -55,27 +55,27 @@ struct __attribute__((__packed__)) journal_payload_bin
   journal_ino_t src_parent_ino;
   journal_ino_t dst_parent_ino;
 
-  /* Optional metadata */
   uint32_t st_mode;
   uint64_t st_size;
   uint64_t st_nlink;
   uint64_t st_blocks;
+  uint32_t st_gen;
   int64_t mtime;
   int64_t ctime;
   int64_t atime;
+
+  /* Optional metadata */
   journal_uid_t uid;
   journal_uid_t gid;
   uint32_t flags;
 
   /* Presence flags */
-  bool has_mode;
-  bool has_size;
   bool has_uid;
   bool has_gid;
   bool has_flags;
-  bool has_mtime;
   bool has_atime;
   bool has_ctime;
+  bool has_mtime;
 
   /* Operation type */
   journal_action_t action;

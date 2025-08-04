@@ -44,6 +44,7 @@
 #include "ext2fs.h"
 #include "bitmap.c"
 
+#include <libdiskfs/journal.h>
 #include <inttypes.h>
 
 /* ---------------------------------------------------------------- */
@@ -99,6 +100,12 @@ diskfs_free_node (struct node *np, mode_t old_mode)
 
   disk_cache_block_deref (bh);
   sblock_dirty = 1;
+
+  journal_entry_info_t info = {
+    .action = JOURNAL_ACTION_TOMBSTONE,
+  };
+
+  journal_log_metadata (np, &info);
   pthread_spin_unlock (&global_lock);
   alloc_sync(0);
 }

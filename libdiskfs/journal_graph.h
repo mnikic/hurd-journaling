@@ -39,10 +39,10 @@ typedef struct inode_replay_state
   char symlink_target[MAX_FIELD_LEN];
 
   uint32_t st_mode;
-  bool has_st_mode;
-
   uint64_t st_size;
-  bool has_st_size;
+  uint64_t st_nlink;
+  uint32_t st_gen;
+  uint64_t st_blocks;
 
   int64_t mtime;
   bool has_mtime;

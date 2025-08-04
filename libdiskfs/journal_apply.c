@@ -41,6 +41,29 @@
 
 
 static inline bool
+node_matches_fingerprint (const struct node *np,
+			  const inode_replay_state_t * state)
+{
+  const struct stat *st = &np->dn_stat;
+  if (st->st_size != state->st_size || st->st_blocks != state->st_blocks
+      || st->st_nlink != state->st_nlink || st->st_gen != state->st_gen)
+    {
+      JOURNAL_LOG_DEBUG
+	("Inode %u blocked: fingerprint mismatch. Actual size %llu vs %llu. Actual blocks %llu vs %llu. Actual nlink %llu vs %llu. Actual gen %u vs %u",
+	 (unsigned int) state->ino,
+	 (unsigned long long) st->st_size,
+	 (unsigned long long) state->st_size,
+	 (unsigned long long) st->st_blocks,
+	 (unsigned long long) state->st_blocks,
+	 (unsigned long long) st->st_nlink,
+	 (unsigned long long) state->st_nlink, st->st_gen, state->st_gen);
+
+      return false;
+    }
+  return true;
+}
+
+static inline bool
 is_path_usable (const char *path)
 {
   if (!path || path[0] == '\0')
@@ -57,72 +80,89 @@ is_path_usable (const char *path)
 
   return true;
 }
+
 static error_t
-journal_resolve_full_path(const char *path, const char *name,
-                          char *out_buf, size_t buf_len)
+journal_resolve_full_path (const char *path, const char *name,
+			   char *out_buf, size_t buf_len)
 {
-  if (!is_path_usable(path))
-    return EINVAL;
+  if (!is_path_usable (path))
+    {
+      JOURNAL_LOG_DEBUG ("Path %s is not usable.", path);
+      return EINVAL;
+    }
 
   if (!name || name[0] == '\0')
     {
-      strncpy(out_buf, path, buf_len);
+      strncpy (out_buf, path, buf_len);
       out_buf[buf_len - 1] = '\0';
       return 0;
     }
 
-  size_t path_len = strlen(path);
-  size_t name_len = strlen(name);
+  size_t path_len = strlen (path);
+  size_t name_len = strlen (name);
 
   if (path_len + 1 + name_len >= buf_len)
     {
-      JOURNAL_LOG_DEBUG("Path + name too long: '%s' + '%s'", path, name);
+      JOURNAL_LOG_DEBUG ("Path + name too long: '%s' + '%s'", path, name);
       return EINVAL;
     }
 
   if (path_len >= name_len)
     {
       const char *end = path + path_len - name_len;
-      if (strcmp(end, name) == 0 && strchr(end, '/') == NULL)
-        {
-          // Path already ends with name
-          strncpy(out_buf, path, buf_len);
-          out_buf[buf_len - 1] = '\0';
-          return 0;
-        }
-      else if (strcmp(end, name) != 0 && strchr(end, '/') == NULL)
-        {
-          JOURNAL_LOG_DEBUG("Rejected: path='%s' and name='%s' both appear to be filenames.", path, name);
-          return EINVAL;
-        }
+      if (strcmp (end, name) == 0 && strchr (end, '/') == NULL)
+	{
+	  // Path already ends with name
+	  strncpy (out_buf, path, buf_len);
+	  out_buf[buf_len - 1] = '\0';
+	  return 0;
+	}
+      else if (strcmp (end, name) != 0 && strchr (end, '/') == NULL)
+	{
+	  JOURNAL_LOG_DEBUG
+	    ("Rejected: path='%s' and name='%s' both appear to be filenames.",
+	     path, name);
+	  return EINVAL;
+	}
     }
 
   // Safe concatenation without snprintf warning
-  strncpy(out_buf, path, buf_len);
+  strncpy (out_buf, path, buf_len);
   out_buf[buf_len - 1] = '\0';
 
   if (path[path_len - 1] != '/')
-    strncat(out_buf, "/", buf_len - strlen(out_buf) - 1);
+    strncat (out_buf, "/", buf_len - strlen (out_buf) - 1);
 
-  strncat(out_buf, name, buf_len - strlen(out_buf) - 1);
+  strncat (out_buf, name, buf_len - strlen (out_buf) - 1);
 
   return 0;
 }
 
 static error_t
-find_or_create_directory(const char *full_path, uint32_t ino,
-                         struct protid *cred, struct node **out)
+find_or_create_directory (const char *dir_path,
+			  const inode_replay_state_t * state,
+			  struct protid *cred, struct node **out)
 {
-  if (!journal_good_dir_path(full_path))
+  if (!journal_good_dir_path (dir_path))
     {
-      JOURNAL_LOG_DEBUG("Rejected: ino %u path='%s' is not a supported directory name.", ino, full_path);
+      JOURNAL_LOG_DEBUG
+	("Rejected: ino %u path='%s' is not a supported directory name.",
+	 state->ino, dir_path);
       return EINVAL;
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path(full_path, cred, &np);
+  error_t err = diskfs_lookup_path (dir_path, cred, &np);
   if (!err)
     {
+      if (!node_matches_fingerprint (np, state))
+	{
+	  JOURNAL_LOG_DEBUG
+	    ("Node %llu found for path %s but it doesn't match the fingerprint. Skipping.",
+	     np->dn_stat.st_ino, dir_path);
+	  diskfs_nput (np);
+	  return EINVAL;
+	}
       *out = np;
       return 0;
     }
@@ -130,38 +170,53 @@ find_or_create_directory(const char *full_path, uint32_t ino,
   if (err != ENOENT)
     return err;
 
-  JOURNAL_LOG_DEBUG("inode %u: Directory not found. Creating a new one. Path: %s", ino, full_path);
+  JOURNAL_LOG_DEBUG
+    ("inode %u: Directory not found. Creating a new one. Path: %s",
+     state->ino, dir_path);
   // TODO: actually create it
   return 0;
 }
 
 static error_t
-find_or_create_file(const char *full_path, uint32_t ino,
-                    struct protid *cred, struct node **out)
+find_or_create_file (const char *full_path,
+		     const inode_replay_state_t * state, struct protid *cred,
+		     struct node **out)
 {
   char dir_path[JOURNAL_PATH_MAX];
   char file_name[JOURNAL_FILENAME_MAX + 1];
 
-  if (!journal_split_path(full_path, dir_path, sizeof(dir_path),
-                          file_name, sizeof(file_name)))
+  if (!journal_split_path (full_path, dir_path, sizeof (dir_path),
+			   file_name, sizeof (file_name)))
     return EINVAL;
 
-  if (!journal_good_dir_path(dir_path))
+  if (!journal_good_dir_path (dir_path))
     {
-      JOURNAL_LOG_DEBUG("Rejected: ino %u its directory path='%s' is not supported.", ino, dir_path);
+      JOURNAL_LOG_DEBUG
+	("Rejected: ino %u its directory path='%s' is not supported.",
+	 state->ino, dir_path);
       return EINVAL;
     }
 
-  if (!journal_good_filename(file_name))
+  if (!journal_good_filename (file_name))
     {
-      JOURNAL_LOG_DEBUG("Rejected: ino %u its file name '%s' is not supported.", ino, file_name);
+      JOURNAL_LOG_DEBUG
+	("Rejected: ino %u its file name '%s' is not supported.", state->ino,
+	 file_name);
       return EINVAL;
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path(full_path, cred, &np);
+  error_t err = diskfs_lookup_path (full_path, cred, &np);
   if (!err)
     {
+      if (!node_matches_fingerprint (np, state))
+	{
+	  JOURNAL_LOG_DEBUG
+	    ("Node %llu found for path %s but it doesn't match the fingerprint. Skipping.",
+	     np->dn_stat.st_ino, full_path);
+	  diskfs_nput (np);
+	  return EINVAL;
+	}
       *out = np;
       return 0;
     }
@@ -169,36 +224,37 @@ find_or_create_file(const char *full_path, uint32_t ino,
   if (err != ENOENT)
     return err;
 
-  JOURNAL_LOG_DEBUG("inode %u: File not found. Creating new one. Path: %s. Dir: '%s' File: '%s'",
-                    ino, full_path, dir_path, file_name);
+  JOURNAL_LOG_DEBUG
+    ("inode %u: File not found. Creating new one. Path: %s. Dir: '%s' File: '%s'",
+     state->ino, full_path, dir_path, file_name);
   // TODO: actually create it
   return 0;
 }
 
 static error_t
-find_by_path_or_create(inode_replay_state_t *state,
-                       struct node *restore_root, struct protid *cred,
-                       struct node **out)
+find_by_path_or_create (inode_replay_state_t * state,
+			struct node *restore_root, struct protid *cred,
+			struct node **out)
 {
   char *path = state->resolved_path;
   char full_path[JOURNAL_NORMALIZED_PATH_MAX];
 
-  error_t err = journal_resolve_full_path(path, state->name,
-                                          full_path, sizeof(full_path));
+  error_t err = journal_resolve_full_path (path, state->name,
+					   full_path, sizeof (full_path));
   if (err)
     return err;
 
   uint32_t mode = state->st_mode;
-  if (S_ISDIR(mode))
-    return find_or_create_directory(full_path, state->ino, cred, out);
+  if (S_ISDIR (mode))
+    return find_or_create_directory (full_path, state, cred, out);
   else
-    return find_or_create_file(full_path, state->ino, cred, out);
+    return find_or_create_file (full_path, state, cred, out);
 }
 
 static error_t
 find_by_path_or_create2 (inode_replay_state_t * state,
-			struct node *restore_root, struct protid *cred,
-			struct node **out)
+			 struct node *restore_root, struct protid *cred,
+			 struct node **out)
 {
   char *path = state->resolved_path;
   if (!is_path_usable (path))
@@ -328,11 +384,13 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
   struct node *np = NULL;
   char *path = state->resolved_path;
   error_t err = diskfs_cached_lookup ((ino_t) state->ino, &np);
-  if (!err && np->dn_stat.st_mode > 0 && np->dn_stat.st_nlink > 0)
+  if (!err && np->dn_stat.st_mode > 0 && np->dn_stat.st_nlink > 0
+      && node_matches_fingerprint (np, state))
     {
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
-			 " found! mode is %o and links %u",
-			 state->ino, np->dn_stat.st_mode, np->dn_stat.st_nlink);
+			 " found! mode is %o and links %u that matches the fingerprint.",
+			 state->ino, np->dn_stat.st_mode,
+			 np->dn_stat.st_nlink);
       if (!journal_is_safe_stat (np->dn_stat.st_mode))
 	{
 	  diskfs_nput (np);
@@ -360,7 +418,9 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
 	  diskfs_nput (np);
 	  np = NULL;
 	}
-       JOURNAL_LOG_DEBUG ("It doesn't seem file ino: %u is there. Lets see if we can find it by name.", state->ino);
+      JOURNAL_LOG_DEBUG
+	("It doesn't seem file ino: %u is there. Lets see if we can find it by name.",
+	 state->ino);
       // Then action
       err = find_by_path_or_create (state, restore_root, cred, &np);
       // All has failed
@@ -389,8 +449,7 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
       changes++;
     }
 
-  if (state->has_st_mode &&
-      (np->dn_stat.st_mode & 07777) != (state->st_mode & 07777))
+  if ((np->dn_stat.st_mode & 07777) != (state->st_mode & 07777))
     {
       APPEND_CHANGE ("mode new 0%o, old 0%o", state->st_mode,
 		     np->dn_stat.st_mode);

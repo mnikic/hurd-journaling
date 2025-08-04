@@ -82,7 +82,7 @@ diskfs_S_file_utimens (struct protid *cred,
 			 np->dn_set_ctime = 1;
 		         if (!S_ISCHR(np->dn_stat.st_mode) && !S_ISBLK(np->dn_stat.st_mode))
 			   {
-		             struct journal_entry_info info = {
+		             journal_entry_info_t info = {
 		                 .action = JOURNAL_ACTION_UTIME,
 		                 .path = cred && cred->po ? cred->po->path : ""
 		             };

@@ -212,24 +212,47 @@ bool
 journal_graph_add_event (const struct journal_payload_bin *ev,
 			 struct journal_arena *arena)
 {
-  if (ev->st_nlink == 0)
+  if (ev->st_nlink == 0 || ev->action == JOURNAL_ACTION_TOMBSTONE)
     {
-      JOURNAL_LOG_DEBUG
-	("Deleting inode %u from metadata event due to st_nlink=0", ev->ino);
       return delete_inode_iterative (ev->ino);
     }
 
   inode_graph_node_t *ino = get_inode (ev->ino, arena);
   if (!ino)
     return false;
+  if (ino->is_real && ev->st_gen != ino->replay.st_gen)
+    {
+      JOURNAL_LOG_DEBUG
+	("Deleting inode %u from metadata. Generation is different. Event: %u. Expected get: %u, encountered gen: %u.",
+	 ev->ino, ev->action, ino->replay.st_gen, ev->st_gen);
+      if (!delete_inode_iterative (ev->ino))
+	return false;
+    }
+  bool is_resize_action =
+    (ev->action == JOURNAL_ACTION_GROW ||
+     ev->action == JOURNAL_ACTION_TRUNCATE ||
+     ev->action == JOURNAL_ACTION_WRITE);
+  if (ino->is_real && !is_resize_action && ev->st_size != ino->replay.st_size)
+    {
+      JOURNAL_LOG_DEBUG
+	("Deleting inode %u from metadata. Size changed on a non size changing event. Event: %u. Expected size: %llu, encountered size: %llu.",
+	 ev->ino, ev->action, ino->replay.st_size, ev->st_size);
+      if (!delete_inode_iterative (ev->ino))
+	return false;
+    }
 
   inode_replay_state_t *replay = &ino->replay;
   if (ev->timestamp_ms < replay->last_seen)
     return true;
 
+  replay->st_size = ev->st_size;
   ino->is_real = true;
   replay->last_tx = ev->tx_id;
   replay->last_seen = ev->timestamp_ms;
+  replay->st_blocks = ev->st_blocks;
+  replay->st_nlink = ev->st_nlink;
+  replay->st_mode = ev->st_mode;
+  replay->st_gen = ev->st_gen;
 
   if (ev->path[0] != '\0')
     {
@@ -253,16 +276,6 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       replay->flags = ev->flags;
       replay->has_flags = true;
     }
-  if (ev->has_mode)
-    {
-      replay->st_mode = ev->st_mode;
-      replay->has_st_mode = true;
-    }
-  if (ev->has_size)
-    {
-      replay->st_size = ev->st_size;
-      replay->has_st_size = true;
-    }
 
   if (ev->has_mtime && (!replay->has_mtime || ev->mtime > replay->mtime))
     {
@@ -282,7 +295,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       replay->atime = ev->atime;
     }
 
-  maybe_set_name (replay, ev);
+  //maybe_set_name (replay, ev);
 
   switch (ev->action)
     {

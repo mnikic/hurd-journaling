@@ -47,6 +47,7 @@ typedef enum
   JOURNAL_ACTION_CHFLAGS,
   JOURNAL_ACTION_ATIME,
   JOURNAL_ACTION_WRITE,
+  JOURNAL_ACTION_TOMBSTONE,
   JOURNAL_ACTION_UNKNOWN,
 } journal_action_t;
 
@@ -57,7 +58,7 @@ typedef struct journal_config
 } journal_config_t;
 
 /* Metadata event structure passed to the journaling system.  */
-struct journal_entry_info
+typedef struct journal_entry_info
 {
   /* Identity and naming.  */
   journal_action_t action;	/* e.g. "create", "unlink", "rename" */
@@ -90,7 +91,7 @@ struct journal_entry_info
   /* Optional string for debugging or structured extras.  */
   const char *extra;
   const char *path;
-};
+} journal_entry_info_t;
 
 /* Initialize the journaling system.  */
 void journal_init (struct store *store, journal_config_t cfg);
@@ -100,9 +101,7 @@ void journal_shutdown (void);
 
 /* Log a metadata operation for journaling.
    NODE_PTR is a filesystem node (e.g. struct node *).
-   INFO describes the additional detals about the metadata event.
-   DURABILITY controls sync/async mode.  */
-void journal_log_metadata (void *node_ptr,
-			   const struct journal_entry_info *info);
+   INFO describes the additional detals about the metadata event. */
+void journal_log_metadata (void *node_ptr, const journal_entry_info_t * info);
 
 #endif /* LIBDISKFS_JOURNAL_H */
