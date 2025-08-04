@@ -7,11 +7,20 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#define JOURNAL_NORMALIZED_PATH_MAX 1024
 #define MAX_PATH_LEN  1024
 #define JOURNAL_LOG_DEBUG(fmt, ...)                            \
 	do                                                           \
 {                                                          \
 	fprintf (stderr, "[JOURNAL][DEBUG] " fmt "\n", ##__VA_ARGS__); \
+	fflush (stderr);                                         \
+}                                                          \
+while (0)
+
+#define JOURNAL_LOG_ERROR(fmt, ...)                            \
+	do                                                           \
+{                                                          \
+	fprintf (stderr, "[JOURNAL][ERROR] " fmt "\n", ##__VA_ARGS__); \
 	fflush (stderr);                                         \
 }                                                          \
 while (0)
@@ -251,15 +260,6 @@ rmdir_local (struct node *dir, const char *name, struct protid *cred)
   return err;
 }
 
-/**
- * Create a file named `filename` under `dir`, using Hurd diskfs APIs.
- *
- * `dir` must be UNLOCKED on entry.
- * If the file already exists, the existing node is returned locked via `*out`.
- * If the file is created, the new node is returned locked via `*out`.
- *
- * Caller must unlock and `diskfs_nput(*out)` after use.
- */
 static error_t
 make_file (struct node *dir, const char *filename, struct protid *cred,
 	   struct node **out)
@@ -268,13 +268,11 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
   struct node *new_node = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
 
-  fprintf (stderr, "[DEBUG] make_file: start\n");
   pthread_mutex_lock (&dir->lock);
 
   err = diskfs_lookup (dir, filename, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
     {
-      fprintf (stderr, "[DEBUG] File already exists\n");
       *out = new_node;
       diskfs_drop_dirstat (dir, ds);
       pthread_mutex_unlock (&dir->lock);
@@ -282,7 +280,7 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
     }
   else if (err != ENOENT)
     {
-      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
       pthread_mutex_unlock (&dir->lock);
       return err;
@@ -292,13 +290,12 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
   err = diskfs_create_node (dir, filename, mode, &new_node, cred, ds);
   if (err)
     {
-      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
+      JOURNAL_LOG_ERROR ("create_node failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
       pthread_mutex_unlock (&dir->lock);
       return err;
     }
 
-  fprintf (stderr, "[DEBUG] File '%s' created\n", filename);
   diskfs_node_update (new_node, 1);
   *out = new_node;
 
@@ -306,6 +303,7 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
   pthread_mutex_unlock (&dir->lock);
   return 0;
 }
+
 
 /**
  * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
@@ -324,20 +322,19 @@ make_dir (struct node *root, const char *dirname, struct protid *cred,
   struct node *new_node = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
 
-  fprintf (stderr, "[DEBUG] make_dir: start\n");
   pthread_mutex_lock (&root->lock);
 
   err = diskfs_lookup (root, dirname, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
     {
-      fprintf (stderr, "[DEBUG] Directory already exists\n");
+      JOURNAL_LOG_DEBUG ("Directory already exists.");
       *out = new_node;
       err = 0;
       goto cleanup;
     }
   else if (err != ENOENT)
     {
-      fprintf (stderr, "[ERROR] lookup(CREATE) failed: %d\n", err);
+      JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s.", strerror (err));
       goto cleanup;
     }
 
@@ -345,11 +342,10 @@ make_dir (struct node *root, const char *dirname, struct protid *cred,
   err = diskfs_create_node (root, dirname, mode, &new_node, cred, ds);
   if (err)
     {
-      fprintf (stderr, "[ERROR] create_node failed: %d\n", err);
+      JOURNAL_LOG_ERROR ("create_node failed: %s.", strerror (err));
       goto cleanup;
     }
 
-  fprintf (stderr, "[DEBUG] Directory '%s' created\n", dirname);
   diskfs_node_update (new_node, 1);
   *out = new_node;
 
@@ -370,28 +366,30 @@ static error_t
 mkdir_p (struct node *root, const char *path, struct protid *cred,
 	 struct node **out_node)
 {
-  fprintf (stderr, "[DEBUG] mkdir_p: start\n");
-
-  if (strlen (path) >= MAX_PATH_LEN)
+  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
 
-  char path_copy[MAX_PATH_LEN];
-  strncpy (path_copy, path, MAX_PATH_LEN);
-  path_copy[MAX_PATH_LEN - 1] = '\0';
+  char path_copy[JOURNAL_NORMALIZED_PATH_MAX];
+  strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX);
+  path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
 
   char *token = strtok (path_copy, "/");
   struct node *prev_node = NULL;
-
+  if (!token)
+    {
+      *out_node = root;
+      return 0;
+    }
+  diskfs_nref (root);
   while (token != NULL)
     {
-      fprintf (stderr, "[DEBUG] Token: %s\n", token);
+      JOURNAL_LOG_DEBUG ("Token: %s", token);
       struct node *next_node = NULL;
       error_t err = make_dir (root, token, cred, &next_node);
       if (err)
 	{
-	  fprintf (stderr,
-		   "[ERROR] mkdir_p: make_dir failed on '%s' with err %d\n",
-		   token, err);
+	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
+			     token, err);
 	  if (prev_node)
 	    diskfs_nput (prev_node);
 	  return err;
@@ -502,7 +500,7 @@ if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) != 0){
     }
 
   struct node *dir = NULL;
-  err = mkdir_p (root, "hey/testdir", cred, &dir);
+  err = mkdir_p (root, "hey/testdir125", cred, &dir);
   if (!err && dir)
     {
       fprintf (stderr, "[INFO] testdir ino = %llu\n", dir->dn_stat.st_ino);
@@ -521,7 +519,7 @@ if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) != 0){
 	}
 
       // Try to create it again
-      err = make_file (dir, "file.txt", cred, &file);
+      err = make_file (dir, "file1.txt", cred, &file);
       if (!err && file)
 	{
 	  fprintf (stderr,
@@ -537,30 +535,46 @@ if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) != 0){
       fprintf (stderr, "[ERROR] Failed to create testdir\n");
     }
 
-  fprintf (stderr, "Deleting full directory.\n");
-  rmdir_local (root, "full", cred);
-  fprintf (stderr, "Done deleting.\n");
-
-  struct node * target = NULL;
-  if (diskfs_cached_lookup ((ino_t) 188184, &target)) 
+  struct node *dir2 = NULL;
+  err = mkdir_p (root, "hey/testdir125/another/dir", cred, &dir2);
+  if (!err && dir2)
     {
-       JOURNAL_LOG_DEBUG ("Didn't get my file 188184. Sad :(");
-    } else {
-       JOURNAL_LOG_DEBUG ("Got my file 188184.");
-       target->dn_stat.st_mode = 0100700;
-       target->dn_stat.st_mtime = time(NULL) + 30;
-       target->dn_stat.st_ctime = time(NULL) + 30;
-       target->dn_set_ctime = 1;
-       target->dn_set_mtime = 1;
-       target->dn_stat_dirty = 1;
-       JOURNAL_LOG_DEBUG ("Calling update on the file..");
-       diskfs_node_update (target, 0);
-      
-       JOURNAL_LOG_DEBUG ("Got out of the update.");
+      fprintf (stderr, "[INFO] testdir ino = %llu\n", dir2->dn_stat.st_ino);
 
-      if (target)
-        diskfs_nput (target);
-   }
+      struct node *file = NULL;
+      err = make_file (dir2, "file.txt", cred, &file);
+      if (!err && file)
+	{
+	  fprintf (stderr, "[INFO] file.txt created with ino = %llu\n",
+		   file->dn_stat.st_ino);
+	  diskfs_nput (file);
+          file = NULL;
+	}
+      else
+	{
+	  fprintf (stderr, "[ERROR] Failed to create file.txt\n");
+	}
+
+      // Try to create it again
+      err = make_file (dir2, "file1.txt", cred, &file);
+      if (!err && file)
+	{
+	  fprintf (stderr,
+		   "[INFO] file1.txt created with ino = %llu\n",
+		   file->dn_stat.st_ino);
+	  diskfs_nput (file);
+	}
+
+      diskfs_nput (dir2);
+    }
+  else
+    {
+      fprintf (stderr, "[ERROR] Failed to create testdir\n");
+    }
+
+  //fprintf (stderr, "Deleting full directory.\n");
+  //rmdir_local (root, "full", cred);
+  //fprintf (stderr, "Done deleting.\n");
 
       diskfs_sync_everything (1);
        JOURNAL_LOG_DEBUG ("Got out of sync.");
