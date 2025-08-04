@@ -94,7 +94,7 @@ diskfs_S_io_write (struct protid *cred,
   {
     journal_entry_info_t info = {
       .action = JOURNAL_ACTION_WRITE,
-      .path = (cred && cred->po && cred->po->path) ? cred->po->path : "",
+      .path = JOURNAL_PATH_FROM_CRED (cred)
     };
     journal_log_metadata (np, &info);
   }

@@ -42,7 +42,7 @@ diskfs_S_file_chflags (struct protid *cred,
 			   .action = JOURNAL_ACTION_CHFLAGS,
 			   .flags = flags,
 			   .has_flags = true,
-			   .path = cred->po ? cred->po->path : ""
+			   .path = JOURNAL_PATH_FROM_CRED (cred)
 			 };
 			 journal_log_metadata(np, &info);
 			 np->dn_stat.st_flags = flags;

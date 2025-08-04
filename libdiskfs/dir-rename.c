@@ -234,7 +234,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       .dst_parent_ino = tdp->dn_stat.st_ino,
       .name = toname, 
       .parent_ino = tdp->dn_stat.st_ino,
-      .path = tocred->po ? tocred->po->path : ""
+      .path = JOURNAL_PATH_FROM_CRED (tocred)
   };
   journal_log_metadata (fnp, &info);
 

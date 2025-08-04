@@ -37,7 +37,7 @@ dithkfth_TH_file_chauthor (struct protid *cred,
 			       .action = JOURNAL_ACTION_CHAUTHOR,
   			       .uid = author,
   			       .has_uid = true,
-		               .path = cred && cred->po ? cred->po->path : "",
+		               .path = JOURNAL_PATH_FROM_CRED (cred),
   			       .parent_ino = np->dn_stat.st_ino
   			   };
 			   journal_log_metadata(np, &info);

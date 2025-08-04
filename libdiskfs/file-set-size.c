@@ -34,14 +34,10 @@ diskfs_S_file_set_size (struct protid *cred,
 			   err = diskfs_truncate (np, size);
 			   if (!err)
 			    {
-			      const char *resolved_name = "(truncate)";
-			      if (cred && cred->po && cred->po->path)
-			        resolved_name = cred->po->path;
-
 			      journal_entry_info_t info = {
 			          .action = JOURNAL_ACTION_TRUNCATE,
-			          .path = resolved_name,
-			          .parent_ino = np->dn_stat.st_ino,
+			          .path = JOURNAL_PATH_FROM_CRED (cred),
+			          .parent_ino = np->dn_stat.st_ino
 			      };
 			      journal_log_metadata (np, &info);
 
@@ -59,13 +55,9 @@ diskfs_S_file_set_size (struct protid *cred,
 			       np->dn_stat.st_size = size;
 			       np->dn_set_ctime = np->dn_set_mtime = 1;
 
-			       const char* resolved_name = "";
-			       if (cred && cred->po && cred->po->path)
-		   	         resolved_name = cred->po->path;
-
 			       journal_entry_info_t info = {
 				   .action = JOURNAL_ACTION_GROW,
-				   .name = resolved_name,
+				   .path = JOURNAL_PATH_FROM_CRED (cred)
 			       };
 			       journal_log_metadata (np, &info);
 			       if (np->filemod_reqs)

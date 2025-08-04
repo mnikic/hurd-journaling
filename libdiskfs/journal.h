@@ -27,6 +27,8 @@
 #include <sys/types.h>
 #include <hurd/store.h>
 
+#define JOURNAL_PATH_FROM_CRED(cred) ((cred) && (cred)->po && (cred)->po->path ? (cred)->po->path : "")
+
 /* Journaling actions representing metadata changes.  */
 typedef enum
 {

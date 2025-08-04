@@ -62,7 +62,7 @@ diskfs_S_dir_mkdir (struct protid *dircred,
         .action = JOURNAL_ACTION_MKDIR,
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino,
-	.path = dircred->po ? dircred->po->path : ""
+	.path = JOURNAL_PATH_FROM_CRED(dircred)
       };
       journal_log_metadata (np, &info);
     }

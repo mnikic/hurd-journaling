@@ -126,7 +126,7 @@ diskfs_S_dir_link (struct protid *dircred,
     .action = JOURNAL_ACTION_LINK,
     .name = name,
     .parent_ino = dnp->dn_stat.st_ino,
-    .path = dircred->po ? dircred->po->path : ""
+    .path = JOURNAL_PATH_FROM_CRED(dircred)
   };
   journal_log_metadata (np, &info);
 
