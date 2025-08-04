@@ -425,7 +425,7 @@ journal_replay (journal_inode_denylist_t * denylist)
 		     restore_prefix);
   for (size_t i = 0; i < count; ++i)
     {
-      err = apply_node_replay (entries[i], root, cred, "");//restore_prefix);
+      err = apply_node_replay (entries[i], root, cred, restore_prefix);
       if (err)
 	JOURNAL_LOG_ERROR
 	  ("Error while restoring node: %u name: %s path:%s Error: %s.",

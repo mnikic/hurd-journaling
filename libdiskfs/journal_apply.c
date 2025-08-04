@@ -278,11 +278,25 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
      state->ino, full_path, dir_path_with_prefix, file_name);
   struct node *dir = NULL;
   err = diskfs_mkdir_p (restore_root, dir_path_with_prefix, cred, &dir);
-  if (err)
+  if (err || !dir)
     {
       JOURNAL_LOG_ERROR
 	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
 	 state->ino, dir_path_with_prefix, strerror (err));
+      *out = NULL;
+      return err;
+    }
+  diskfs_nput (dir);
+  dir = NULL;
+  JOURNAL_LOG_DEBUG
+    ("inode %u: In lookup path for the dir the came out of mkdir_p. Let see Dir: '%s'.",
+     state->ino, dir_path_with_prefix);
+  err = diskfs_lookup_path (dir_path_with_prefix, cred, &dir);
+  if (err || !dir)
+    {
+      JOURNAL_LOG_DEBUG
+	("inode %u: It seems we failed to lookup dir mkdir_p create. Err: %s.",
+	 state->ino, strerror (err));
       *out = NULL;
       return err;
     }
