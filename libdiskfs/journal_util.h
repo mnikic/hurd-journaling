@@ -197,74 +197,11 @@ journal_normalize_path (const char *input)
   return normalized;
 }
 
-static inline void
-journal_combine_path_name (const char *path, const char *name,
-			   char *out, size_t out_size)
-{
-  if (!out || out_size == 0)
-    return;
-
-  const char *fallback = "";
-  out[0] = '\0';		// always null-terminate early
-
-  if ((!path || !*path) && (!name || !*name))
-    {
-      snprintf (out, out_size, "%s", fallback);
-      return;
-    }
-
-  if (!name || !*name)
-    {
-      snprintf (out, out_size, "%s", path);
-      return;
-    }
-
-  if (!path || !*path)
-    {
-      snprintf (out, out_size, "%s", name);
-      return;
-    }
-
-  size_t path_len = strlen (path);
-  size_t name_len = strlen (name);
-  bool needs_slash = path[path_len - 1] != '/';
-
-  // If already ends in name, don't append
-  if (path_len >= name_len && strcmp (path + path_len - name_len, name) == 0)
-    {
-      snprintf (out, out_size, "%s", path);
-      return;
-    }
-
-  // Manual safe concatenation (avoids warning)
-  size_t remaining = out_size;
-  size_t written = 0;
-
-  written = snprintf (out, remaining, "%s", path);
-  if (written >= remaining)
-    return;
-
-  remaining -= written;
-  out += written;
-
-  if (needs_slash)
-    {
-      written = snprintf (out, remaining, "/");
-      if (written >= remaining)
-	return;
-      remaining -= written;
-      out += written;
-    }
-
-  snprintf (out, remaining, "%s", name);	// truncate if needed
-}
-
-
 /**
  * Splits a full absolute path into directory path and filename.
  * - `dir_out` receives the parent directory (e.g., "/foo/bar")
  * - `file_out` receives the final filename (e.g., "baz.txt")
- * - Handles edge cases like "/file.txt" → dir="/", file="file.txt"
+ * - Handles edge cases like "/file.txt" dir="/", file="file.txt"
  *
  * Returns true on success, false on invalid input or truncation.
  */
@@ -301,7 +238,7 @@ journal_split_path (const char *full_path,
 	  return false;
 	}
 
-      strcpy (dir_out, "/");
+      safe_strncpy (dir_out, "/", dir_len);
       safe_strncpy (file_out, full_path + 1, file_len);
       return true;
     }
