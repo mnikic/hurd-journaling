@@ -33,7 +33,7 @@ dithkfth_TH_file_chauthor (struct protid *cred,
 			 err = dithkfth_validate_author_change (np, author);
 		       if (!err)
 			 {
-			   struct journal_entry_info info = {
+			   journal_entry_info_t info = {
 			       .action = JOURNAL_ACTION_CHAUTHOR,
   			       .uid = author,
   			       .has_uid = true,

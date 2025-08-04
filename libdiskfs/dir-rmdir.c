@@ -82,7 +82,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
 
   if (!error)
     {
-      struct journal_entry_info info = {
+      journal_entry_info_t info = {
         .action = JOURNAL_ACTION_RMDIR,
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino,

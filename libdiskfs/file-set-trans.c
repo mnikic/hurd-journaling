@@ -211,7 +211,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	      err = diskfs_validate_mode_change (np, newmode);
 	      if (!err)
 		{
-	  	  struct journal_entry_info info = {
+	  	  journal_entry_info_t info = {
 	    	    .action = JOURNAL_ACTION_SYMLINK,
 	    	    .path = cred && cred->po && cred->po->path ? cred->po->path : "", 
 	    	    .target = passive + strlen(passive) + 1,

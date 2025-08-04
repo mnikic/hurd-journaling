@@ -99,7 +99,7 @@ diskfs_S_io_read (struct protid *cred,
 
   if (!diskfs_check_readonly () && !S_ISDIR(np->dn_stat.st_mode) && atime_should_update (np))
     {
-      struct journal_entry_info info = {
+      journal_entry_info_t info = {
         .action = JOURNAL_ACTION_ATIME,
         .path = (cred && cred->po && cred->po->path) ? cred->po->path : "",
       };

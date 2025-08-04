@@ -76,7 +76,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   np->dn_stat.st_nlink--;
   np->dn_set_ctime = 1;
 
-  struct journal_entry_info info = {
+  journal_entry_info_t info = {
     .action = JOURNAL_ACTION_UNLINK,
     .name = name,
     .parent_ino = dnp->dn_stat.st_ino,

@@ -78,10 +78,6 @@ typedef struct journal_entry_info
   uid_t gid;
 
   /* Size and permissions.  */
-  bool has_size;
-  off_t size;
-  bool has_mode;
-  mode_t mode;
   bool has_flags;
   uint32_t flags;
 

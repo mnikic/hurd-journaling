@@ -226,7 +226,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
 
   fnp->dn_stat.st_nlink--;
   fnp->dn_set_ctime = 1;
-  struct journal_entry_info info = {
+  journal_entry_info_t info = {
       .action = JOURNAL_ACTION_RENAME,
       .old_name = fromname,
       .new_name = toname,
@@ -234,8 +234,6 @@ diskfs_S_dir_rename (struct protid *fromcred,
       .dst_parent_ino = tdp->dn_stat.st_ino,
       .name = toname, 
       .parent_ino = tdp->dn_stat.st_ino,
-      .has_mode = true,
-      .mode = fnp->dn_stat.st_mode,
       .path = tocred->po ? tocred->po->path : ""
   };
   journal_log_metadata (fnp, &info);

@@ -49,8 +49,8 @@ static const char *const journal_excluded_prefixes[] = {
 
 bool
 journal_should_log_event (const struct node *np,
-			  const struct journal_entry_info *info,
-			  journal_inode_denylist_t * ino_denylist,
+			  const journal_entry_info_t *info,
+			  const journal_inode_denylist_t * ino_denylist,
 			  const char *full_path);
 
 bool

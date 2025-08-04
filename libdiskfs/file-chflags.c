@@ -38,7 +38,7 @@ diskfs_S_file_chflags (struct protid *cred,
 		       err = diskfs_validate_flags_change (np, flags);
 		     if (!err)
 		       {
- 			 struct journal_entry_info info = {
+ 			 journal_entry_info_t info = {
 			   .action = JOURNAL_ACTION_CHFLAGS,
 			   .flags = flags,
 			   .has_flags = true,

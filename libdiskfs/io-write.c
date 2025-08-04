@@ -92,7 +92,7 @@ diskfs_S_io_write (struct protid *cred,
     !S_ISDIR(np->dn_stat.st_mode) &&
     atime_should_update (np))
   {
-    struct journal_entry_info info = {
+    journal_entry_info_t info = {
       .action = JOURNAL_ACTION_WRITE,
       .path = (cred && cred->po && cred->po->path) ? cred->po->path : "",
     };

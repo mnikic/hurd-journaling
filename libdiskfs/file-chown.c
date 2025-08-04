@@ -46,7 +46,7 @@ diskfs_S_file_chown (struct protid *cred,
 			   err = diskfs_validate_group_change (np, gid);
 			 if (!err)
 			   {
-			     struct journal_entry_info info = {
+			     journal_entry_info_t info = {
 			       .action = JOURNAL_ACTION_CHOWN,
 			       .uid = uid,
 			       .gid = gid,

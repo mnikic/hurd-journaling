@@ -165,7 +165,7 @@ toString (journal_action_t action)
 }
 
 void
-journal_log_metadata (void *node_ptr, const struct journal_entry_info *info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 {
   if (!journal_enabled)
     {

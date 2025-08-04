@@ -38,10 +38,8 @@ diskfs_S_file_set_size (struct protid *cred,
 			      if (cred && cred->po && cred->po->path)
 			        resolved_name = cred->po->path;
 
-			      struct journal_entry_info info = {
+			      journal_entry_info_t info = {
 			          .action = JOURNAL_ACTION_TRUNCATE,
-			          .size = size,
-			          .has_size = true,
 			          .path = resolved_name,
 			          .parent_ino = np->dn_stat.st_ino,
 			      };
@@ -65,10 +63,8 @@ diskfs_S_file_set_size (struct protid *cred,
 			       if (cred && cred->po && cred->po->path)
 		   	         resolved_name = cred->po->path;
 
-			       struct journal_entry_info info = {
+			       journal_entry_info_t info = {
 				   .action = JOURNAL_ACTION_GROW,
-				   .size = size,
-				   .has_size = true,
 				   .name = resolved_name,
 			       };
 			       journal_log_metadata (np, &info);

@@ -69,11 +69,10 @@ diskfs_S_dir_mkfile (struct protid *cred,
   if (err)
     return err;
 
-  struct journal_entry_info info = {
+  journal_entry_info_t info = {
     .action = JOURNAL_ACTION_MKFILE,
     .parent_ino = dnp->dn_stat.st_ino,
-    .mode = mode,
-    .has_mode = true
+    .path = (cred->po && cred->po->path) ? cred->po->path : ""
   };
   journal_log_metadata (np, &info);
 

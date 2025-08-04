@@ -58,12 +58,10 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   error = diskfs_create_node (dnp, name, mode, &np, dircred, ds);
   if (!error) 
     {
-      struct journal_entry_info info = {
+      journal_entry_info_t info = {
         .action = JOURNAL_ACTION_MKDIR,
         .name = name,
         .parent_ino = dnp->dn_stat.st_ino,
-        .mode = mode,
-	.has_mode = true,
 	.path = dircred->po ? dircred->po->path : ""
       };
       journal_log_metadata (np, &info);

@@ -203,12 +203,10 @@ diskfs_S_dir_lookup (struct protid *dircred,
 	      err = diskfs_create_node (dnp, filename, mode, &np, dircred, ds);
 	      if (!err)
 		{
-		  struct journal_entry_info info = {
+		  journal_entry_info_t info = {
 		    .action = JOURNAL_ACTION_CREATE,
 		    .name = filename,
 		    .parent_ino = dnp->dn_stat.st_ino,
-		    .mode = mode,
-		    .has_mode = true,
 		    .path = dircred->po ? dircred->po->path : ""
 		  };
 		  journal_log_metadata(np, &info);

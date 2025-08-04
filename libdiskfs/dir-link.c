@@ -122,7 +122,7 @@ diskfs_S_dir_link (struct protid *dircred,
   else
     err = diskfs_direnter (dnp, name, np, ds, dircred);
 
-  struct journal_entry_info info = {
+  journal_entry_info_t info = {
     .action = JOURNAL_ACTION_LINK,
     .name = name,
     .parent_ino = dnp->dn_stat.st_ino,

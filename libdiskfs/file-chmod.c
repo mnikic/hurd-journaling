@@ -46,10 +46,8 @@ diskfs_S_file_chmod (struct protid *cred,
 			   err = diskfs_validate_mode_change (np, mode);
 			   if (!err)
 			     {
-                               struct journal_entry_info info = {
+                               journal_entry_info_t info = {
                                  .action = JOURNAL_ACTION_CHMOD,
-				 .mode = mode,
-				 .has_mode = true,
 				 .path = cred && cred->po ? cred->po->path : "",
                                };
                                journal_log_metadata (np, &info);
