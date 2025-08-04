@@ -155,19 +155,6 @@ remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 		     child_ino, parent->ino);
 }
 
-static void
-maybe_set_name (inode_replay_state_t * ino,
-		const struct journal_payload_bin *ev)
-{
-  if (ino->name[0] == '\0')
-    {
-      if (ev->name[0] != '\0')
-	safe_strncpy (ino->name, ev->name, sizeof (ino->name));
-      else if (ev->new_name[0] != '\0')
-	safe_strncpy (ino->name, ev->new_name, sizeof (ino->name));
-    }
-}
-
 static bool
 delete_inode_iterative (journal_ino_t root_ino)
 {
@@ -285,8 +272,6 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       replay->atime = ev->atime;
     }
 
-  //maybe_set_name (replay, ev);
-
   switch (ev->action)
     {
     case JOURNAL_ACTION_CREATE:
@@ -337,8 +322,9 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.num_entries
-						       * sizeof (*result));
+						       journal_layout.
+						       num_entries *
+						       sizeof (*result));
 
   if (!result)
     {

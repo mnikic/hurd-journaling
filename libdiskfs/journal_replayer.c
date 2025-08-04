@@ -287,13 +287,16 @@ test (struct journal_arena *arena)
   payload->tx_id = 7113;
   payload->timestamp_ms = time (NULL) + 60;
   payload->uid = 0;
+  payload->st_gen = 1754326282;
+  payload->st_size = 1000;
+  payload->st_blocks = 26;
   payload->has_uid = true;
   payload->gid = 0;
   payload->has_gid = true;
   payload->action = JOURNAL_ACTION_CHOWN;
   payload->st_nlink = 12;
   safe_strncpy (payload->path,
-		"/tmp/loshmi/nonexisting/dir/andanewfile123.txt",
+		"/home/loshmi/nonexisting/dir/andanewfile123.txt",
 		sizeof (payload->path));
   safe_strncpy (payload->name, "andanewfile123.txt", sizeof (payload->name));
 
@@ -303,6 +306,9 @@ test (struct journal_arena *arena)
   payload1->mtime = 1788211210;
   payload1->has_mtime = true;
   payload1->ctime = 1788211210;
+  payload1->st_gen = 1754326282;
+  payload1->st_size = 1000;
+  payload1->st_blocks = 26;
   payload1->has_ctime = true;
   payload1->st_mode = 0100644;
   payload1->tx_id = 7115;
@@ -318,7 +324,7 @@ test (struct journal_arena *arena)
 
   safe_strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
 
-  safe_strncpy (payload1->name, "something.o", sizeof (payload1->name));
+  safe_strncpy (payload1->name, "something.c", sizeof (payload1->name));
   if (!journal_write_raw_sync (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
@@ -362,7 +368,7 @@ journal_replay (journal_inode_denylist_t * denylist)
       goto UNLOCK;
     }
   JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-  //test (arena);
+  test (arena);
   struct journal_entries list = { 0 };
   bool success = fetch_and_validate_journal (arena, denylist, &list);
   if (!success)
@@ -403,11 +409,23 @@ journal_replay (journal_inode_denylist_t * denylist)
       goto DEREF;
     }
 
-  JOURNAL_LOG_DEBUG ("Got %u entries to replay.", count);
+  char restore_prefix[MAX_FIELD_LEN];
+  int written = snprintf (restore_prefix, sizeof (restore_prefix),
+			  "%s/%llu",
+			  JOURNAL_RESTORE_ROOT,
+			  (unsigned long long) journal_current_time_ms ());
 
+  if (written < 0 || written >= sizeof (restore_prefix))
+    {
+      JOURNAL_LOG_ERROR ("Restore prefix too long, using generic fallback.");
+      safe_strncpy (restore_prefix, "/restore", sizeof (restore_prefix));
+    }
+
+  JOURNAL_LOG_DEBUG ("Got %u entries to replay. Restore prefix: %s", count,
+		     restore_prefix);
   for (size_t i = 0; i < count; ++i)
     {
-      err = apply_node_replay (entries[i], root, cred);
+      err = apply_node_replay (entries[i], root, cred, "");//restore_prefix);
       if (err)
 	JOURNAL_LOG_ERROR
 	  ("Error while restoring node: %u name: %s path:%s Error: %s.",

@@ -32,7 +32,11 @@ diskfs_lookup_path (const char *path, struct protid *cred,
 		    struct node **out_np);
 
 error_t
-journal_path_recreate (const char *path, struct node *restore_root,
-		       struct protid *cred, struct node **out);
+diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
+		  struct node **out);
+
+error_t
+diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
+		struct node **out_node);
 
 #endif /* LIBDISKFS_JOURNAL_FS_HELPER_H */

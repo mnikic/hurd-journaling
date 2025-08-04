@@ -134,9 +134,9 @@ diskfs_lookup_path (const char *path, struct protid *cred,
  *
  * Caller must unlock and `diskfs_nput(*out)` after use.
  */
-static error_t
-make_file (struct node *dir, const char *filename, struct protid *cred,
-	   struct node **out)
+error_t
+diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
+		  struct node **out)
 {
   error_t err;
   struct node *new_node = NULL;
@@ -187,9 +187,9 @@ make_file (struct node *dir, const char *filename, struct protid *cred,
  *
  * Caller must `diskfs_nput(*out)` after use.
  */
-static error_t
-make_dir (struct node *root, const char *dirname, struct protid *cred,
-	  struct node **out)
+error_t
+diskfs_make_dir (struct node *root, const char *dirname, struct protid *cred,
+		 struct node **out)
 {
   error_t err = 0;
   struct node *new_node = NULL;
@@ -235,9 +235,9 @@ cleanup:
  * Returns a locked node corresponding to the final path component via `*out_node`.
  * Caller must `diskfs_nput(*out_node)` after use.
  */
-static error_t
-mkdir_p (struct node *root, const char *path, struct protid *cred,
-	 struct node **out_node)
+error_t
+diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
+		struct node **out_node)
 {
   if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
@@ -258,7 +258,7 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
     {
       JOURNAL_LOG_DEBUG ("Token: %s", token);
       struct node *next_node = NULL;
-      error_t err = make_dir (root, token, cred, &next_node);
+      error_t err = diskfs_make_dir (root, token, cred, &next_node);
       if (err)
 	{
 	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
@@ -278,40 +278,5 @@ mkdir_p (struct node *root, const char *path, struct protid *cred,
     }
 
   *out_node = root;
-  return 0;
-}
-
-/**
- * Recreates a file at path using mkdir_p and make_file.
- * Returns locked node via `*out` if successful.
- * Caller must `diskfs_nput(*out)`.
- */
-error_t
-journal_path_recreate (const char *path, struct node *restore_root,
-		       struct protid *cred, struct node **out)
-{
-  if (!path || path[0] == '\0')
-    return EINVAL;
-
-  char dir_path[JOURNAL_PATH_MAX];
-  char file_name[JOURNAL_FILENAME_MAX + 1];
-
-  if (!journal_split_path (path, dir_path, sizeof (dir_path),
-			   file_name, sizeof (file_name)))
-    return EINVAL;
-
-  struct node *dir = NULL;
-  struct node *file = NULL;
-  JOURNAL_LOG_DEBUG ("Name: %s, dir: %s", file_name, dir_path);
-  error_t err = mkdir_p (restore_root, dir_path, cred, &dir);
-  if (err)
-    return err;
-
-  err = make_file (dir, file_name, cred, &file);
-  diskfs_nput (dir);
-  if (err)
-    return err;
-
-  *out = file;
   return 0;
 }

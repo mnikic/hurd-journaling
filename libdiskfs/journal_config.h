@@ -26,5 +26,6 @@
 /* Set to 1 to simulate journal replay without mutating the file system. */
 #define JOURNAL_REPLAY_DRY_RUN 0	/* Set to 1 to simulate journal replay without making changes */
 #define JOURNAL_REPLAY_MIN_INO 256
+#define JOURNAL_RESTORE_ROOT "/restore"
 
 #endif /* LIBDISKFS_JOURNAL_CONFIG_H */
