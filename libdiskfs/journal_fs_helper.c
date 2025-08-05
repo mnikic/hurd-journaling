@@ -142,21 +142,17 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
   struct node *new_node = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
 
-  pthread_mutex_lock (&dir->lock);
-
   err = diskfs_lookup (dir, filename, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
     {
       *out = new_node;
       diskfs_drop_dirstat (dir, ds);
-      pthread_mutex_unlock (&dir->lock);
       return 0;
     }
   else if (err != ENOENT)
     {
       JOURNAL_LOG_ERROR ("lookup(CREATE) failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
-      pthread_mutex_unlock (&dir->lock);
       return err;
     }
 
@@ -166,7 +162,6 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
     {
       JOURNAL_LOG_ERROR ("create_node failed: %s", strerror (err));
       diskfs_drop_dirstat (dir, ds);
-      pthread_mutex_unlock (&dir->lock);
       return err;
     }
 
@@ -174,7 +169,6 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
   *out = new_node;
 
   diskfs_drop_dirstat (dir, ds);
-  pthread_mutex_unlock (&dir->lock);
   return 0;
 }
 
@@ -194,8 +188,6 @@ diskfs_make_dir (struct node *root, const char *dirname, struct protid *cred,
   error_t err = 0;
   struct node *new_node = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
-
-  pthread_mutex_lock (&root->lock);
 
   err = diskfs_lookup (root, dirname, CREATE, &new_node, ds, cred);
   if (err == EAGAIN || err == 0)
@@ -224,7 +216,6 @@ diskfs_make_dir (struct node *root, const char *dirname, struct protid *cred,
 
 cleanup:
   diskfs_drop_dirstat (root, ds);
-  pthread_mutex_unlock (&root->lock);
   return err;
 }
 
@@ -242,18 +233,17 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
   if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
 
+  struct node *initial_root = root;
   char path_copy[JOURNAL_NORMALIZED_PATH_MAX];
   strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX);
   path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
 
   char *token = strtok (path_copy, "/");
-  struct node *prev_node = NULL;
   if (!token)
     {
       *out_node = root;
       return 0;
     }
-  diskfs_nref (root);
   while (token != NULL)
     {
       JOURNAL_LOG_DEBUG ("Token: %s", token);
@@ -263,16 +253,12 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
 	{
 	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
 			     token, err);
-	  if (prev_node)
-	    diskfs_nput (prev_node);
+          if (root != initial_root)
+	    diskfs_nput (root);
 	  return err;
 	}
-
-      pthread_mutex_unlock (&next_node->lock);
-      if (prev_node)
-	diskfs_nput (prev_node);
-
-      prev_node = root;
+      if (root != initial_root)
+	diskfs_nput (root);
       root = next_node;
       token = strtok (NULL, "/");
     }

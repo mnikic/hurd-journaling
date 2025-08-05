@@ -277,6 +277,7 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
     ("inode %u: File not found. Creating new one. Path: %s. Dir: '%s' File: '%s'",
      state->ino, full_path, dir_path_with_prefix, file_name);
   struct node *dir = NULL;
+  pthread_mutex_lock (&restore_root->lock);
   err = diskfs_mkdir_p (restore_root, dir_path_with_prefix, cred, &dir);
   if (err || !dir)
     {
@@ -284,8 +285,18 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
 	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
 	 state->ino, dir_path_with_prefix, strerror (err));
       *out = NULL;
+      pthread_mutex_unlock (&restore_root->lock);
       return err;
     }
+  if (pthread_mutex_trylock (&restore_root->lock) == 0) 
+    {
+      JOURNAL_LOG_DEBUG ("Locked it, it was unlocked, gonna unlock it again");
+      pthread_mutex_unlock (&restore_root->lock);
+    } else
+      {
+        JOURNAL_LOG_DEBUG ("It was locked.");
+        pthread_mutex_unlock (&restore_root->lock);
+      }
   diskfs_nput (dir);
   dir = NULL;
   JOURNAL_LOG_DEBUG
@@ -300,7 +311,6 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
       *out = NULL;
       return err;
     }
-  pthread_mutex_unlock (&dir->lock);
   struct node *file = NULL;
   err = diskfs_make_file (dir, file_name, cred, &file);
   if (diskfs_synchronous)
