@@ -221,11 +221,11 @@ cleanup:
 
 /**
  * Recursively create all intermediate directories in a path relative to `root`.
- * `root` must be LOCKED on entry.
- * Uses Hurd diskfs APIs to create directories one component at a time.
+ * Caller must ensure `root` is LOCKED.
  *
- * Returns a locked node corresponding to the final path component via `*out_node`.
- * Caller must `diskfs_nput(*out_node)` after use.
+ * We nref the initial root once, then iteratively walk and nput previous nodes.
+ * Each call to `diskfs_make_dir()` returns a locked+referenced node.
+ * Final result is locked in `*out_node`, caller must nput.
  */
 error_t
 diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
@@ -234,17 +234,15 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
   if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
 
-  struct node *initial_root = root;
   char path_copy[JOURNAL_NORMALIZED_PATH_MAX];
   strncpy (path_copy, path, JOURNAL_NORMALIZED_PATH_MAX);
   path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
-
   char *token = strtok (path_copy, "/");
+
+  diskfs_nref(root);
   if (!token)
-    {
-      *out_node = root;
-      return 0;
-    }
+    goto DONE;
+
   while (token != NULL)
     {
       JOURNAL_LOG_DEBUG ("Token: %s", token);
@@ -254,16 +252,14 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
 	{
 	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
 			     token, err);
-          if (root != initial_root)
-	    diskfs_nput (root);
+	  diskfs_nput (root);
 	  return err;
 	}
-      if (root != initial_root)
-	diskfs_nput (root);
+      diskfs_nput (root);
       root = next_node;
       token = strtok (NULL, "/");
     }
-
+DONE:
   *out_node = root;
   return 0;
 }
