@@ -398,6 +398,7 @@ journal_replay (journal_inode_denylist_t * denylist)
 
   struct protid *cred = NULL;
   struct node *root = diskfs_root_node;
+  pthread_mutex_lock (&root->lock);
   diskfs_nref (root);
 
   err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);

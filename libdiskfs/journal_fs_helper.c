@@ -63,14 +63,12 @@ diskfs_lookup_path (const char *path, struct protid *cred,
   // Handle empty path (root directory)
   if (*path == '\0')
     {
-      pthread_mutex_lock (&diskfs_root_node->lock);
       diskfs_nref (diskfs_root_node);
       *out_np = diskfs_root_node;
       return 0;
     }
 
   struct node *current = diskfs_root_node;
-  pthread_mutex_lock (&current->lock);
   diskfs_nref (current);
 
   const char *p = path;
@@ -128,7 +126,7 @@ diskfs_lookup_path (const char *path, struct protid *cred,
 /**
  * Create a file named `filename` under `dir`, using Hurd diskfs APIs.
  *
- * `dir` must be UNLOCKED on entry.
+ * `dir` must be LOCKED on entry.
  * If the file already exists, the existing node is returned locked via `*out`.
  * If the file is created, the new node is returned locked via `*out`.
  *
@@ -175,7 +173,7 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
 /**
  * Create a directory named `dirname` under `root`, using Hurd diskfs APIs.
  *
- * `root` must be UNLOCKED on entry.
+ * `root` must be LOCKED on entry.
  * If the directory already exists, the existing node is returned locked via `*out`.
  * If the directory is created, the new node is returned locked via `*out`.
  *
@@ -221,6 +219,7 @@ cleanup:
 
 /**
  * Recursively create all intermediate directories in a path relative to `root`.
+ * `root` must be LOCKED on entry.
  * Uses Hurd diskfs APIs to create directories one component at a time.
  *
  * Returns a locked node corresponding to the final path component via `*out_node`.
