@@ -206,6 +206,8 @@ diskfs_make_dir (struct node *root, const char *dirname, struct protid *cred,
   if (err)
     {
       JOURNAL_LOG_ERROR ("create_node failed: %s.", strerror (err));
+      if (new_node)
+        diskfs_nput (new_node); 
       goto cleanup;
     }
 
