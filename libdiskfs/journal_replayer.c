@@ -30,7 +30,7 @@
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_io.h>
-#include <libdiskfs/journal_fs_helper.h>
+#include <libdiskfs/journal_diskfs_helper.h>
 #include <libdiskfs/journal_apply.h>
 
 #include <stdio.h>
@@ -370,16 +370,13 @@ replay_apply_graph (struct journal_arena *arena)
   if (written < 0 || written >= sizeof (restore_prefix))
     safe_strncpy (restore_prefix, "/restore", sizeof (restore_prefix));
 
-  struct node *restore_dir = NULL;
-  error_t err = diskfs_mkdir_p (root, restore_prefix, cred, &restore_dir);
-  if (err || !restore_dir)
+  error_t err = diskfs_mkdir_p (root, restore_prefix, cred);
+  if (err)
     {
       JOURNAL_LOG_ERROR ("Failed to create restore directory: %s",
 			 strerror (err));
       goto CLEANUP;
     }
-
-  diskfs_nput (restore_dir);
 
   struct node *restore_root = NULL;
   err = diskfs_lookup_path (root, restore_prefix, cred, &restore_root);
@@ -389,7 +386,9 @@ replay_apply_graph (struct journal_arena *arena)
 			 strerror (err));
       goto CLEANUP;
     }
-
+  JOURNAL_LOG_DEBUG
+    ("Starting restoration. Have %zu entries and restore path is '%s'", count,
+     restore_prefix);
   for (size_t i = 0; i < count; ++i)
     {
       inode_replay_state_t *state = entries[i];

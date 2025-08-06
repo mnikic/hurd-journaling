@@ -22,7 +22,7 @@
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_fs_helper.h>
+#include <libdiskfs/journal_diskfs_helper.h>
 #include <pthread.h>
 #include <string.h>
 
@@ -227,11 +227,9 @@ cleanup:
  *
  * We nref the initial root once, then iteratively walk and nput previous nodes.
  * Each call to `diskfs_make_dir()` returns a locked+referenced node.
- * Final result is locked in `*out_node`, caller must nput.
  */
 error_t
-diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
-		struct node **out_node)
+diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred)
 {
   if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
     return ENAMETOOLONG;
@@ -241,10 +239,10 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
   path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
   char *token = strtok (path_copy, "/");
 
-  diskfs_nref (root);
   if (!token)
-    goto DONE;
+    return 0;
 
+  diskfs_nref (root);
   while (token != NULL)
     {
       JOURNAL_LOG_DEBUG ("Token: %s", token);
@@ -252,8 +250,9 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
       error_t err = diskfs_make_dir (root, token, cred, &next_node);
       if (err)
 	{
-	  JOURNAL_LOG_ERROR ("mkdir_p: make_dir failed on '%s' with err %d",
-			     token, err);
+	  JOURNAL_LOG_ERROR
+	    ("diskfs_mkdir_p: make_dir failed on '%s' with err %d", token,
+	     err);
 	  diskfs_nput (root);
 	  return err;
 	}
@@ -261,7 +260,6 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
       root = next_node;
       token = strtok (NULL, "/");
     }
-DONE:
-  *out_node = root;
+  diskfs_nput (root);
   return 0;
 }

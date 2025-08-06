@@ -24,9 +24,10 @@
 #include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_format.h>
-#include <libdiskfs/journal_fs_helper.h>
+#include <libdiskfs/journal_diskfs_helper.h>
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/diskfs.h>
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -104,8 +105,7 @@ static error_t
 create_directory (struct node *restore_root, const char *dir_path,
 		  struct protid *cred, struct node **out)
 {
-  struct node *created = NULL;
-  error_t err = diskfs_mkdir_p (restore_root, dir_path, cred, &created);
+  error_t err = diskfs_mkdir_p (restore_root, dir_path, cred);
   if (err)
     {
       JOURNAL_LOG_ERROR ("Failed to create directory '%s': %s",
@@ -113,9 +113,6 @@ create_directory (struct node *restore_root, const char *dir_path,
       *out = NULL;
       return err;
     }
-
-  if (created)
-    diskfs_nput (created);
 
   err = diskfs_lookup_path (restore_root, dir_path, cred, out);
   if (err || !*out)
