@@ -1,15 +1,37 @@
+/* journal_inode_scanner.c - Directory tree scanner for inode denylist population.
+
+   Recursively traverses a directory path, collects all encountered inode numbers,
+   and adds them to a denylist builder to prevent journal replay resurrection.
+
+   Copyright (C) 2025 Free Software Foundation, Inc.
+   Written by Milos Nikic.
+
+   This file is part of the GNU Hurd.
+
+   The GNU Hurd is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2, or (at your option)
+   any later version.
+
+   The GNU Hurd is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
+
 #include <pthread.h>
 #include <hurd.h>
 #include <hurd/fs.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <dirent.h>
 
 #include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_diskfs_helper.h>
-#include <libdiskfs/diskfs.h>
-#include <dirent.h>
 
 #define MAX_PATH_LEN 256
 #define MAX_STACK_DEPTH 128
@@ -64,7 +86,7 @@ stack_pop (struct node **np_out, char *path_out)
 
 error_t
 journal_scan_path_for_inos (const char *root_path,
-			    journal_inode_denylist_builder_t *builder)
+			    journal_inode_denylist_builder_t * builder)
 {
   struct protid *cred = NULL;
   struct node *start_np = NULL;
@@ -119,8 +141,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->dn_stat.
-					  st_ino);
+					  (journal_ino_t) start_np->
+					  dn_stat.st_ino);
       count++;
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;

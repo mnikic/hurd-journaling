@@ -24,6 +24,8 @@
 
 #include <libdiskfs/journal_inode_denylist.h>
 
+/* Recursively scan `dir_path` and add all encountered inodes to the builder.
+   Returns 0 on success, or an error code on failure. */
 error_t
 journal_scan_path_for_inos (const char *dir_path,
 			    journal_inode_denylist_builder_t * builder);

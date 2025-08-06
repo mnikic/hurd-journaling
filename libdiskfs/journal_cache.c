@@ -1,15 +1,39 @@
+/* journal_cache.c - Journal thread-safe metadata decision cache.
+   
+   Provides a simple fixed-size hash-based cache for storing recent
+   journaling decisions (e.g., whether a path should be logged).
+   Includes TTL-based expiration and hit/miss statistics.
+
+   Copyright (C) 2025 Free Software Foundation, Inc.
+   Written by Milos Nikic.
+
+   This file is part of the GNU Hurd.
+
+   The GNU Hurd is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2, or (at your option)
+   any later version.
+
+   The GNU Hurd is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/time.h>
+
 #include <libdiskfs/journal_cache.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_path_util.h>
-#include <stdlib.h>
 
 static bool
-is_entry_expired (journal_cache_t *cache, journal_cache_entry_t *entry,
+is_entry_expired (journal_cache_t * cache, journal_cache_entry_t * entry,
 		  uint64_t current_time)
 {
   if (current_time == 0 || entry->timestamp == 0)
@@ -18,7 +42,7 @@ is_entry_expired (journal_cache_t *cache, journal_cache_entry_t *entry,
 }
 
 journal_cache_t
-journal_cache_init (journal_cache_entry_t *buffer, size_t size,
+journal_cache_init (journal_cache_entry_t * buffer, size_t size,
 		    uint64_t ttl_ms)
 {
   journal_cache_t cache = { 0 };
@@ -42,7 +66,7 @@ journal_cache_init (journal_cache_entry_t *buffer, size_t size,
 }
 
 bool
-journal_cache_check (journal_cache_t *cache, const char *path,
+journal_cache_check (journal_cache_t * cache, const char *path,
 		     bool *cached_decision)
 {
   if (!cache || !cache->initialized || !cache->entries)
@@ -86,7 +110,7 @@ journal_cache_check (journal_cache_t *cache, const char *path,
 }
 
 void
-journal_cache_store (journal_cache_t *cache, const char *path, bool decision)
+journal_cache_store (journal_cache_t * cache, const char *path, bool decision)
 {
   if (!cache || !cache->initialized || !cache->entries)
     return;
@@ -136,7 +160,7 @@ journal_cache_store (journal_cache_t *cache, const char *path, bool decision)
 }
 
 void
-journal_cache_clear (journal_cache_t *cache)
+journal_cache_clear (journal_cache_t * cache)
 {
   if (cache && cache->initialized && cache->entries)
     {
@@ -148,7 +172,7 @@ journal_cache_clear (journal_cache_t *cache)
 }
 
 void
-journal_cache_expire_old (journal_cache_t *cache)
+journal_cache_expire_old (journal_cache_t * cache)
 {
   if (!cache || !cache->initialized || !cache->entries)
     return;
@@ -168,7 +192,7 @@ journal_cache_expire_old (journal_cache_t *cache)
 }
 
 journal_cache_stats_t
-journal_cache_stats (journal_cache_t *cache)
+journal_cache_stats (journal_cache_t * cache)
 {
   journal_cache_stats_t stats = { 0 };
   if (!cache || !cache->entries || !cache->initialized)
