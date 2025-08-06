@@ -62,22 +62,6 @@ node_lookup (journal_ino_t ino)
   return NULL;
 }
 
-static void
-remove_inode (journal_ino_t ino)
-{
-  journal_ino_t h = hash_ino (ino);
-  inode_graph_node_t **cur = &inode_hash[h];
-  while (*cur)
-    {
-      if ((*cur)->ino == ino)
-	{
-	  *cur = (*cur)->next;
-	  return;
-	}
-      cur = &(*cur)->next;
-    }
-}
-
 static inode_graph_node_t *
 get_inode (journal_ino_t ino, struct journal_arena *arena)
 {
@@ -145,8 +129,8 @@ remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
     {
       if (parent->children[i] == child_ino)
 	{
-	  for (size_t j = i; j < parent->num_children - 1; ++j)
-	    parent->children[j] = parent->children[j + 1];
+	  // Swap with last element
+	  parent->children[i] = parent->children[parent->num_children - 1];
 	  parent->num_children--;
 	  return;
 	}
@@ -155,8 +139,11 @@ remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 		     child_ino, parent->ino);
 }
 
+/*
+* Marks the node, and all of its descendants dead.
+*/
 static bool
-delete_inode_iterative (journal_ino_t root_ino)
+mark_inode_dead (journal_ino_t root_ino)
 {
   journal_ino_t stack[4096];
   int top = 0;
@@ -180,7 +167,7 @@ delete_inode_iterative (journal_ino_t root_ino)
 	  stack[top++] = node->children[i];
 	}
       node->num_children = 0;
-      remove_inode (ino);
+      node->is_dead = true;
     }
   return true;
 }
@@ -191,19 +178,24 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 {
   if (ev->st_nlink == 0 || ev->action == JOURNAL_ACTION_TOMBSTONE)
     {
-      return delete_inode_iterative (ev->ino);
+      return mark_inode_dead (ev->ino);
     }
 
   inode_graph_node_t *ino = get_inode (ev->ino, arena);
   if (!ino)
     return false;
+  if (ino->is_dead)
+    {
+      JOURNAL_LOG_DEBUG ("Ino: %u Skipping updates to the tombstone node",
+			 ino->ino);
+      return true;
+    }
   if (ino->is_real && ev->st_gen != ino->replay.st_gen)
     {
       JOURNAL_LOG_DEBUG
 	("Deleting inode %u from metadata. Generation is different. Event: %u. Expected get: %u, encountered gen: %u.",
 	 ev->ino, ev->action, ino->replay.st_gen, ev->st_gen);
-      if (!delete_inode_iterative (ev->ino))
-	return false;
+      return mark_inode_dead (ev->ino);
     }
   bool is_resize_action =
     (ev->action == JOURNAL_ACTION_GROW ||
@@ -214,8 +206,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       JOURNAL_LOG_DEBUG
 	("Deleting inode %u from metadata. Size changed on a non size changing event. Event: %u. Expected size: %llu, encountered size: %llu.",
 	 ev->ino, ev->action, ino->replay.st_size, ev->st_size);
-      if (!delete_inode_iterative (ev->ino))
-	return false;
+      return mark_inode_dead (ev->ino);
     }
 
   inode_replay_state_t *replay = &ino->replay;
@@ -274,6 +265,10 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 
   switch (ev->action)
     {
+    case JOURNAL_ACTION_SYMLINK:
+      safe_strncpy (replay->symlink_target, ev->target,
+		    sizeof (replay->symlink_target));
+      // falls through
     case JOURNAL_ACTION_CREATE:
     case JOURNAL_ACTION_MKDIR:
     case JOURNAL_ACTION_MKFILE:
@@ -282,18 +277,8 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 	return false;
       break;
 
-    case JOURNAL_ACTION_SYMLINK:
-      ino->parent_ino = ev->parent_ino;
-      safe_strncpy (replay->symlink_target, ev->target,
-		    sizeof (replay->symlink_target));
-      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino, arena))
-	return false;
-      break;
-
-    case JOURNAL_ACTION_UNLINK:
     case JOURNAL_ACTION_RMDIR:
-      remove_child (get_inode (ev->parent_ino, arena), ev->ino);
-      return delete_inode_iterative (ev->ino);
+      return mark_inode_dead (ev->ino);
 
     case JOURNAL_ACTION_RENAME:
       remove_child (get_inode (ev->src_parent_ino, arena), ev->ino);
@@ -304,7 +289,6 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       break;
 
     default:
-      break;
     }
   return true;
 }
@@ -322,9 +306,8 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.
-						       num_entries *
-						       sizeof (*result));
+						       journal_layout.num_entries
+						       * sizeof (*result));
 
   if (!result)
     {
@@ -338,7 +321,7 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
       inode_graph_node_t *node = inode_hash[i];
       while (node)
 	{
-	  if (node->is_real)
+	  if (!node->is_dead && node->is_real)
 	    result[count++] = &node->replay;
 	  node = node->next;
 	}

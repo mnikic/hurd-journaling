@@ -78,6 +78,7 @@ typedef struct inode_graph_node
   inode_replay_state_t replay;
 
   bool is_real;
+  bool is_dead;
 
   struct inode_graph_node *next;
 } inode_graph_node_t;

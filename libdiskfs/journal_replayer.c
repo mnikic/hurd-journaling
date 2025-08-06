@@ -383,6 +383,11 @@ journal_replay (journal_inode_denylist_t * denylist)
   sort_entries (&list);
   for (size_t i = 0; i < list.count; ++i)
     {
+      journal_payload_bin_t *ev = list.entries[i];
+      if (ev->ino == 244845 || ev->ino == 244473)
+	JOURNAL_LOG_DEBUG
+	  ("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Ino: %u, action: %u, timestamp_ms: %llu, parent: %u",
+	   ev->ino, ev->action, ev->timestamp_ms, ev->parent_ino);
       if (!journal_graph_add_event (list.entries[i], arena))
 	{
 	  JOURNAL_LOG_ERROR
