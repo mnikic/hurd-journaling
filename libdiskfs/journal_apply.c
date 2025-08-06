@@ -86,7 +86,7 @@ is_path_usable (const char *path)
 
 static error_t
 journal_resolve_full_path (const char *path, const char *name,
-			   char *out_buf, size_t out_len)
+                           char *out_buf, size_t out_len)
 {
   if (!is_path_usable (path))
     {
@@ -103,22 +103,16 @@ journal_resolve_full_path (const char *path, const char *name,
   size_t path_len = strlen (path);
   size_t name_len = strlen (name);
 
-  // If the path already ends with the name (e.g., /foo/bar/bar), skip appending
+  // Reject if path ends with name exactly
   if (path_len >= name_len)
     {
       const char *end = path + path_len - name_len;
-      if (strcmp (end, name) == 0 && strchr (end, '/') == NULL)
-	{
-	  safe_strncpy (out_buf, path, out_len);
-	  return 0;
-	}
-      else if (strcmp (end, name) != 0 && strchr (end, '/') == NULL)
-	{
-	  JOURNAL_LOG_DEBUG
-	    ("Rejected: path='%s' and name='%s' both appear to be filenames.",
-	     path, name);
-	  return EINVAL;
-	}
+      if (strcmp(end, name) == 0)
+        {
+          JOURNAL_LOG_DEBUG ("Rejected: path='%s' already ends with name='%s'",
+                             path, name);
+          return EINVAL;
+        }
     }
 
   int written;
