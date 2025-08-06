@@ -1,4 +1,4 @@
-/* journal_writer.h - Interface for raw journal writer
+/* journal_writer.h - Interface for a journal writer
    Copyright (C) 2025 Free Software Foundation, Inc.
    Written by Milos Nikic.
 

@@ -26,7 +26,7 @@
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_internal.h>
 #include <libdiskfs/diskfs.h>
-#include <libdiskfs/priv.h>
+
 #include <hurd/store.h>
 #include <hurd/fshelp.h>
 #include <stdio.h>
@@ -94,7 +94,7 @@ journal_store_write (const void *buf, size_t size, off_t relative_offset)
 }
 
 error_t
-journal_write_entry (const journal_entry_bin_t *entry, size_t index)
+journal_write_entry (const journal_entry_bin_t * entry, size_t index)
 {
   if (!entry)
     return EINVAL;
@@ -107,7 +107,7 @@ journal_write_entry (const journal_entry_bin_t *entry, size_t index)
 }
 
 error_t
-journal_write_header (const journal_header_t *hdr)
+journal_write_header (const journal_header_t * hdr)
 {
   if (!journal_store || !hdr)
     return EINVAL;
@@ -156,7 +156,7 @@ journal_store_read (void *out_buf, size_t size, off_t relative_offset)
 }
 
 error_t
-journal_read_entry (journal_entry_bin_t *out_entry, size_t block_index)
+journal_read_entry (journal_entry_bin_t * out_entry, size_t block_index)
 {
   if (!journal_store || !out_entry)
     return EINVAL;
@@ -169,7 +169,7 @@ journal_read_entry (journal_entry_bin_t *out_entry, size_t block_index)
 }
 
 error_t
-journal_read_header (journal_header_t *out_hdr)
+journal_read_header (journal_header_t * out_hdr)
 {
   if (!journal_store || !out_hdr)
     return EINVAL;
