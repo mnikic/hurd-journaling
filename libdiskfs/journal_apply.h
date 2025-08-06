@@ -27,6 +27,7 @@
 /* Apply final metadata state from journal replay to a single inode.
    Updates mode, size, timestamps, ownership, etc. if different. */
 error_t apply_node_replay (inode_replay_state_t * state,
-			   struct node *fs_root, struct node *restore_root, struct protid *cred);
+			   struct node *fs_root, struct node *restore_root,
+			   struct protid *cred);
 
 #endif /* LIBDISKFS_JOURNAL_APPLY_H */

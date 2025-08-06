@@ -84,14 +84,14 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
   memset (new_node, 0, sizeof (inode_graph_node_t));
   new_node->ino = ino;
   new_node->replay.ino = ino;
-  new_node->is_real = false;
+  new_node->is_dummy = true;
   new_node->next = inode_hash[h];
   inode_hash[h] = new_node;
   return new_node;
 }
 
 static bool
-add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
+add_child (inode_graph_node_t *parent, journal_ino_t child_ino,
 	   struct journal_arena *arena)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
@@ -123,7 +123,7 @@ add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
 }
 
 static void
-remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
+remove_child (inode_graph_node_t *parent, journal_ino_t child_ino)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
     {
@@ -190,7 +190,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 			 ino->ino);
       return true;
     }
-  if (ino->is_real && ev->st_gen != ino->replay.st_gen)
+  if (!ino->is_dummy && ev->st_gen != ino->replay.st_gen)
     {
       JOURNAL_LOG_DEBUG
 	("Deleting inode %u from metadata. Generation is different. Event: %u. Expected get: %u, encountered gen: %u.",
@@ -201,7 +201,8 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
     (ev->action == JOURNAL_ACTION_GROW ||
      ev->action == JOURNAL_ACTION_TRUNCATE ||
      ev->action == JOURNAL_ACTION_WRITE);
-  if (ino->is_real && !is_resize_action && ev->st_size != ino->replay.st_size)
+  if (!ino->is_dummy && !is_resize_action
+      && ev->st_size != ino->replay.st_size)
     {
       JOURNAL_LOG_DEBUG
 	("Deleting inode %u from metadata. Size changed on a non size changing event. Event: %u. Expected size: %"
@@ -246,11 +247,12 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       if (!add_child (dst, ev->ino, arena))
 	return false;
       ino->parent_ino = ev->dst_parent_ino;
+      break;
     default:
       break;
     }
   replay->st_size = ev->st_size;
-  ino->is_real = true;
+  ino->is_dummy = false;
   replay->last_tx = ev->tx_id;
   replay->last_seen = ev->timestamp_ms;
   replay->st_blocks = ev->st_blocks;
@@ -310,14 +312,13 @@ journal_graph_free (void)
 }
 
 size_t
-journal_graph_get_all (inode_replay_state_t *** out_list,
+journal_graph_get_all (inode_replay_state_t ***out_list,
 		       struct journal_arena *arena)
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.
-						       num_entries *
-						       sizeof (*result));
+						       journal_layout.num_entries
+						       * sizeof (*result));
 
   if (!result)
     {
@@ -331,7 +332,7 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
       inode_graph_node_t *node = inode_hash[i];
       while (node)
 	{
-	  if (!node->is_dead && node->is_real)
+	  if (!node->is_dead && !node->is_dummy)
 	    result[count++] = &node->replay;
 	  node = node->next;
 	}

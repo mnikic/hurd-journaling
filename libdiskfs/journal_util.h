@@ -67,7 +67,7 @@ safe_strncpy (char *dst, const char *src, size_t size)
 }
 
 static inline uint32_t
-journal_compute_header_crc32 (const journal_header_t * hdr)
+journal_compute_header_crc32 (const journal_header_t *hdr)
 {
   if (!hdr)
     return 0;
@@ -76,7 +76,7 @@ journal_compute_header_crc32 (const journal_header_t * hdr)
 }
 
 static inline uint32_t
-journal_compute_payload_crc32 (const journal_payload_bin_t * payload)
+journal_compute_payload_crc32 (const journal_payload_bin_t *payload)
 {
   if (!payload)
     return 0;

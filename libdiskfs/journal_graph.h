@@ -77,7 +77,7 @@ typedef struct inode_graph_node
   size_t children_capacity;
   inode_replay_state_t replay;
 
-  bool is_real;
+  bool is_dummy;
   bool is_dead;
 
   struct inode_graph_node *next;
