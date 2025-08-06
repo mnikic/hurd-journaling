@@ -210,7 +210,7 @@ should_journal_filename_fallback (const char *name, const char *path)
 
 bool
 journal_should_log_event (const struct node *np,
-			  const journal_entry_info_t *info,
+			  const journal_entry_info_t * info,
 			  const journal_inode_denylist_t * ino_denylist,
 			  const char *full_path)
 {
@@ -229,7 +229,12 @@ journal_should_log_event (const struct node *np,
     }
 
   const struct stat *st = &np->dn_stat;
-
+  if (info->action == JOURNAL_ACTION_TOMBSTONE)
+    {
+      JOURNAL_LOG_DEBUG ("ino: %llu but tombstones are important!",
+			 st->st_ino);
+      return true;
+    }
   if (journal_inode_denylist_contains
       (ino_denylist, (journal_ino_t) st->st_ino))
     {

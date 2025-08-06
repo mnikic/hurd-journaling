@@ -82,6 +82,9 @@ diskfs_S_dir_rmdir (struct protid *dircred,
 
   if (!error)
     {
+      np->dn_stat.st_nlink--;
+      np->dn_set_ctime = 1;
+      diskfs_clear_directory (np, dnp, dircred);
       journal_entry_info_t info = {
         .action = JOURNAL_ACTION_RMDIR,
         .name = name,
@@ -89,10 +92,6 @@ diskfs_S_dir_rmdir (struct protid *dircred,
 	.path = JOURNAL_PATH_FROM_CRED (dircred)
       };
       journal_log_metadata (np, &info);
-
-      np->dn_stat.st_nlink--;
-      np->dn_set_ctime = 1;
-      diskfs_clear_directory (np, dnp, dircred);
       if (diskfs_synchronous)
 	diskfs_file_update (np, 1);
     }

@@ -230,37 +230,42 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
       journal_payload_bin_t *payload = &entry->payload;
-      if (journal_inode_denylist_contains (denylist, payload->ino))
+      // Tombstones are important!!!
+      if (payload->action != JOURNAL_ACTION_TOMBSTONE)
 	{
-	  JOURNAL_LOG_DEBUG ("Ino %u is in a deny list. Skipping tx %llu.",
-			     payload->ino, payload->tx_id);
-	  goto NEXT;
+	  if (journal_inode_denylist_contains (denylist, payload->ino))
+	    {
+	      JOURNAL_LOG_DEBUG
+		("Ino %u is in a deny list. Skipping tx %llu.", payload->ino,
+		 payload->tx_id);
+	      goto NEXT;
+	    }
+	  if (!journal_is_safe_stat (payload->st_mode))
+	    {
+	      JOURNAL_LOG_ERROR
+		("Invalid mode on a journal entry ino=%u mode=%o. Aborting.",
+		 payload->ino, payload->st_mode);
+	      return false;
+	    }
+	  if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
+	      || payload->tx_id == 0 || payload->timestamp_ms == 0
+	      || !(payload->has_mtime || payload->has_atime
+		   || payload->has_ctime))
+	    {
+	      JOURNAL_LOG_ERROR
+		("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
+		 payload->action, payload->ino, index, payload->tx_id);
+	      return false;
+	    }
+	  if (payload->ino == 244973 || payload->ino == 212628
+	      || payload->ino == 212611 || payload->ino == 212622
+	      || payload->ino == 244344)
+	    JOURNAL_LOG_DEBUG
+	      ("$$$$$$$$$$$$$$$ entry: action=%u ino=%u at index %llu (tx_id %llu) timestamp %llu parent %u name %s path %s ctime: %llu",
+	       payload->action, payload->ino, index, payload->tx_id,
+	       payload->timestamp_ms, payload->parent_ino, payload->name,
+	       payload->path, payload->ctime);
 	}
-      if (!journal_is_safe_stat (payload->st_mode))
-	{
-	  JOURNAL_LOG_ERROR
-	    ("Invalid mode on a journal entry ino=%u mode=%o. Aborting.",
-	     payload->ino, payload->st_mode);
-	  return false;
-	}
-      if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
-	  || payload->tx_id == 0 || payload->timestamp_ms == 0
-	  || !(payload->has_mtime || payload->has_atime
-	       || payload->has_ctime))
-	{
-	  JOURNAL_LOG_ERROR
-	    ("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
-	     payload->action, payload->ino, index, payload->tx_id);
-	  return false;
-	}
-      if (payload->ino == 244973 || payload->ino == 212628
-	  || payload->ino == 212611 || payload->ino == 212622
-	  || payload->ino == 244344)
-	JOURNAL_LOG_DEBUG
-	  ("$$$$$$$$$$$$$$$ entry: action=%u ino=%u at index %llu (tx_id %llu) timestamp %llu parent %u name %s path %s ctime: %llu",
-	   payload->action, payload->ino, index, payload->tx_id,
-	   payload->timestamp_ms, payload->parent_ino, payload->name,
-	   payload->path, payload->ctime);
       if (!add_event_to_list (out_entries, payload))
 	{
 	  return false;
@@ -384,10 +389,11 @@ journal_replay (journal_inode_denylist_t * denylist)
   for (size_t i = 0; i < list.count; ++i)
     {
       journal_payload_bin_t *ev = list.entries[i];
-      if (ev->ino == 244845 || ev->ino == 244473)
+      if (ev->ino == 245063 || ev->ino == 245062 || ev->ino == 244344)
 	JOURNAL_LOG_DEBUG
-	  ("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Ino: %u, action: %u, timestamp_ms: %llu, parent: %u",
-	   ev->ino, ev->action, ev->timestamp_ms, ev->parent_ino);
+	  ("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Ino: %u, action: %u, timestamp_ms: %llu, parent: %u, name: %s, path: %s",
+	   ev->ino, ev->action, ev->timestamp_ms, ev->parent_ino, ev->name,
+	   ev->path);
       if (!journal_graph_add_event (list.entries[i], arena))
 	{
 	  JOURNAL_LOG_ERROR

@@ -208,11 +208,44 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 	 ev->ino, ev->action, ino->replay.st_size, ev->st_size);
       return mark_inode_dead (ev->ino);
     }
-
   inode_replay_state_t *replay = &ino->replay;
   if (ev->timestamp_ms < replay->last_seen)
-    return true;
+    {
+      JOURNAL_LOG_DEBUG
+	("Skipping out-of-order event for inode %u: timestamp %llu < last_seen %llu",
+	 ev->ino, ev->timestamp_ms, replay->last_seen);
+      //return mark_inode_dead (ev->ino);
+      return true;
+    }
 
+  switch (ev->action)
+    {
+    case JOURNAL_ACTION_SYMLINK:
+      safe_strncpy (replay->symlink_target, ev->target,
+		    sizeof (replay->symlink_target));
+      // falls through
+    case JOURNAL_ACTION_CREATE:
+    case JOURNAL_ACTION_MKDIR:
+    case JOURNAL_ACTION_MKFILE:
+      ino->parent_ino = ev->parent_ino;
+      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino, arena))
+	return false;
+      break;
+
+    case JOURNAL_ACTION_RMDIR:
+      return mark_inode_dead (ev->ino);
+
+    case JOURNAL_ACTION_RENAME:
+      inode_graph_node_t * dst = get_inode (ev->dst_parent_ino, arena);
+      if (!dst || dst->is_dead)
+	return mark_inode_dead (ev->ino);
+      inode_graph_node_t *src = get_inode (ev->src_parent_ino, arena);
+      remove_child (src, ev->ino);
+      if (!add_child (dst, ev->ino, arena))
+	return false;
+      ino->parent_ino = ev->dst_parent_ino;
+    default:
+    }
   replay->st_size = ev->st_size;
   ino->is_real = true;
   replay->last_tx = ev->tx_id;
@@ -263,33 +296,6 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       replay->atime = ev->atime;
     }
 
-  switch (ev->action)
-    {
-    case JOURNAL_ACTION_SYMLINK:
-      safe_strncpy (replay->symlink_target, ev->target,
-		    sizeof (replay->symlink_target));
-      // falls through
-    case JOURNAL_ACTION_CREATE:
-    case JOURNAL_ACTION_MKDIR:
-    case JOURNAL_ACTION_MKFILE:
-      ino->parent_ino = ev->parent_ino;
-      if (!add_child (get_inode (ev->parent_ino, arena), ev->ino, arena))
-	return false;
-      break;
-
-    case JOURNAL_ACTION_RMDIR:
-      return mark_inode_dead (ev->ino);
-
-    case JOURNAL_ACTION_RENAME:
-      remove_child (get_inode (ev->src_parent_ino, arena), ev->ino);
-      if (!add_child (get_inode (ev->dst_parent_ino, arena), ev->ino, arena))
-	return false;
-      ino->parent_ino = ev->dst_parent_ino;
-      safe_strncpy (replay->name, ev->new_name, sizeof (replay->name));
-      break;
-
-    default:
-    }
   return true;
 }
 
