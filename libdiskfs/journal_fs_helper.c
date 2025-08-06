@@ -20,6 +20,7 @@
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_fs_helper.h>
 #include <pthread.h>

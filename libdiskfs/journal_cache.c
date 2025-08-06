@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include <libdiskfs/journal_cache.h>
 #include <libdiskfs/journal_util.h>
+#include <libdiskfs/journal_path_util.h>
 #include <stdlib.h>
 
 static bool

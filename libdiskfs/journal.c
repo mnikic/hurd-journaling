@@ -27,6 +27,7 @@
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
+#include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_inode_scanner.h>
 #include <libdiskfs/journal_inode_denylist.h>

@@ -1,0 +1,247 @@
+/* journal_path_util.h - Journaling path related helper functions
+
+   Copyright (C) 2025 Free Software Foundation, Inc.
+
+   Written by Milos Nikic.
+
+   This file is part of the GNU Hurd.
+
+   The GNU Hurd is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2, or (at your option)
+   any later version.
+
+   The GNU Hurd is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
+
+#ifndef LIBDISKFS_JOURNAL_PATH_UTIL_H
+#define LIBDISKFS_JOURNAL_PATH_UTIL_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <libdiskfs/journal_util.h>
+
+#define JOURNAL_MAX_PATH_COMPONENTS 128
+#define JOURNAL_FILENAME_MAX 255
+#define JOURNAL_PATH_MAX (JOURNAL_NORMALIZED_PATH_MAX - JOURNAL_FILENAME_MAX - 2)
+
+// Simple hash function (FNV-1a variant)
+static inline uint32_t
+journal_hash_path (const char *path)
+{
+  uint32_t hash = 2166136261U;
+  while (*path)
+    {
+      hash ^= (uint32_t) * path++;
+      hash *= 16777619U;
+    }
+  return hash;
+}
+
+static inline const char *
+journal_normalize_path (const char *input)
+{
+  static char normalized[JOURNAL_NORMALIZED_PATH_MAX];
+  const char *components[JOURNAL_MAX_PATH_COMPONENTS];
+  int depth = 0;
+
+  if (!input || input[0] == '\0')
+    return "";
+
+  while (*input == '/')
+    input++;
+
+  while (*input && depth < JOURNAL_MAX_PATH_COMPONENTS)
+    {
+      const char *start = input;
+      while (*input && *input != '/')
+	input++;
+      size_t len = input - start;
+
+      while (*input == '/')
+	input++;
+
+      if (len == 0)
+	continue;
+
+      if (len == 1 && start[0] == '.')
+	continue;
+
+      if (len == 2 && start[0] == '.' && start[1] == '.')
+	{
+	  if (depth > 0)
+	    depth--;
+	  continue;
+	}
+
+      components[depth++] = start;
+    }
+
+  char *out = normalized;
+  size_t remaining = JOURNAL_NORMALIZED_PATH_MAX;
+
+  if (depth == 0)
+    {
+      snprintf (out, remaining, ".");
+      return normalized;
+    }
+
+  for (int i = 0; i < depth; i++)
+    {
+      size_t len = 0;
+      while (components[i][len] && components[i][len] != '/')
+	len++;
+
+      if (len + 1 >= remaining)
+	break;
+
+      *out++ = '/';
+      memcpy (out, components[i], len);
+      out += len;
+      remaining -= (len + 1);
+    }
+
+  *out = '\0';
+  return normalized;
+}
+
+/**
+ * Splits a full absolute path into directory path and filename.
+ * - `dir_out` receives the parent directory (e.g., "/foo/bar")
+ * - `file_out` receives the final filename (e.g., "baz.txt")
+ * - Handles edge cases like "/file.txt" dir="/", file="file.txt"
+ *
+ * Returns true on success, false on invalid input or truncation.
+ */
+static inline bool
+journal_split_path (const char *full_path,
+		    char *dir_out, size_t dir_len,
+		    char *file_out, size_t file_len)
+{
+  if (!full_path || full_path[0] != '/')
+    {
+      JOURNAL_LOG_DEBUG
+	("journal_split_path: path is NULL or not absolute: '%s'", full_path);
+      return false;
+    }
+
+  const char *last_slash = strrchr (full_path, '/');
+
+  // Reject root path "/"
+  if (last_slash == full_path && full_path[1] == '\0')
+    {
+      JOURNAL_LOG_DEBUG ("journal_split_path: cannot split root path '/'");
+      return false;
+    }
+
+  // Case: "/file" (no internal slashes)
+  if (!last_slash || last_slash == full_path)
+    {
+      size_t file_part_len = strlen (full_path + 1);
+
+      if (dir_len < 2 || file_len <= file_part_len)
+	{
+	  JOURNAL_LOG_DEBUG
+	    ("journal_split_path: buffer too small for '/file' case");
+	  return false;
+	}
+
+      safe_strncpy (dir_out, "/", dir_len);
+      safe_strncpy (file_out, full_path + 1, file_len);
+      return true;
+    }
+
+  // Normal case: "/path/to/file"
+  size_t dir_part_len = last_slash - full_path;
+  size_t file_part_len = strlen (last_slash + 1);
+
+  if (dir_part_len + 1 > dir_len || file_part_len + 1 > file_len)
+    {
+      JOURNAL_LOG_DEBUG
+	("journal_split_path: buffer too small for full_path='%s'",
+	 full_path);
+      return false;
+    }
+
+  memcpy (dir_out, full_path, dir_part_len);
+  dir_out[dir_part_len] = '\0';
+
+  safe_strncpy (file_out, last_slash + 1, file_len);
+
+  return true;
+}
+
+/*
+ * Basic check to see if path should be rejected.
+ */
+static inline bool
+is_path_usable (const char *path)
+{
+  if (!path || path[0] == '\0')
+    return false;
+
+  if (path[0] != '/')
+    return false;
+
+  if (strlen (path) < 4)
+    return false;
+
+  if (strlen (path) >= JOURNAL_NORMALIZED_PATH_MAX)
+    return false;
+
+  return true;
+}
+
+static inline error_t
+journal_resolve_full_path (const char *path, const char *name,
+			   char *out_buf, size_t out_len)
+{
+  if (!is_path_usable (path))
+    {
+      JOURNAL_LOG_DEBUG ("Path '%s' is not usable.", path);
+      return EINVAL;
+    }
+
+  if (!name || name[0] == '\0')
+    {
+      safe_strncpy (out_buf, path, out_len);
+      return 0;
+    }
+
+  size_t path_len = strlen (path);
+  size_t name_len = strlen (name);
+
+  // No joining if path ends with name exactly
+  if (path_len >= name_len)
+    {
+      const char *end = path + path_len - name_len;
+      if (strcmp (end, name) == 0)
+	{
+	  safe_strncpy (out_buf, path, out_len);
+	  return 0;
+	}
+    }
+
+  int written;
+  if (path[path_len - 1] == '/')
+    written = snprintf (out_buf, out_len, "%s%s", path, name);
+  else
+    written = snprintf (out_buf, out_len, "%s/%s", path, name);
+
+  if (written < 0 || (size_t) written >= out_len)
+    {
+      JOURNAL_LOG_DEBUG ("Path + name too long: '%s' + '%s'", path, name);
+      return ENAMETOOLONG;
+    }
+
+  return 0;
+}
+
+#endif /* LIBDISKFS_JOURNAL_PATH_UTIL_H */
