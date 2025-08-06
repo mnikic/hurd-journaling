@@ -1,3 +1,24 @@
+/* journal_filter.c - Temporal filter for Journaling needs.
+ 
+   Copyright (C) 2025 Free Software Foundation, Inc.
+
+   Written by Milos Nikic.
+
+   This file is part of the GNU Hurd.
+
+   The GNU Hurd is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2, or (at your option)
+   any later version.
+
+   The GNU Hurd is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
+
 #include <libdiskfs/journal_filter.h>
 
 #include <stdatomic.h>
@@ -14,7 +35,7 @@ hash_ino (journal_ino_t ino)
 }
 
 bool
-journal_filter_should_log (journal_filter_instance_t *instance,
+journal_filter_should_log (journal_filter_instance_t * instance,
 			   journal_ino_t ino, time_t now)
 {
   if (!instance || !instance->table)
