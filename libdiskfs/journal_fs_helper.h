@@ -28,8 +28,8 @@ error_t
 diskfs_create_creds (struct node *np, int flags, struct protid **out_cred);
 
 error_t
-diskfs_lookup_path (const char *path, struct protid *cred,
-		    struct node **out_np);
+diskfs_lookup_path (const struct node *np, const char *path,
+		    struct protid *cred, struct node **out_np);
 
 error_t
 diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
@@ -37,6 +37,6 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
 
 error_t
 diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
-		struct node **out_node);
+		struct node **out);
 
 #endif /* LIBDISKFS_JOURNAL_FS_HELPER_H */

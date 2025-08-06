@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <hurd.h>
 #include <hurd/fs.h>
 #include <stdio.h>
@@ -69,6 +70,7 @@ journal_scan_path_for_inos (const char *root_path,
   error_t err = 0;
   size_t count = 0;
   struct node *root = diskfs_root_node;
+  pthread_mutex_lock (&root->lock);
   diskfs_nref (root);
 
   err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
@@ -78,7 +80,7 @@ journal_scan_path_for_inos (const char *root_path,
       goto cleanup_root;
     }
 
-  err = diskfs_lookup_path (root_path, cred, &start_np);
+  err = diskfs_lookup_path (root, root_path, cred, &start_np);
   if (err)
     {
       JOURNAL_LOG_DEBUG
@@ -116,8 +118,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->
-					  dn_stat.st_ino);
+					  (journal_ino_t) start_np->dn_stat.
+					  st_ino);
       count++;
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;

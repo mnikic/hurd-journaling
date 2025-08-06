@@ -29,6 +29,7 @@
 #include <libdiskfs/journal_globals.h>
 
 #include <stdio.h>
+#include <string.h>
 
 #ifndef JOURNAL_DEBUG
 #define JOURNAL_DEBUG 1		/* Set to enable (very chatty) debug messages. */
@@ -55,7 +56,7 @@ while (0)
 #define JOURNAL_MAX_REASONABLE_TIME 16725229200	/* Jan 1, 2500 */
 #define JOURNAL_MIN_REASONABLE_TIME 315536400	/* Jan 1, 1980 */
 #define JOURNAL_MAX_PATH_COMPONENTS 128
-#define JOURNAL_FILENAME_MAX NAME_MAX
+#define JOURNAL_FILENAME_MAX 255
 #define JOURNAL_PATH_MAX (JOURNAL_NORMALIZED_PATH_MAX - JOURNAL_FILENAME_MAX - 2)
 
 static inline void
@@ -135,40 +136,35 @@ journal_normalize_path (const char *input)
   if (!input || input[0] == '\0')
     return "";
 
-  // Skip leading slashes
   while (*input == '/')
     input++;
 
   while (*input && depth < JOURNAL_MAX_PATH_COMPONENTS)
     {
-      // Get next component
       const char *start = input;
       while (*input && *input != '/')
 	input++;
       size_t len = input - start;
 
-      // Skip over any slashes
       while (*input == '/')
 	input++;
 
       if (len == 0)
-	continue;		// repeated slashes or trailing slash
+	continue;
 
       if (len == 1 && start[0] == '.')
-	continue;		// skip .
+	continue;
 
       if (len == 2 && start[0] == '.' && start[1] == '.')
 	{
 	  if (depth > 0)
-	    depth--;		// pop one
+	    depth--;
 	  continue;
 	}
 
-      // Save pointer to this component
       components[depth++] = start;
     }
 
-  // Join components
   char *out = normalized;
   size_t remaining = JOURNAL_NORMALIZED_PATH_MAX;
 

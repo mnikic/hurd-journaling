@@ -36,8 +36,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <stdbool.h>
-#include <errno.h>
 
 #define JOURNAL_HASH_SIZE 4096
 
@@ -204,16 +204,18 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
   if (ino->is_real && !is_resize_action && ev->st_size != ino->replay.st_size)
     {
       JOURNAL_LOG_DEBUG
-	("Deleting inode %u from metadata. Size changed on a non size changing event. Event: %u. Expected size: %llu, encountered size: %llu.",
-	 ev->ino, ev->action, ino->replay.st_size, ev->st_size);
+	("Deleting inode %u from metadata. Size changed on a non size changing event. Event: %u. Expected size: %"
+	 PRIu64 ", encountered size: %" PRIu64, ev->ino, ev->action,
+	 ino->replay.st_size, ev->st_size);
       return mark_inode_dead (ev->ino);
     }
   inode_replay_state_t *replay = &ino->replay;
   if (ev->timestamp_ms < replay->last_seen)
     {
       JOURNAL_LOG_DEBUG
-	("Skipping out-of-order event for inode %u: timestamp %llu < last_seen %llu",
-	 ev->ino, ev->timestamp_ms, replay->last_seen);
+	("Skipping out-of-order event for inode %u: timestamp %" PRIu64
+	 " < last_seen %" PRIu64, ev->ino, ev->timestamp_ms,
+	 replay->last_seen);
       //return mark_inode_dead (ev->ino);
       return true;
     }
@@ -245,6 +247,7 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
 	return false;
       ino->parent_ino = ev->dst_parent_ino;
     default:
+      break;
     }
   replay->st_size = ev->st_size;
   ino->is_real = true;
@@ -312,8 +315,9 @@ journal_graph_get_all (inode_replay_state_t *** out_list,
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.num_entries
-						       * sizeof (*result));
+						       journal_layout.
+						       num_entries *
+						       sizeof (*result));
 
   if (!result)
     {

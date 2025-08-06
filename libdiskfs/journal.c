@@ -160,7 +160,9 @@ toString (journal_action_t action)
     case JOURNAL_ACTION_WRITE:
       return "WRITE";
     default:
+      break;
     }
+
   return "UNKNOWN";
 }
 
@@ -252,8 +254,8 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
 
   if (journal_enabled)
     {
-      if (!journal_write_raw_sync (entry))
-	JOURNAL_LOG_ERROR ("Failed to write sync.");
+      if (!journal_write (entry))
+	JOURNAL_LOG_ERROR ("Failed to write to journal.");
     }
 
   free (buf);

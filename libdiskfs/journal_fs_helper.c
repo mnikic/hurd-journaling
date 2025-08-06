@@ -23,6 +23,7 @@
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_fs_helper.h>
 #include <pthread.h>
+#include <string.h>
 
 /**
 * Create reusable diskfs protid credentials for a given node.
@@ -50,8 +51,8 @@ diskfs_create_creds (struct node *np, int flags, struct protid **out_cred)
 }
 
 error_t
-diskfs_lookup_path (const char *path, struct protid *cred,
-		    struct node **out_np)
+diskfs_lookup_path (const struct node *np, const char *path,
+		    struct protid *cred, struct node **out_np)
 {
   if (!path)
     return EINVAL;
@@ -63,16 +64,16 @@ diskfs_lookup_path (const char *path, struct protid *cred,
   // Handle empty path (root directory)
   if (*path == '\0')
     {
-      diskfs_nref (diskfs_root_node);
-      *out_np = diskfs_root_node;
+      diskfs_nref ((struct node *) np);
+      *out_np = (struct node *) np;
       return 0;
     }
 
-  struct node *current = diskfs_root_node;
+  struct node *current = (struct node *) np;
   diskfs_nref (current);
 
   const char *p = path;
-  char component[NAME_MAX + 1];
+  char component[JOURNAL_FILENAME_MAX + 1];
 
   while (*p)
     {
@@ -87,7 +88,7 @@ diskfs_lookup_path (const char *path, struct protid *cred,
 	    ++p;
 	  continue;
 	}
-      if (len > NAME_MAX)
+      if (len > JOURNAL_FILENAME_MAX)
 	{
 	  diskfs_nput (current);
 	  return ENAMETOOLONG;
@@ -207,7 +208,7 @@ diskfs_make_dir (struct node *root, const char *dirname, struct protid *cred,
     {
       JOURNAL_LOG_ERROR ("create_node failed: %s.", strerror (err));
       if (new_node)
-        diskfs_nput (new_node); 
+	diskfs_nput (new_node);
       goto cleanup;
     }
 
@@ -239,7 +240,7 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred,
   path_copy[JOURNAL_NORMALIZED_PATH_MAX - 1] = '\0';
   char *token = strtok (path_copy, "/");
 
-  diskfs_nref(root);
+  diskfs_nref (root);
   if (!token)
     goto DONE;
 

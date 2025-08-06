@@ -25,9 +25,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Write a single parsed journal payload synchronously (e.g., during boot).
+/* Write a single parsed journal payload synchronously
    Performs internal serialization and CRC generation.
    Returns true on success, false on error. */
-bool journal_write_raw_sync (struct journal_payload_bin *payload);
+bool journal_write (const struct journal_payload_bin *payload);
 
 #endif /* LIBDISKFS_JOURNAL_WRITER_H */

@@ -28,6 +28,7 @@
 #include <libdiskfs/diskfs.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #define APPEND_CHANGE(fmt, ...)                                     \
   do {                                                              \
@@ -49,9 +50,10 @@ node_matches_fingerprint (const struct node *np,
       || st->st_nlink != state->st_nlink || st->st_gen != state->st_gen)
     {
       JOURNAL_LOG_DEBUG
-	("Inode %u blocked: fingerprint mismatch. Actual size %llu vs %llu. Actual blocks %llu vs %llu. Actual nlink %llu vs %llu. Actual gen %u vs %u",
-	 (unsigned int) state->ino,
-	 (unsigned long long) st->st_size,
+	("Inode %u blocked: fingerprint mismatch. Actual size %" PRIu64
+	 " vs %" PRIu64 ". Actual blocks %" PRIu64 " vs %" PRIu64
+	 ". Actual nlink %" PRIu64 " vs %" PRIu64 ". Actual gen %u vs %u",
+	 (unsigned int) state->ino, (unsigned long long) st->st_size,
 	 (unsigned long long) state->st_size,
 	 (unsigned long long) st->st_blocks,
 	 (unsigned long long) state->st_blocks,
@@ -86,7 +88,7 @@ is_path_usable (const char *path)
 
 static error_t
 journal_resolve_full_path (const char *path, const char *name,
-                           char *out_buf, size_t out_len)
+			   char *out_buf, size_t out_len)
 {
   if (!is_path_usable (path))
     {
@@ -103,16 +105,15 @@ journal_resolve_full_path (const char *path, const char *name,
   size_t path_len = strlen (path);
   size_t name_len = strlen (name);
 
-  // Reject if path ends with name exactly
+  // No joining if path ends with name exactly
   if (path_len >= name_len)
     {
       const char *end = path + path_len - name_len;
-      if (strcmp(end, name) == 0)
-        {
-          JOURNAL_LOG_DEBUG ("Rejected: path='%s' already ends with name='%s'",
-                             path, name);
-          return EINVAL;
-        }
+      if (strcmp (end, name) == 0)
+	{
+	  safe_strncpy (out_buf, path, out_len);
+	  return 0;
+	}
     }
 
   int written;
@@ -131,8 +132,7 @@ journal_resolve_full_path (const char *path, const char *name,
 }
 
 static error_t
-find_or_create_directory (const char *restore_prefix,
-			  struct node *restore_root, const char *dir_path,
+find_or_create_directory (struct node *restore_root, const char *dir_path,
 			  const inode_replay_state_t * state,
 			  struct protid *cred, struct node **out)
 {
@@ -145,19 +145,20 @@ find_or_create_directory (const char *restore_prefix,
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path (dir_path, cred, &np);
+  error_t err = diskfs_lookup_path (restore_root, dir_path, cred, &np);
   if (!err)
     {
       if (!node_matches_fingerprint (np, state))
 	{
 	  JOURNAL_LOG_DEBUG
-	    ("Node %llu found for path %s but it doesn't match the fingerprint. Skipping.",
+	    ("Node %" PRIu64
+	     " found for path %s but it doesn't match the fingerprint. Skipping.",
 	     np->dn_stat.st_ino, dir_path);
 	  diskfs_nput (np);
 	  return EINVAL;
 	}
       JOURNAL_LOG_DEBUG
-	("ino %u: Directory found node. ino: %llu. Path: %s",
+	("ino %u: Directory found node. ino: %" PRIu64 ". Path: %s",
 	 state->ino, np->dn_stat.st_ino, dir_path);
       *out = np;
       return 0;
@@ -170,36 +171,26 @@ find_or_create_directory (const char *restore_prefix,
     ("inode %u: Directory not found. Creating a new one. Path: %s",
      state->ino, dir_path);
 
-  char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-  if (snprintf
-      (full_path, sizeof (full_path), "%s%s", restore_prefix,
-       dir_path) >= sizeof (full_path))
-    {
-      JOURNAL_LOG_ERROR
-	("inode %u: Path name too long. Skipping. Path: %s",
-	 state->ino, full_path);
-      return ENAMETOOLONG;
-    }
   struct node *dir = NULL;
-  err = diskfs_mkdir_p (restore_root, full_path, cred, &dir);
+  err = diskfs_mkdir_p (restore_root, dir_path, cred, &dir);
   if (err)
     {
       JOURNAL_LOG_ERROR
 	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
-	 state->ino, full_path, strerror (err));
+	 state->ino, dir_path, strerror (err));
       *out = NULL;
       return err;
     }
 
   JOURNAL_LOG_DEBUG
-    ("inode %u: Directory created. Path: %s. New Ino: %llu",
-     state->ino, full_path, dir->dn_stat.st_ino);
+    ("inode %u: Directory created. Path: %s. New Ino: %" PRIu64 "",
+     state->ino, dir_path, dir->dn_stat.st_ino);
   *out = dir;
   return 0;
 }
 
 static error_t
-find_or_create_file (const char *restore_prefix, struct node *restore_root,
+find_or_create_file (struct node *restore_root,
 		     const char *full_path,
 		     const inode_replay_state_t * state, struct protid *cred,
 		     struct node **out)
@@ -233,13 +224,14 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path (full_path, cred, &np);
+  error_t err = diskfs_lookup_path (restore_root, full_path, cred, &np);
   if (!err)
     {
       if (!node_matches_fingerprint (np, state))
 	{
 	  JOURNAL_LOG_DEBUG
-	    ("Node %llu found for path %s but it doesn't match the fingerprint. Skipping.",
+	    ("Node %" PRIu64
+	     " found for path %s but it doesn't match the fingerprint. Skipping.",
 	     np->dn_stat.st_ino, full_path);
 	  diskfs_nput (np);
 	  *out = NULL;
@@ -255,28 +247,16 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
       return err;
     }
 
-  char dir_path_with_prefix[JOURNAL_NORMALIZED_PATH_MAX];
-  if (snprintf
-      (dir_path_with_prefix, sizeof (dir_path_with_prefix), "%s%s",
-       restore_prefix, dir_path) >= sizeof (dir_path_with_prefix))
-    {
-      JOURNAL_LOG_ERROR
-	("inode %u: Dir path name too long. Skipping. Path: %s",
-	 state->ino, dir_path_with_prefix);
-      *out = NULL;
-      return ENAMETOOLONG;
-    }
-
   JOURNAL_LOG_DEBUG
     ("inode %u: File not found. Creating new one. Path: %s. Dir: '%s' File: '%s'",
-     state->ino, full_path, dir_path_with_prefix, file_name);
+     state->ino, full_path, dir_path, file_name);
   struct node *dir = NULL;
-  err = diskfs_mkdir_p (restore_root, dir_path_with_prefix, cred, &dir);
+  err = diskfs_mkdir_p (restore_root, dir_path, cred, &dir);
   if (err || !dir)
     {
       JOURNAL_LOG_ERROR
 	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
-	 state->ino, dir_path_with_prefix, strerror (err));
+	 state->ino, dir_path, strerror (err));
       *out = NULL;
       return err;
     }
@@ -284,8 +264,8 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
   dir = NULL;
   JOURNAL_LOG_DEBUG
     ("inode %u: In lookup path for the dir the came out of mkdir_p. Let see Dir: '%s'.",
-     state->ino, dir_path_with_prefix);
-  err = diskfs_lookup_path (dir_path_with_prefix, cred, &dir);
+     state->ino, dir_path);
+  err = diskfs_lookup_path (restore_root, dir_path, cred, &dir);
   if (err || !dir)
     {
       JOURNAL_LOG_DEBUG
@@ -306,28 +286,25 @@ find_or_create_file (const char *restore_prefix, struct node *restore_root,
     {
       JOURNAL_LOG_ERROR
 	("inode %u: Failed to create a file. Skipping. Path: %s. Error: %s",
-	 state->ino, dir_path_with_prefix, strerror (err));
+	 state->ino, dir_path, strerror (err));
       *out = NULL;
       return err;
     }
 
   JOURNAL_LOG_DEBUG
-    ("inode %u: File created. Path: %s. New Ino: %llu",
+    ("inode %u: File created. Path: %s. New Ino: %" PRIu64 "",
      state->ino, full_path, file->dn_stat.st_ino);
   *out = file;
   return 0;
 }
 
 static error_t
-find_by_path_or_create (const char *restore_prefix,
-			inode_replay_state_t * state,
+find_by_path_or_create (inode_replay_state_t * state,
 			struct node *restore_root, struct protid *cred,
 			struct node **out)
 {
-  char *path = state->resolved_path;
   char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-
-  error_t err = journal_resolve_full_path (path, state->name,
+  error_t err = journal_resolve_full_path (state->resolved_path, state->name,
 					   full_path, sizeof (full_path));
   if (err)
     {
@@ -336,16 +313,15 @@ find_by_path_or_create (const char *restore_prefix,
     }
   uint32_t mode = state->st_mode;
   if (S_ISDIR (mode))
-    return find_or_create_directory (restore_prefix, restore_root, full_path,
+    return find_or_create_directory (restore_root, full_path,
 				     state, cred, out);
   else
-    return find_or_create_file (restore_prefix, restore_root, full_path,
-				state, cred, out);
+    return find_or_create_file (restore_root, full_path, state, cred, out);
 }
 
 error_t
 apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
-		   struct protid *cred, const char *restore_prefix)
+		   struct protid *cred)
 {
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
     {
@@ -395,9 +371,7 @@ apply_node_replay (inode_replay_state_t * state, struct node *restore_root,
 	("It doesn't seem file ino: %u is there. Lets see if we can find it by name.",
 	 state->ino);
       // Then action
-      err =
-	find_by_path_or_create (restore_prefix, state, restore_root, cred,
-				&np);
+      err = find_by_path_or_create (state, restore_root, cred, &np);
       // All has failed
       if (!np)
 	return err;

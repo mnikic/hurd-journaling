@@ -19,7 +19,6 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
-#include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -103,13 +102,13 @@ initialize_indices (uint64_t * start_index, uint64_t * end_index)
   *start_index = hdr.start_index;
   *end_index = hdr.end_index;
 
-  JOURNAL_LOG_DEBUG ("journal_write_raw: start_index=%llu, end_index=%llu",
-		     *start_index, *end_index);
+  JOURNAL_LOG_DEBUG ("journal_write_raw: start_index=%" PRIu64 ", end_index=%"
+		     PRIu64, *start_index, *end_index);
   return true;
 }
 
 bool
-journal_write_raw_sync (journal_payload_bin_t * payload_bin)
+journal_write (const journal_payload_bin_t * payload_bin)
 {
   pthread_mutex_lock (&sync_write_lock);
 
@@ -126,7 +125,6 @@ journal_write_raw_sync (journal_payload_bin_t * payload_bin)
     .payload = *payload_bin,
     .crc32 = journal_compute_payload_crc32 (payload_bin)
   };
-  JOURNAL_LOG_DEBUG ("write: index=%llu crc=0x%08x", end_index, entry.crc32);
   error_t err = journal_write_entry (&entry, end_index);
   if (err)
     {

@@ -32,13 +32,13 @@
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_fs_helper.h>
 #include <libdiskfs/journal_apply.h>
-#include "priv.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
 #define POINTER_SIZE   sizeof (void *)
@@ -112,26 +112,29 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
   error_t err = journal_read_entry (out, index);
   if (err)
     {
-      JOURNAL_LOG_DEBUG ("journal_node_read failed at index %llu.", index);
+      JOURNAL_LOG_DEBUG ("journal_node_read failed at index %" PRIu64 ".",
+			 index);
       return false;
     }
   if (out->magic != JOURNAL_MAGIC)
     {
-      JOURNAL_LOG_DEBUG ("Bad journal entry magic at index %llu", index);
+      JOURNAL_LOG_DEBUG ("Bad journal entry magic at index %" PRIu64 ".",
+			 index);
       return false;
     }
 
   if (out->version != JOURNAL_VERSION)
     {
-      JOURNAL_LOG_DEBUG ("Journal entry version mismatch at index %llu",
-			 index);
+      JOURNAL_LOG_DEBUG ("Journal entry version mismatch at index %" PRIu64
+			 ".", index);
       return false;
     }
 
   uint32_t actual_entry_crc = journal_compute_payload_crc32 (&out->payload);
   if (actual_entry_crc != out->crc32)
     {
-      JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at index %llu.", index);
+      JOURNAL_LOG_DEBUG ("Journal entry CRC mismatch at index %" PRIu64 ".",
+			 index);
       return false;
     }
 
@@ -197,7 +200,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
   if (!fetch_and_validate_header (hdr))
     return false;
 
-  JOURNAL_LOG_DEBUG ("Header: start index %llu, end index %llu",
+  JOURNAL_LOG_DEBUG ("Header: start index %" PRIu64 ", end index %" PRIu64 "",
 		     hdr->start_index, hdr->end_index);
 
   out_entries->count = 0;
@@ -219,14 +222,15 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	journal_arena_alloc (arena, JOURNAL_ENTRY_SIZE);
       if (!entry)
 	{
-	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %llu",
-			     index);
+	  JOURNAL_LOG_ERROR ("Out of memory allocating payload at index %"
+			     PRIu64 ".", index);
 	  return false;
 	}
       if (!fetch_and_validate_entry (index, entry))
 	{
 	  JOURNAL_LOG_ERROR
-	    ("CRC check failed or corrupted payload at index %llu", index);
+	    ("CRC check failed or corrupted payload at index %" PRIu64 "",
+	     index);
 	  return false;
 	}
       journal_payload_bin_t *payload = &entry->payload;
@@ -236,8 +240,8 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  if (journal_inode_denylist_contains (denylist, payload->ino))
 	    {
 	      JOURNAL_LOG_DEBUG
-		("Ino %u is in a deny list. Skipping tx %llu.", payload->ino,
-		 payload->tx_id);
+		("Ino %u is in a deny list. Skipping tx %" PRIu64 ".",
+		 payload->ino, payload->tx_id);
 	      goto NEXT;
 	    }
 	  if (!journal_is_safe_stat (payload->st_mode))
@@ -253,18 +257,11 @@ fetch_and_validate_journal (struct journal_arena *arena,
 		   || payload->has_ctime))
 	    {
 	      JOURNAL_LOG_ERROR
-		("Invalid entry: action=%u ino=%u at index %llu (tx_id %llu)",
-		 payload->action, payload->ino, index, payload->tx_id);
+		("Invalid entry: action=%u ino=%u at index %" PRIu64
+		 " (tx_id %" PRIu64 ")", payload->action, payload->ino, index,
+		 payload->tx_id);
 	      return false;
 	    }
-	  if (payload->ino == 244973 || payload->ino == 212628
-	      || payload->ino == 212611 || payload->ino == 212622
-	      || payload->ino == 244344)
-	    JOURNAL_LOG_DEBUG
-	      ("$$$$$$$$$$$$$$$ entry: action=%u ino=%u at index %llu (tx_id %llu) timestamp %llu parent %u name %s path %s ctime: %llu",
-	       payload->action, payload->ino, index, payload->tx_id,
-	       payload->timestamp_ms, payload->parent_ino, payload->name,
-	       payload->path, payload->ctime);
 	}
       if (!add_event_to_list (out_entries, payload))
 	{
@@ -330,137 +327,156 @@ test (struct journal_arena *arena)
   safe_strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
 
   safe_strncpy (payload1->name, "something.c", sizeof (payload1->name));
-  if (!journal_write_raw_sync (payload))
+  if (!journal_write (payload))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
     JOURNAL_LOG_DEBUG ("TESTING: Payload inserted.");
-  if (!journal_write_raw_sync (payload1))
+  if (!journal_write (payload1))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
     JOURNAL_LOG_DEBUG ("TESTING: Payload 1 inserted.");
-
 }
 
-/*
- * journal_replay - Main entry point for replaying the journal.
- * Reconstructs inode graph and applies metadata changes in early boot.
+/**
+ * replay_apply_graph - Applies all reconstructed journal state to diskfs.
+ *
+ * Iterates over all nodes in the graph and applies replay changes.
+ * Sets up root credentials and creates a restore directory,
+ * then looks it up as a node and passes it down.
+ */
+static void
+replay_apply_graph (struct journal_arena *arena)
+{
+  inode_replay_state_t **entries;
+  size_t count = journal_graph_get_all (&entries, arena);
+
+  struct node *root = diskfs_root_node;
+  pthread_mutex_lock (&root->lock);
+  diskfs_nref (root);
+
+  struct protid *cred = NULL;
+  if (diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred))
+    {
+      JOURNAL_LOG_ERROR ("Could not create credentials. Aborting replay.");
+      diskfs_nput (root);
+      return;
+    }
+
+  char restore_prefix[MAX_FIELD_LEN];
+  int written =
+    snprintf (restore_prefix, sizeof (restore_prefix), "%s/%" PRIu64,
+	      JOURNAL_RESTORE_ROOT,
+	      journal_current_time_ms ());
+  if (written < 0 || written >= sizeof (restore_prefix))
+    safe_strncpy (restore_prefix, "/restore", sizeof (restore_prefix));
+
+  struct node *restore_dir = NULL;
+  error_t err = diskfs_mkdir_p (root, restore_prefix, cred, &restore_dir);
+  if (err || !restore_dir)
+    {
+      JOURNAL_LOG_ERROR ("Failed to create restore directory: %s",
+			 strerror (err));
+      goto CLEANUP;
+    }
+
+  diskfs_nput (restore_dir);
+
+  struct node *restore_root = NULL;
+  err = diskfs_lookup_path (root, restore_prefix, cred, &restore_root);
+  if (err || !restore_root)
+    {
+      JOURNAL_LOG_ERROR ("Failed to lookup restore directory: %s",
+			 strerror (err));
+      goto CLEANUP;
+    }
+
+  for (size_t i = 0; i < count; ++i)
+    {
+      inode_replay_state_t *state = entries[i];
+      err = apply_node_replay (state, restore_root, cred);
+      if (err)
+	JOURNAL_LOG_ERROR ("Restore error: ino=%u name=%s path=%s err=%s",
+			   state->ino,
+			   state->name, state->resolved_path, strerror (err));
+    }
+
+  diskfs_nput (restore_root);
+CLEANUP:
+  ports_port_deref (cred);
+  diskfs_nput (root);
+}
+
+/**
+ * replay_main_pass - Main core of the journal replay pipeline.
+ *
+ * This function loads and validates the journal entries,
+ * sorts them, and builds the in-memory graph structure.
+ * After successful graph construction, it triggers the replay logic.
+ */
+static void
+replay_main_pass (struct journal_arena *arena,
+		  journal_inode_denylist_t * denylist)
+{
+  test (arena);
+  struct journal_entries list = { 0 };
+  if (!fetch_and_validate_journal (arena, denylist, &list))
+    {
+      JOURNAL_LOG_ERROR ("Replay failed: could not validate journal.");
+      return;
+    }
+
+  sort_entries (&list);
+
+  for (size_t i = 0; i < list.count; ++i)
+    {
+      if (!journal_graph_add_event (list.entries[i], arena))
+	{
+	  JOURNAL_LOG_ERROR ("Graph construction failed for tx=%" PRIu64,
+			     list.entries[i]->tx_id);
+	  return;
+	}
+    }
+
+  replay_apply_graph (arena);
+}
+
+/**
+ * journal_replay - Top-level entry point for journal replay.
+ * 
+ * This function initializes the arena, acquires fsys lock,
+ * disables readonly mode, calls the core replay logic,
+ * and finally restores the system state.
  */
 void
 journal_replay (journal_inode_denylist_t * denylist)
 {
-  JOURNAL_LOG_DEBUG ("Starting journal validation.");
   struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)
     {
-      JOURNAL_LOG_ERROR
-	("Unable to allocate enough memory for journal replay. Aborting!");
+      JOURNAL_LOG_ERROR ("Failed to allocate replay arena. Replay aborted.");
       return;
     }
 
   if (pthread_rwlock_trywrlock (&diskfs_fsys_lock) != 0)
     {
-      JOURNAL_LOG_ERROR
-	("Didn't manage to acquire fsys lock. Journal replay aborted.");
+      JOURNAL_LOG_ERROR ("Couldn't acquire fsys lock. Replay aborted.");
       journal_arena_destroy (arena);
       return;
     }
-  error_t err = diskfs_set_readonly (0);
-  if (err)
+
+  if (diskfs_set_readonly (0))
     {
-      JOURNAL_LOG_ERROR
-	("Failed to set diskfs_readonly = 0: %s (%d). Aborting replay.",
-	 strerror (err), err);
+      JOURNAL_LOG_ERROR ("Failed to disable readonly mode. Replay aborted.");
       goto UNLOCK;
     }
-  JOURNAL_LOG_DEBUG ("Filesystem NOT in readonly mode now!");
-  test (arena);
-  struct journal_entries list = { 0 };
-  bool success = fetch_and_validate_journal (arena, denylist, &list);
-  if (!success)
-    {
-      JOURNAL_LOG_ERROR
-	("Aborting replay due to validation failure. No entries replayed.");
-      goto CLEANUP;
-    }
 
-  JOURNAL_LOG_DEBUG ("Validation completed successfully.");
+  replay_main_pass (arena, denylist);
 
-  sort_entries (&list);
-  for (size_t i = 0; i < list.count; ++i)
-    {
-      journal_payload_bin_t *ev = list.entries[i];
-      if (ev->ino == 245063 || ev->ino == 245062 || ev->ino == 244344)
-	JOURNAL_LOG_DEBUG
-	  ("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Ino: %u, action: %u, timestamp_ms: %llu, parent: %u, name: %s, path: %s",
-	   ev->ino, ev->action, ev->timestamp_ms, ev->parent_ino, ev->name,
-	   ev->path);
-      if (!journal_graph_add_event (list.entries[i], arena))
-	{
-	  JOURNAL_LOG_ERROR
-	    ("Aborting replay due to inability to add to the graph. No entries replayed.");
-	  goto CLEANUP;
-	}
-    }
-
-  inode_replay_state_t **entries;
-  size_t count = journal_graph_get_all (&entries, arena);
-
-  JOURNAL_LOG_DEBUG ("Starting restoration of metadata.");
-
-  struct protid *cred = NULL;
-  struct node *root = diskfs_root_node;
-  pthread_mutex_lock (&root->lock);
-  diskfs_nref (root);
-
-  err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
-  if (err)
-    {
-      JOURNAL_LOG_ERROR
-	("Aborting replay. Couldn't create root credentials due to an error: %s. No entries replayed.",
-	 strerror (err));
-      goto DEREF;
-    }
-
-  char restore_prefix[MAX_FIELD_LEN];
-  int written = snprintf (restore_prefix, sizeof (restore_prefix),
-			  "%s/%llu",
-			  JOURNAL_RESTORE_ROOT,
-			  (unsigned long long) journal_current_time_ms ());
-
-  if (written < 0 || written >= sizeof (restore_prefix))
-    {
-      JOURNAL_LOG_ERROR ("Restore prefix too long, using generic fallback.");
-      safe_strncpy (restore_prefix, "/restore", sizeof (restore_prefix));
-    }
-
-  JOURNAL_LOG_DEBUG ("Got %u entries to replay. Restore prefix: %s", count,
-		     restore_prefix);
-  for (size_t i = 0; i < count; ++i)
-    {
-      err = apply_node_replay (entries[i], root, cred, restore_prefix);
-      if (err)
-	JOURNAL_LOG_ERROR
-	  ("Error while restoring node: %u name: %s path:%s Error: %s.",
-	   entries[i]->ino, entries[i]->name, entries[i]->resolved_path,
-	   strerror (err));
-    }
-  JOURNAL_LOG_DEBUG ("Done with restoration.");
-
-  ports_port_deref (cred);
-DEREF:
-  diskfs_nput (root);
-CLEANUP:
-  diskfs_sync_everything (1);
-  diskfs_set_hypermetadata (1, 1);
-  _diskfs_diskdirty = 0;
-  err = diskfs_set_readonly (1);
-  if (err)
-    JOURNAL_LOG_ERROR ("Failed to restore diskfs_readonly = 1: %s (%d)",
-		       strerror (err), err);
+  if (diskfs_set_readonly (1))
+    JOURNAL_LOG_ERROR ("Failed to enable readonly mode.");
   else
-    JOURNAL_LOG_DEBUG ("Filesystem set back to readonly");
+    JOURNAL_LOG_DEBUG ("Filesystem set back to readonly.");
 
-  journal_graph_free ();
 UNLOCK:
   pthread_rwlock_unlock (&diskfs_fsys_lock);
   journal_arena_destroy (arena);

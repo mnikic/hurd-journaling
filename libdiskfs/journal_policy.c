@@ -6,14 +6,7 @@
 #define FILTER_TABLE_ENTRIES 1024
 #define CACHE_ENTRIES 2048
 
-static journal_filter_entry_t write_table[FILTER_TABLE_ENTRIES];
 static journal_filter_entry_t timestamp_table[FILTER_TABLE_ENTRIES];
-
-static journal_filter_instance_t write_filter = {
-  .size = FILTER_TABLE_ENTRIES,
-  .min_delta_sec = 10,
-  .table = write_table,
-};
 
 static journal_filter_instance_t timestamp_filter = {
   .size = FILTER_TABLE_ENTRIES,
@@ -264,17 +257,10 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  //if (info->action == JOURNAL_ACTION_WRITE
-  //    && !journal_filter_should_log (&write_filter, st->st_ino, time (NULL)))
-  // {
-  //   return false;
-  //}
   if (full_path && full_path[0] != '\0')
     {
       if (!journal_good_dir_path (full_path))
 	{
-//      JOURNAL_LOG_DEBUG ("Skipped node %llu path %s is rejected.",
-//                       st->st_ino, full_path);
 	  return false;		// Explicitly reject
 	}
     }

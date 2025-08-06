@@ -23,12 +23,10 @@
 #include <libdiskfs/journal_graph.h>
 #include <libdiskfs/diskfs.h>
 #include <stdint.h>
-#include <errno.h>
 
 /* Apply final metadata state from journal replay to a single inode.
    Updates mode, size, timestamps, ownership, etc. if different. */
 error_t apply_node_replay (inode_replay_state_t * state,
-			   struct node *restore_root, struct protid *cred,
-			   const char *restore_prefix);
+			   struct node *restore_root, struct protid *cred);
 
 #endif /* LIBDISKFS_JOURNAL_APPLY_H */
