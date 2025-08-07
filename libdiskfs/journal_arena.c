@@ -20,6 +20,7 @@
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
 #include <libdiskfs/journal_arena.h>
+
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>

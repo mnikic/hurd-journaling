@@ -33,7 +33,7 @@
 #include <libdiskfs/journal_path_util.h>
 
 static bool
-is_entry_expired (journal_cache_t * cache, journal_cache_entry_t * entry,
+is_entry_expired (journal_cache_t *cache, journal_cache_entry_t *entry,
 		  uint64_t current_time)
 {
   if (current_time == 0 || entry->timestamp == 0)
@@ -42,7 +42,7 @@ is_entry_expired (journal_cache_t * cache, journal_cache_entry_t * entry,
 }
 
 journal_cache_t
-journal_cache_init (journal_cache_entry_t * buffer, size_t size,
+journal_cache_init (journal_cache_entry_t *buffer, size_t size,
 		    uint64_t ttl_ms)
 {
   journal_cache_t cache = { 0 };
@@ -66,7 +66,7 @@ journal_cache_init (journal_cache_entry_t * buffer, size_t size,
 }
 
 bool
-journal_cache_check (journal_cache_t * cache, const char *path,
+journal_cache_check (journal_cache_t *cache, const char *path,
 		     bool *cached_decision)
 {
   if (!cache || !cache->initialized || !cache->entries)
@@ -110,7 +110,7 @@ journal_cache_check (journal_cache_t * cache, const char *path,
 }
 
 void
-journal_cache_store (journal_cache_t * cache, const char *path, bool decision)
+journal_cache_store (journal_cache_t *cache, const char *path, bool decision)
 {
   if (!cache || !cache->initialized || !cache->entries)
     return;
@@ -160,7 +160,7 @@ journal_cache_store (journal_cache_t * cache, const char *path, bool decision)
 }
 
 void
-journal_cache_clear (journal_cache_t * cache)
+journal_cache_clear (journal_cache_t *cache)
 {
   if (cache && cache->initialized && cache->entries)
     {
@@ -172,7 +172,7 @@ journal_cache_clear (journal_cache_t * cache)
 }
 
 void
-journal_cache_expire_old (journal_cache_t * cache)
+journal_cache_expire_old (journal_cache_t *cache)
 {
   if (!cache || !cache->initialized || !cache->entries)
     return;
@@ -192,7 +192,7 @@ journal_cache_expire_old (journal_cache_t * cache)
 }
 
 journal_cache_stats_t
-journal_cache_stats (journal_cache_t * cache)
+journal_cache_stats (journal_cache_t *cache)
 {
   journal_cache_stats_t stats = { 0 };
   if (!cache || !cache->entries || !cache->initialized)

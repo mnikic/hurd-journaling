@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+
 #include <libdiskfs/journal_format.h>
 
 #define MAX_INODE_VALUE 131072 * 2

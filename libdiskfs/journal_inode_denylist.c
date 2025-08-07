@@ -21,6 +21,7 @@
 
 #include <libdiskfs/journal_inode_denylist.h>
 #include <libdiskfs/journal_format.h>
+
 #include <stdatomic.h>
 #include <string.h>
 

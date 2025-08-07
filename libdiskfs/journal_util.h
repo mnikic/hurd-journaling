@@ -29,6 +29,7 @@
 #include <libdiskfs/journal_globals.h>
 
 #include <stdio.h>
+#include <sys/time.h>
 #include <string.h>
 
 #ifndef JOURNAL_DEBUG

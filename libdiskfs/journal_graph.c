@@ -92,7 +92,7 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
 }
 
 static bool
-add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
+add_child (inode_graph_node_t *parent, journal_ino_t child_ino,
 	   struct journal_arena *arena)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
@@ -124,7 +124,7 @@ add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
 }
 
 static void
-remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
+remove_child (inode_graph_node_t *parent, journal_ino_t child_ino)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
     {
@@ -240,15 +240,17 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
       return mark_inode_dead (ev->ino);
 
     case JOURNAL_ACTION_RENAME:
-      inode_graph_node_t * dst = get_inode (ev->dst_parent_ino, arena);
-      if (!dst || dst->is_dead)
-	return mark_inode_dead (ev->ino);
-      inode_graph_node_t *src = get_inode (ev->src_parent_ino, arena);
-      remove_child (src, ev->ino);
-      if (!add_child (dst, ev->ino, arena))
-	return false;
-      ino->parent_ino = ev->dst_parent_ino;
-      break;
+      {
+	inode_graph_node_t *dst = get_inode (ev->dst_parent_ino, arena);
+	if (!dst || dst->is_dead)
+	  return mark_inode_dead (ev->ino);
+	inode_graph_node_t *src = get_inode (ev->src_parent_ino, arena);
+	remove_child (src, ev->ino);
+	if (!add_child (dst, ev->ino, arena))
+	  return false;
+	ino->parent_ino = ev->dst_parent_ino;
+	break;
+      }
     default:
       break;
     }
@@ -301,14 +303,13 @@ journal_graph_free (void)
 }
 
 size_t
-journal_graph_get_all (inode_replay_state_t *** out_list,
+journal_graph_get_all (inode_replay_state_t ***out_list,
 		       struct journal_arena *arena)
 {
   size_t count = 0;
   inode_replay_state_t **result = journal_arena_alloc (arena,
-						       journal_layout.
-						       num_entries *
-						       sizeof (*result));
+						       journal_layout.num_entries
+						       * sizeof (*result));
 
   if (!result)
     {

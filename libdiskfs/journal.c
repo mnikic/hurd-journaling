@@ -76,7 +76,7 @@ layout_init (struct store *store, journal_config_t config)
       JOURNAL_LOG_ERROR ("Not enough space for journaling!");
       return false;
     }
-  JOURNAL_LOG_DEBUG ("Computed %u spaces in the journal",
+  JOURNAL_LOG_DEBUG ("Computed %zu spaces in the journal",
 		     journal_layout.num_entries);
   return true;
 }
@@ -168,7 +168,7 @@ toString (journal_action_t action)
 }
 
 void
-journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 {
   if (!journal_enabled)
     {

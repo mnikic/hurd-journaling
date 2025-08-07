@@ -72,15 +72,14 @@ struct journal_entries
  * fetch_and_validate_header - Reads and validates the journal header.
  *
  * Performs CRC and magic/version checks. Returns true if valid.
- * out may point to garbage in case of error. Do not use in that case.
  */
 static bool
-fetch_and_validate_header (journal_header_t * out)
+fetch_and_validate_header (journal_header_t *out)
 {
   error_t err = journal_read_header (out);
   if (err)
     {
-      JOURNAL_LOG_ERROR ("journal_node_read failed reading header: %d", err);
+      JOURNAL_LOG_ERROR ("journal replay: failed reading header: %d", err);
       return false;
     }
 
@@ -94,7 +93,7 @@ fetch_and_validate_header (journal_header_t * out)
   if (out->start_index >= journal_layout.num_entries
       || out->end_index >= journal_layout.num_entries)
     {
-      JOURNAL_LOG_DEBUG ("journal_node_read: header indices out of bounds.");
+      JOURNAL_LOG_DEBUG ("journal replay: header indices out of bounds.");
       return false;
     }
 
@@ -107,7 +106,7 @@ fetch_and_validate_header (journal_header_t * out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
+fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
 {
   error_t err = journal_read_entry (out, index);
   if (err)
@@ -143,7 +142,7 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
 
 static bool
 add_event_to_list (struct journal_entries *list,
-		   journal_payload_bin_t * payload)
+		   journal_payload_bin_t *payload)
 {
   if (list->count == list->capacity)
     {
@@ -187,7 +186,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-			    const journal_inode_denylist_t * denylist,
+			    const journal_inode_denylist_t *denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -195,6 +194,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 
   if (!hdr)
     return false;
+
   memset (hdr, 0, sizeof (*hdr));
 
   if (!fetch_and_validate_header (hdr))
@@ -410,7 +410,7 @@ CLEANUP:
  */
 static void
 replay_main_pass (struct journal_arena *arena,
-		  journal_inode_denylist_t * denylist)
+		  journal_inode_denylist_t *denylist)
 {
   test (arena);
   struct journal_entries list = { 0 };
@@ -443,7 +443,7 @@ replay_main_pass (struct journal_arena *arena,
  * and finally restores the system state.
  */
 void
-journal_replay (journal_inode_denylist_t * denylist)
+journal_replay (journal_inode_denylist_t *denylist)
 {
   struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)

@@ -1,4 +1,4 @@
-/* journal_globals.h - Global journaling flags and shared synchronization state.
+/* journal_globals.h - Global journaling state
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 

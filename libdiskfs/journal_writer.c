@@ -75,7 +75,7 @@ initialize_indices (uint64_t *start_index, uint64_t *end_index)
   error_t err = journal_read_header (&hdr);
   if (err != 0)
     {
-      JOURNAL_LOG_ERROR ("journal_write_raw: header read failed or missing");
+      JOURNAL_LOG_ERROR ("journal_write: header read failed or missing");
       *start_index = 0;
       *end_index = 0;
       return true;		// Allow system to start fresh
@@ -84,7 +84,7 @@ initialize_indices (uint64_t *start_index, uint64_t *end_index)
   if (hdr.crc32 != journal_compute_header_crc32 (&hdr) ||
       hdr.magic != JOURNAL_MAGIC || hdr.version != JOURNAL_VERSION)
     {
-      JOURNAL_LOG_ERROR ("journal_write_raw: header CRC mismatch or invalid");
+      JOURNAL_LOG_ERROR ("journal_write: header CRC mismatch or invalid");
       *start_index = 0;
       *end_index = 0;
       return true;
@@ -93,7 +93,7 @@ initialize_indices (uint64_t *start_index, uint64_t *end_index)
   if (hdr.start_index >= journal_layout.num_entries ||
       hdr.end_index >= journal_layout.num_entries)
     {
-      JOURNAL_LOG_ERROR ("journal_write_raw: header indices out of bounds");
+      JOURNAL_LOG_ERROR ("journal_write: header indices out of bounds");
       *start_index = 0;
       *end_index = 0;
       return true;
@@ -102,7 +102,7 @@ initialize_indices (uint64_t *start_index, uint64_t *end_index)
   *start_index = hdr.start_index;
   *end_index = hdr.end_index;
 
-  JOURNAL_LOG_DEBUG ("journal_write_raw: start_index=%" PRIu64 ", end_index=%"
+  JOURNAL_LOG_DEBUG ("journal_write: start_index=%" PRIu64 ", end_index=%"
 		     PRIu64, *start_index, *end_index);
   return true;
 }
@@ -128,9 +128,7 @@ journal_write (const journal_payload_bin_t *payload_bin)
   error_t err = journal_write_entry (&entry, end_index);
   if (err)
     {
-      JOURNAL_LOG_ERROR
-	("journal_write_raw_sync: outside of the fs entry write failed: %s",
-	 strerror (err));
+      JOURNAL_LOG_ERROR ("journal_write: write failed: %s", strerror (err));
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
@@ -141,7 +139,7 @@ journal_write (const journal_payload_bin_t *payload_bin)
 
   if (!persist_header_with_retry (start_index, next_index, 3))
     {
-      JOURNAL_LOG_ERROR ("journal_write_raw_sync: failed to persist header");
+      JOURNAL_LOG_ERROR ("journal_write: failed to persist header");
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }

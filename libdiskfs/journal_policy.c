@@ -23,6 +23,9 @@
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/journal_util.h>
 
+#include <stdlib.h>
+#include <inttypes.h>
+
 #define FILTER_TABLE_ENTRIES 1024
 #define CACHE_ENTRIES 2048
 
@@ -223,8 +226,8 @@ should_journal_filename_fallback (const char *name, const char *path)
 
 bool
 journal_should_log_event (const struct node *np,
-			  const journal_entry_info_t * info,
-			  const journal_inode_denylist_t * ino_denylist,
+			  const journal_entry_info_t *info,
+			  const journal_inode_denylist_t *ino_denylist,
 			  const char *full_path)
 {
   if (!np)
@@ -244,7 +247,7 @@ journal_should_log_event (const struct node *np,
   const struct stat *st = &np->dn_stat;
   if (info->action == JOURNAL_ACTION_TOMBSTONE)
     {
-      JOURNAL_LOG_DEBUG ("ino: %llu but tombstones are important!",
+      JOURNAL_LOG_DEBUG ("ino: %" PRIu64 " but tombstones are important!",
 			 st->st_ino);
       return true;
     }
@@ -261,7 +264,7 @@ journal_should_log_event (const struct node *np,
 
   if (!journal_is_safe_stat (st->st_mode))
     {
-      JOURNAL_LOG_DEBUG ("Skipped node %llu (mode %o) as unsafe.",
+      JOURNAL_LOG_DEBUG ("Skipped node %" PRIu64 " (mode %o) as unsafe.",
 			 st->st_ino, st->st_mode);
       return false;
     }
@@ -272,7 +275,7 @@ journal_should_log_event (const struct node *np,
        info->action == JOURNAL_ACTION_UTIME ||
        info->action == JOURNAL_ACTION_WRITE))
     {
-      //JOURNAL_LOG_DEBUG ("Skipped node %llu low-value event with no path",
+      //JOURNAL_LOG_DEBUG ("Skipped node %" PRIu64 " low-value event with no path",
       //               st->st_ino);
       return false;
     }

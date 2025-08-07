@@ -45,7 +45,7 @@
 
 static inline bool
 node_matches_fingerprint (const struct node *np,
-			  const inode_replay_state_t * state)
+			  const inode_replay_state_t *state)
 {
   const struct stat *st = &np->dn_stat;
   if (st->st_size != state->st_size || st->st_blocks != state->st_blocks
@@ -71,7 +71,7 @@ node_matches_fingerprint (const struct node *np,
 static error_t
 lookup_node_and_check_fingerprint (struct node *fs_root,
 				   const char *path,
-				   const inode_replay_state_t * state,
+				   const inode_replay_state_t *state,
 				   struct protid *cred, struct node **out)
 {
   struct node *np = NULL;
@@ -130,7 +130,7 @@ create_directory (struct node *restore_root, const char *dir_path,
 static error_t
 find_or_create_directory (struct node *fs_root, struct node *restore_root,
 			  const char *dir_path,
-			  const inode_replay_state_t * state,
+			  const inode_replay_state_t *state,
 			  struct protid *cred, struct node **out)
 {
   if (!journal_good_dir_path (dir_path))
@@ -155,7 +155,7 @@ find_or_create_directory (struct node *fs_root, struct node *restore_root,
 static error_t
 find_or_create_file (struct node *fs_root, struct node *restore_root,
 		     const char *full_path,
-		     const inode_replay_state_t * state, struct protid *cred,
+		     const inode_replay_state_t *state, struct protid *cred,
 		     struct node **out)
 {
   char dir_path[JOURNAL_PATH_MAX];
@@ -227,7 +227,7 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
 /* Determines whether the inode is a dir or file and applies appropriate creation logic. */
 error_t
 find_by_path_or_create (const char *full_path,
-			const inode_replay_state_t * state,
+			const inode_replay_state_t *state,
 			struct node *fs_root, struct node *restore_root,
 			struct protid *cred, struct node **out)
 {
@@ -240,7 +240,7 @@ find_by_path_or_create (const char *full_path,
 }
 
 static bool
-should_skip_inode (const inode_replay_state_t * state, struct node *np)
+should_skip_inode (const inode_replay_state_t *state, struct node *np)
 {
   if (!journal_is_safe_stat (np->dn_stat.st_mode))
     return true;
@@ -253,7 +253,7 @@ should_skip_inode (const inode_replay_state_t * state, struct node *np)
 }
 
 static int
-apply_metadata_changes (struct node *np, const inode_replay_state_t * state,
+apply_metadata_changes (struct node *np, const inode_replay_state_t *state,
 			const char *path)
 {
   int changes = 0;
@@ -343,7 +343,7 @@ apply_metadata_changes (struct node *np, const inode_replay_state_t * state,
 }
 
 error_t
-apply_node_replay (inode_replay_state_t * state, struct node *fs_root,
+apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
 		   struct node *restore_root, struct protid *cred)
 {
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
