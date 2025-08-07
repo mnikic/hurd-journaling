@@ -46,16 +46,6 @@ diskfs_S_file_chown (struct protid *cred,
 			   err = diskfs_validate_group_change (np, gid);
 			 if (!err)
 			   {
-			     journal_entry_info_t info = {
-			       .action = JOURNAL_ACTION_CHOWN,
-			       .uid = uid,
-			       .gid = gid,
-			       .has_uid = (uid != (uid_t) -1),
-			       .has_gid = (gid != (gid_t) -1),
-			       .path = JOURNAL_PATH_FROM_CRED (cred)
-			     };
-
-			     journal_log_metadata (np, &info);
 			     if (uid != (uid_t) -1)
 			       {
 				 np->dn_stat.st_uid = uid;
@@ -64,6 +54,12 @@ diskfs_S_file_chown (struct protid *cred,
 			       }
 			     if (gid != (gid_t) -1)
 			       np->dn_stat.st_gid = gid;
+			     journal_entry_info_t info = {
+			       .action = JOURNAL_ACTION_CHOWN,
+			       .path = JOURNAL_PATH_FROM_CRED (cred)
+			     };
+
+			     journal_log_metadata (np, &info);
 			     np->dn_set_ctime = 1;
 			     if (np->filemod_reqs)
 			       diskfs_notice_filechange(np,

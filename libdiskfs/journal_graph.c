@@ -92,7 +92,7 @@ get_inode (journal_ino_t ino, struct journal_arena *arena)
 }
 
 static bool
-add_child (inode_graph_node_t *parent, journal_ino_t child_ino,
+add_child (inode_graph_node_t * parent, journal_ino_t child_ino,
 	   struct journal_arena *arena)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
@@ -124,7 +124,7 @@ add_child (inode_graph_node_t *parent, journal_ino_t child_ino,
 }
 
 static void
-remove_child (inode_graph_node_t *parent, journal_ino_t child_ino)
+remove_child (inode_graph_node_t * parent, journal_ino_t child_ino)
 {
   for (size_t i = 0; i < parent->num_children; ++i)
     {
@@ -260,28 +260,16 @@ journal_graph_add_event (const struct journal_payload_bin *ev,
   replay->st_nlink = ev->st_nlink;
   replay->st_mode = ev->st_mode;
   replay->st_gen = ev->st_gen;
+  replay->uid = ev->uid;
+  replay->gid = ev->gid;
+  replay->author = ev->author;
+  replay->flags = ev->flags;
 
   if (ev->path[0] != '\0')
     {
       safe_strncpy (replay->resolved_path, ev->path,
 		    JOURNAL_NORMALIZED_PATH_MAX);
       safe_strncpy (replay->name, ev->name, sizeof (replay->name));
-    }
-
-  if (ev->has_uid)
-    {
-      replay->uid = ev->uid;
-      replay->has_uid = true;
-    }
-  if (ev->has_gid)
-    {
-      replay->gid = ev->gid;
-      replay->has_gid = true;
-    }
-  if (ev->has_flags)
-    {
-      replay->flags = ev->flags;
-      replay->has_flags = true;
     }
 
   if (ev->has_mtime && (!replay->has_mtime || ev->mtime > replay->mtime))
@@ -313,7 +301,7 @@ journal_graph_free (void)
 }
 
 size_t
-journal_graph_get_all (inode_replay_state_t ***out_list,
+journal_graph_get_all (inode_replay_state_t *** out_list,
 		       struct journal_arena *arena)
 {
   size_t count = 0;

@@ -75,7 +75,7 @@ struct journal_entries
  * out may point to garbage in case of error. Do not use in that case.
  */
 static bool
-fetch_and_validate_header (journal_header_t *out)
+fetch_and_validate_header (journal_header_t * out)
 {
   error_t err = journal_read_header (out);
   if (err)
@@ -107,7 +107,7 @@ fetch_and_validate_header (journal_header_t *out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
+fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
 {
   error_t err = journal_read_entry (out, index);
   if (err)
@@ -143,7 +143,7 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
 
 static bool
 add_event_to_list (struct journal_entries *list,
-		   journal_payload_bin_t *payload)
+		   journal_payload_bin_t * payload)
 {
   if (list->count == list->capacity)
     {
@@ -187,7 +187,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-			    const journal_inode_denylist_t *denylist,
+			    const journal_inode_denylist_t * denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -292,9 +292,7 @@ test (struct journal_arena *arena)
   payload->st_gen = 1754326282;
   payload->st_size = 1000;
   payload->st_blocks = 26;
-  payload->has_uid = true;
   payload->gid = 0;
-  payload->has_gid = true;
   payload->action = JOURNAL_ACTION_CHOWN;
   payload->st_nlink = 12;
   safe_strncpy (payload->path,
@@ -316,9 +314,7 @@ test (struct journal_arena *arena)
   payload1->tx_id = 7115;
   payload1->timestamp_ms = time (NULL) + 90;
   payload1->uid = 0;
-  payload1->has_uid = true;
   payload1->gid = 0;
-  payload1->has_gid = true;
   payload1->action = JOURNAL_ACTION_CHOWN;
 
   // crucial piece of data!!!!!
@@ -414,7 +410,7 @@ CLEANUP:
  */
 static void
 replay_main_pass (struct journal_arena *arena,
-		  journal_inode_denylist_t *denylist)
+		  journal_inode_denylist_t * denylist)
 {
   test (arena);
   struct journal_entries list = { 0 };
@@ -447,7 +443,7 @@ replay_main_pass (struct journal_arena *arena,
  * and finally restores the system state.
  */
 void
-journal_replay (journal_inode_denylist_t *denylist)
+journal_replay (journal_inode_denylist_t * denylist)
 {
   struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)

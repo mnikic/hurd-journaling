@@ -73,16 +73,6 @@ typedef struct journal_entry_info
   ino_t src_parent_ino;
   ino_t dst_parent_ino;
 
-  /* Ownership.  */
-  bool has_uid;
-  uid_t uid;
-  bool has_gid;
-  uid_t gid;
-
-  /* Size and permissions.  */
-  bool has_flags;
-  uint32_t flags;
-
   /* Symlink target.  */
   const char *target;
 

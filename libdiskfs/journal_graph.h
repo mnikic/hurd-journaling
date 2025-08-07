@@ -54,13 +54,9 @@ typedef struct inode_replay_state
   bool has_atime;
 
   journal_uid_t uid;
-  bool has_uid;
-
   journal_uid_t gid;
-  bool has_gid;
-
+  journal_uid_t author;
   uint32_t flags;
-  bool has_flags;
 } inode_replay_state_t;
 
 /* Internal graph node used to track parent/child relations and final replay state */

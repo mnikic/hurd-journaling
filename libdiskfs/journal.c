@@ -168,7 +168,7 @@ toString (journal_action_t action)
 }
 
 void
-journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
 {
   if (!journal_enabled)
     {
@@ -207,6 +207,12 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
   entry->st_blocks = st->st_blocks;
   entry->st_gen = st->st_gen;
 
+  entry->uid = st->st_uid;
+  entry->gid = st->st_gid;
+  entry->flags = st->st_flags;
+  entry->action = info->action;
+  entry->author = st->st_author;
+
   if (should_log_time (st->st_mtime, np->dn_set_mtime))
     {
       entry->mtime = st->st_mtime;
@@ -223,25 +229,6 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
       entry->has_atime = true;
     }
 
-  if (info->has_uid)
-    {
-      entry->uid = (journal_uid_t) info->uid;
-      entry->has_uid = true;
-    }
-
-  if (info->has_gid)
-    {
-      entry->gid = (journal_uid_t) info->gid;
-      entry->has_gid = true;
-    }
-
-  if (info->has_flags)
-    {
-      entry->flags = info->flags;
-      entry->has_flags = true;
-    }
-
-  entry->action = info->action;
   safe_strncpy (entry->name, name, sizeof (entry->name));
   safe_strncpy (entry->extra, extra, sizeof (entry->extra));
   safe_strncpy (entry->old_name, old_name, sizeof (entry->old_name));
@@ -249,9 +236,9 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
   safe_strncpy (entry->target, target, sizeof (entry->target));
 
   snprintf (entry->path, sizeof (entry->path), "%s", normalized_path);
-  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%llu action=%u name=%s path=%s",
-		     entry->ino, entry->tx_id, entry->action, entry->name,
-		     normalized_path);
+  JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%" PRIu64
+		     " action=%u name=%s path=%s", entry->ino, entry->tx_id,
+		     entry->action, entry->name, normalized_path);
 
   if (journal_enabled)
     {

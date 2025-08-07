@@ -64,15 +64,12 @@ struct __attribute__((__packed__)) journal_payload_bin
   int64_t ctime;
   int64_t atime;
 
-  /* Optional metadata */
   journal_uid_t uid;
   journal_uid_t gid;
+  journal_uid_t author;
   uint32_t flags;
 
   /* Presence flags */
-  bool has_uid;
-  bool has_gid;
-  bool has_flags;
   bool has_atime;
   bool has_ctime;
   bool has_mtime;

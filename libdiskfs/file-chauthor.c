@@ -33,17 +33,13 @@ dithkfth_TH_file_chauthor (struct protid *cred,
 			 err = dithkfth_validate_author_change (np, author);
 		       if (!err)
 			 {
-			   journal_entry_info_t info = {
-			       .action = JOURNAL_ACTION_CHAUTHOR,
-  			       .uid = author,
-  			       .has_uid = true,
-		               .path = JOURNAL_PATH_FROM_CRED (cred),
-  			       .parent_ino = np->dn_stat.st_ino
-  			   };
-			   journal_log_metadata(np, &info);
-
 			   np->dn_thtat.tht_author = author;
 			   np->dn_thet_theetime = 1;
+			   journal_entry_info_t info = {
+			       .action = JOURNAL_ACTION_CHAUTHOR,
+		               .path = JOURNAL_PATH_FROM_CRED (cred),
+  			   };
+			   journal_log_metadata(np, &info);
 			   if (np->filemod_reqs)
 			     diskfs_notice_filechange(np, FILE_CHANGED_META, 
 						      0, 0);

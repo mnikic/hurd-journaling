@@ -45,7 +45,7 @@
 
 static inline bool
 node_matches_fingerprint (const struct node *np,
-			  const inode_replay_state_t *state)
+			  const inode_replay_state_t * state)
 {
   const struct stat *st = &np->dn_stat;
   if (st->st_size != state->st_size || st->st_blocks != state->st_blocks
@@ -71,7 +71,7 @@ node_matches_fingerprint (const struct node *np,
 static error_t
 lookup_node_and_check_fingerprint (struct node *fs_root,
 				   const char *path,
-				   const inode_replay_state_t *state,
+				   const inode_replay_state_t * state,
 				   struct protid *cred, struct node **out)
 {
   struct node *np = NULL;
@@ -130,7 +130,7 @@ create_directory (struct node *restore_root, const char *dir_path,
 static error_t
 find_or_create_directory (struct node *fs_root, struct node *restore_root,
 			  const char *dir_path,
-			  const inode_replay_state_t *state,
+			  const inode_replay_state_t * state,
 			  struct protid *cred, struct node **out)
 {
   if (!journal_good_dir_path (dir_path))
@@ -154,8 +154,9 @@ find_or_create_directory (struct node *fs_root, struct node *restore_root,
 /* Validates and creates a file at the given path, if it does not already exist. */
 static error_t
 find_or_create_file (struct node *fs_root, struct node *restore_root,
-		     const char *full_path, const inode_replay_state_t *state,
-		     struct protid *cred, struct node **out)
+		     const char *full_path,
+		     const inode_replay_state_t * state, struct protid *cred,
+		     struct node **out)
 {
   char dir_path[JOURNAL_PATH_MAX];
   char file_name[JOURNAL_FILENAME_MAX + 1];
@@ -226,7 +227,7 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
 /* Determines whether the inode is a dir or file and applies appropriate creation logic. */
 error_t
 find_by_path_or_create (const char *full_path,
-			const inode_replay_state_t *state,
+			const inode_replay_state_t * state,
 			struct node *fs_root, struct node *restore_root,
 			struct protid *cred, struct node **out)
 {
@@ -239,7 +240,7 @@ find_by_path_or_create (const char *full_path,
 }
 
 static bool
-should_skip_inode (const inode_replay_state_t *state, struct node *np)
+should_skip_inode (const inode_replay_state_t * state, struct node *np)
 {
   if (!journal_is_safe_stat (np->dn_stat.st_mode))
     return true;
@@ -252,7 +253,7 @@ should_skip_inode (const inode_replay_state_t *state, struct node *np)
 }
 
 static int
-apply_metadata_changes (struct node *np, const inode_replay_state_t *state,
+apply_metadata_changes (struct node *np, const inode_replay_state_t * state,
 			const char *path)
 {
   int changes = 0;
@@ -261,19 +262,24 @@ apply_metadata_changes (struct node *np, const inode_replay_state_t *state,
   size_t desc_len = 0;
   bool first = true;
 
-  if (state->has_uid && state->uid != (uid_t) - 1
-      && np->dn_stat.st_uid != state->uid)
+  if (np->dn_stat.st_uid != state->uid)
     {
       APPEND_CHANGE ("uid");
       np->dn_stat.st_uid = state->uid;
       changes++;
     }
 
-  if (state->has_gid && state->gid != (gid_t) - 1
-      && np->dn_stat.st_gid != state->gid)
+  if (np->dn_stat.st_gid != state->gid)
     {
       APPEND_CHANGE ("gid");
       np->dn_stat.st_gid = state->gid;
+      changes++;
+    }
+
+  if (np->dn_stat.st_author != state->author)
+    {
+      APPEND_CHANGE ("author");
+      np->dn_stat.st_author = state->author;
       changes++;
     }
 
@@ -305,7 +311,7 @@ apply_metadata_changes (struct node *np, const inode_replay_state_t *state,
       changes++;
     }
 
-  if (state->has_flags && np->dn_stat.st_flags != state->flags)
+  if (np->dn_stat.st_flags != state->flags)
     {
       APPEND_CHANGE ("flags 0x%x", state->flags);
       np->dn_stat.st_flags = state->flags;
@@ -337,7 +343,7 @@ apply_metadata_changes (struct node *np, const inode_replay_state_t *state,
 }
 
 error_t
-apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
+apply_node_replay (inode_replay_state_t * state, struct node *fs_root,
 		   struct node *restore_root, struct protid *cred)
 {
   if (state->ino < JOURNAL_REPLAY_MIN_INO)

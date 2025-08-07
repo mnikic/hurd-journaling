@@ -46,14 +46,13 @@ diskfs_S_file_chmod (struct protid *cred,
 			   err = diskfs_validate_mode_change (np, mode);
 			   if (!err)
 			     {
+			       np->dn_stat.st_mode = mode;
+			       np->dn_set_ctime = 1;
                                journal_entry_info_t info = {
                                  .action = JOURNAL_ACTION_CHMOD,
 				 .path = JOURNAL_PATH_FROM_CRED (cred)
                                };
                                journal_log_metadata (np, &info);
-
-			       np->dn_stat.st_mode = mode;
-			       np->dn_set_ctime = 1;
 			       if (np->filemod_reqs)
 				 diskfs_notice_filechange (np,
 							   FILE_CHANGED_META,
