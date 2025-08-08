@@ -274,70 +274,6 @@ fetch_and_validate_journal (struct journal_arena *arena,
   return true;
 }
 
-static void
-test (struct journal_arena *arena)
-{
-  JOURNAL_LOG_DEBUG ("TESTING: Starting.");
-  for (int i = 0; i < 20; i++)
-    {
-      journal_payload_bin_t *payload =
-	journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-      payload->ino = 999997 - i;
-      payload->mtime = 1788211200;
-      payload->has_mtime = true;
-      payload->ctime = 1788211200;
-      payload->has_ctime = true;
-      payload->st_mode = 0100755;
-      payload->tx_id = 7113;
-      payload->timestamp_ms = time (NULL) + 60;
-      payload->uid = 1001;
-      payload->st_gen = 1754326282;
-      payload->st_size = 1000;
-      payload->st_blocks = 26;
-      payload->gid = 1001;
-      payload->action = JOURNAL_ACTION_CHOWN;
-      payload->st_nlink = 12;
-      safe_strncpy (payload->path,
-		    "/home/loshmi/nonexisting/dir/", sizeof (payload->path));
-      char name[20];
-      sprintf (name, "file-%d", i);
-      safe_strncpy (payload->name, name, sizeof (name));
-      if (!journal_write (payload))
-	JOURNAL_LOG_DEBUG
-	  ("TESTING: Didn't manage to write payload num %d for some reason",
-	   i);
-      else
-	JOURNAL_LOG_DEBUG ("TESTING: Payload num %d inserted.", i);
-    }
-  journal_payload_bin_t *payload1 =
-    journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload1->ino = 999998;
-  payload1->mtime = 1788211210;
-  payload1->has_mtime = true;
-  payload1->ctime = 1788211210;
-  payload1->st_gen = 1754326282;
-  payload1->st_size = 1000;
-  payload1->st_blocks = 26;
-  payload1->has_ctime = true;
-  payload1->st_mode = 0100644;
-  payload1->tx_id = 7115;
-  payload1->timestamp_ms = time (NULL) + 90;
-  payload1->uid = 0;
-  payload1->gid = 0;
-  payload1->action = JOURNAL_ACTION_CHOWN;
-
-  // crucial piece of data!!!!!
-  payload1->st_nlink = 3;
-
-  safe_strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
-
-  safe_strncpy (payload1->name, "something.c", sizeof (payload1->name));
-  if (!journal_write (payload1))
-    JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
-  else
-    JOURNAL_LOG_DEBUG ("TESTING: Payload 1 inserted.");
-}
-
 /**
  * replay_apply_graph - Applies all reconstructed journal state to diskfs.
  *
@@ -417,7 +353,6 @@ static void
 replay_main_pass (struct journal_arena *arena,
 		  journal_inode_denylist_t * denylist)
 {
-  test (arena);
   struct journal_entries list = { 0 };
   if (!fetch_and_validate_journal (arena, denylist, &list))
     {

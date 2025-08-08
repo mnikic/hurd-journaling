@@ -121,52 +121,6 @@ should_log_time (time_t value, int flag_set)
 		      && value < JOURNAL_MAX_REASONABLE_TIME);
 }
 
-static inline char *
-toString (journal_action_t action)
-{
-  switch (action)
-    {
-    case JOURNAL_ACTION_CREATE:
-      return "CREATE";
-    case JOURNAL_ACTION_MKDIR:
-      return "MKDIR";
-    case JOURNAL_ACTION_MKFILE:
-      return "MKFILE";
-    case JOURNAL_ACTION_SYMLINK:
-      return "SYMLINK";
-    case JOURNAL_ACTION_LINK:
-      return "LINK";
-    case JOURNAL_ACTION_UNLINK:
-      return "UNLINK";
-    case JOURNAL_ACTION_RENAME:
-      return "RENAME";
-    case JOURNAL_ACTION_RMDIR:
-      return "RMDIR";
-    case JOURNAL_ACTION_CHMOD:
-      return "CHMOD";
-    case JOURNAL_ACTION_CHOWN:
-      return "CHOWN";
-    case JOURNAL_ACTION_UTIME:
-      return "UTIME";
-    case JOURNAL_ACTION_TRUNCATE:
-      return "TRUNCATE";
-    case JOURNAL_ACTION_GROW:
-      return "GROW";
-    case JOURNAL_ACTION_CHAUTHOR:
-      return "CHAUTHOR";
-    case JOURNAL_ACTION_CHFLAGS:
-      return "FLASGS";
-    case JOURNAL_ACTION_ATIME:
-      return "ATIME";
-    case JOURNAL_ACTION_WRITE:
-      return "WRITE";
-    default:
-      break;
-    }
-
-  return "UNKNOWN";
-}
-
 void
 journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
 {
