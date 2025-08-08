@@ -45,7 +45,7 @@ do {                                                              \
 
 static inline bool
 node_matches_fingerprint (const struct node *np,
-			  const inode_replay_state_t * state)
+			  const inode_replay_state_t *state)
 {
   const struct stat *st = &np->dn_stat;
   if (st->st_size != state->st_size || st->st_blocks != state->st_blocks
@@ -73,13 +73,14 @@ typedef enum
   RES_FOUND = 0,		/* *out set (locked) */
   RES_NOT_FOUND,		/* neither inode nor path found */
   RES_SKIP,			/* exists, but policy says skip */
+  RES_PATH_INVALID,		/* didn't find it by ino and path cannot be used */
   RES_MISMATCH,			/* found, but fingerprint mismatch */
   RES_ERROR			/* hard error (errno in *perr) */
 } resolve_result_t;
 
 /* Policy gate: same checks you had inline */
 static inline bool
-eligible_for_replay (const struct node *np, const inode_replay_state_t * st)
+eligible_for_replay (const struct node *np, const inode_replay_state_t *st)
 {
   if (!journal_is_safe_stat (np->dn_stat.st_mode))
     return false;
@@ -96,21 +97,23 @@ eligible_for_replay (const struct node *np, const inode_replay_state_t * st)
 
 /* Lookup by path + fingerprint */
 static inline resolve_result_t
-lookup_by_path_locked (const char *path, const inode_replay_state_t * st,
+lookup_by_path_locked (const char *path, const inode_replay_state_t *st,
 		       struct node *fs_root, struct protid *cred,
-		       struct node **out, error_t * perr)
+		       struct node **out, error_t *perr)
 {
+  if (!path)
+    return RES_PATH_INVALID;
+
   *out = NULL;
   struct node *np = NULL;
   error_t err = diskfs_lookup_path (fs_root, path, cred, &np);
-  if (perr)
-    *perr = err;
-
   if (err == ENOENT)
     return RES_NOT_FOUND;
   if (err)
-    return RES_ERROR;
-
+    {
+      *perr = err;
+      return RES_ERROR;
+    }
   if (!node_matches_fingerprint (np, st))
     {
       diskfs_nput (np);
@@ -123,16 +126,17 @@ lookup_by_path_locked (const char *path, const inode_replay_state_t * st,
       return RES_SKIP;
     }
 
-  *out = np;			/* locked */
+  *out = np;
   return RES_FOUND;
 }
 
 /* First try inode cache + fingerprint; if that fails, try path + fingerprint.
    Never creates anything. Returns locked *out on RES_FOUND. */
 static inline resolve_result_t
-resolve_existing_node_locked (inode_replay_state_t * st,
+resolve_existing_node_locked (const char *opt_full_path,
+			      const inode_replay_state_t *st,
 			      struct node *fs_root, struct protid *cred,
-			      struct node **out, error_t * perr)
+			      struct node **out, error_t *perr)
 {
   *out = NULL;
   if (perr)
@@ -153,7 +157,7 @@ resolve_existing_node_locked (inode_replay_state_t * st,
 	  return RES_SKIP;
 	}
 
-      *out = np;		/* locked */
+      *out = np;
       return RES_FOUND;
     }
   if (np)
@@ -162,18 +166,7 @@ resolve_existing_node_locked (inode_replay_state_t * st,
       np = NULL;
     }
 
-  /* 2) by path */
-  char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-  err = journal_resolve_full_path (st->resolved_path, st->name,
-				   full_path, sizeof (full_path));
-  if (err)
-    {
-      if (perr)
-	*perr = err;
-      return RES_ERROR;
-    }
-
-  return lookup_by_path_locked (full_path, st, fs_root, cred, out, perr);
+  return lookup_by_path_locked (opt_full_path, st, fs_root, cred, out, perr);
 }
 
 /* Ensure directory exists under restore_root:
@@ -189,7 +182,7 @@ static inline error_t
 mkdirp_lookup_dir_locked (struct node *restore_root,
 			  const char *dir_path,
 			  struct protid *cred,
-			  const inode_replay_state_t * state,
+			  const inode_replay_state_t *state,
 			  struct node **out)
 {
   if (!restore_root || !dir_path || !cred || !out)
@@ -225,7 +218,7 @@ mkdirp_lookup_dir_locked (struct node *restore_root,
 static inline error_t
 create_directory_under_restore (struct node *restore_root,
 				const char *dir_path,
-				const inode_replay_state_t * state,
+				const inode_replay_state_t *state,
 				struct protid *cred, struct node **out)
 {
   if (!journal_good_dir_path (dir_path))
@@ -242,7 +235,7 @@ create_directory_under_restore (struct node *restore_root,
 
 static inline error_t
 create_file_under_restore (struct node *restore_root, const char *full_path,	/* relative */
-			   const inode_replay_state_t * state,
+			   const inode_replay_state_t *state,
 			   struct protid *cred, struct node **out)
 {
   char dir_path[JOURNAL_PATH_MAX];
@@ -278,28 +271,33 @@ create_file_under_restore (struct node *restore_root, const char *full_path,	/* 
 
   JOURNAL_LOG_DEBUG ("inode %u: File created. Path: %s. Ino: %" PRIu64,
 		     state->ino, full_path, file->dn_stat.st_ino);
-  *out = file;			/* locked */
+  *out = file;
   return 0;
 }
 
 static error_t
-create_node (const char *full_path, inode_replay_state_t * state,
+create_node (const char *opt_full_path, inode_replay_state_t *state,
 	     struct node *restore_root, struct protid *cred,
 	     struct node **out)
 {
+  if (!opt_full_path)
+    return EINVAL;
+
+  JOURNAL_LOG_DEBUG
+    ("It doesn't seem file ino: %u is there. Lets see if we can create it.",
+     state->ino);
   uint32_t mode = state->st_mode;
   if (S_ISDIR (mode))
-    return create_directory_under_restore (restore_root, full_path, state,
+    return create_directory_under_restore (restore_root, opt_full_path, state,
 					   cred, out);
   else
-    return create_file_under_restore (restore_root, full_path, state, cred,
-				      out);
+    return create_file_under_restore (restore_root, opt_full_path, state,
+				      cred, out);
 }
 
 static inline int
 apply_metadata_changes_locked (struct node *np,
-			       const inode_replay_state_t * state,
-			       const char *path /* for logging */ )
+			       const inode_replay_state_t *state)
 {
   int changes = 0;
   char change_desc[128] = { 0 };
@@ -365,28 +363,26 @@ apply_metadata_changes_locked (struct node *np,
   if (changes > 0)
     {
 #if JOURNAL_REPLAY_DRY_RUN
-      JOURNAL_LOG_DEBUG ("[DRY_RUN] inode %" PRIu32
-			 ": path %s, %d changes: [%s]", state->ino, path,
-			 changes, change_desc);
+      JOURNAL_LOG_DEBUG ("[DRY_RUN] inode %" PRIu32 ": %d changes: [%s]",
+			 +state->ino, changes, change_desc);
 #else
       np->dn_stat_dirty = 1;
       np->dn_set_ctime = 1;
       diskfs_node_update (np, 0);
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
-			 ": path %s, %d changes applied: [%s]", state->ino,
-			 path, changes, change_desc);
+			 ": %d changes applied: [%s]", state->ino, changes,
+			 change_desc);
 #endif
     }
   else
     {
-      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": path %s, no changes needed",
-			 state->ino, path ? path : "");
+      JOURNAL_LOG_DEBUG ("inode %" PRIu32 ": no changes needed.", state->ino);
     }
   return changes;
 }
 
 error_t
-apply_node_replay (inode_replay_state_t * state, struct node *fs_root,
+apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
 		   struct node *restore_root, struct protid *cred)
 {
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
@@ -397,31 +393,33 @@ apply_node_replay (inode_replay_state_t * state, struct node *fs_root,
       return 0;
     }
   struct node *np = NULL;
-  error_t err = 0;
-  resolve_result_t rr =
-    resolve_existing_node_locked (state, fs_root, cred, &np, &err);
-
   char full_path[JOURNAL_NORMALIZED_PATH_MAX];
-  err = journal_resolve_full_path (state->resolved_path, state->name,
-				   full_path, sizeof (full_path));
+  error_t err = journal_resolve_full_path (state->resolved_path, state->name,
+					   full_path, sizeof (full_path));
+  const char *opt_path = err ? NULL : full_path;
+  resolve_result_t rr =
+    resolve_existing_node_locked (opt_path, state, fs_root, cred, &np, &err);
+
   if (err)
     return err;
   if (rr == RES_ERROR)
     return err;
   if (rr == RES_SKIP || rr == RES_MISMATCH)
     return 0;			/* found but we intentionally skip */
-  if (rr == RES_NOT_FOUND)
+  if (rr == RES_PATH_INVALID)
     {
       JOURNAL_LOG_DEBUG
-	("It doesn't seem file ino: %u is there. Lets see if we can create it.",
+	("inode %u: Ino not found and no valid path for creation; skipping.",
 	 state->ino);
-
-      err = create_node (full_path, state, restore_root, cred, &np);
-      if (err || !np)
-	return err ? err : EIO;
+      return 0;
     }
+  if (rr == RES_NOT_FOUND)
+    err = create_node (opt_path, state, restore_root, cred, &np);
 
-  (void) apply_metadata_changes_locked (np, state, full_path);
+  if (err || !np)
+    return err ? err : EIO;
+
+  (void) apply_metadata_changes_locked (np, state);
   diskfs_nput (np);
   return 0;
 }
