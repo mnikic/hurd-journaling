@@ -69,7 +69,7 @@ persist_header_with_retry (uint64_t start_index,
 }
 
 static bool
-initialize_indices (uint64_t *start_index, uint64_t *end_index)
+initialize_indices (uint64_t * start_index, uint64_t * end_index)
 {
   journal_header_t hdr = { 0 };
   error_t err = journal_read_header (&hdr);
@@ -108,7 +108,7 @@ initialize_indices (uint64_t *start_index, uint64_t *end_index)
 }
 
 bool
-journal_write (const journal_payload_bin_t *payload_bin)
+journal_write (const journal_payload_bin_t * payload_bin)
 {
   pthread_mutex_lock (&sync_write_lock);
 

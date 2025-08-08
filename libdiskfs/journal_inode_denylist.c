@@ -35,7 +35,7 @@ journal_inode_denylist_builder_init (void)
 }
 
 bool
-journal_inode_denylist_builder_add (builder_t *builder, journal_ino_t ino)
+journal_inode_denylist_builder_add (builder_t * builder, journal_ino_t ino)
 {
   if (ino >= MAX_INODE_VALUE)
     return false;
@@ -44,7 +44,7 @@ journal_inode_denylist_builder_add (builder_t *builder, journal_ino_t ino)
 }
 
 journal_inode_denylist_t
-journal_inode_denylist_finalize (builder_t *builder)
+journal_inode_denylist_finalize (builder_t * builder)
 {
   atomic_thread_fence (memory_order_seq_cst);
   journal_inode_denylist_t result = { 0 };
@@ -53,7 +53,7 @@ journal_inode_denylist_finalize (builder_t *builder)
 }
 
 bool
-journal_inode_denylist_contains (const journal_inode_denylist_t *set,
+journal_inode_denylist_contains (const journal_inode_denylist_t * set,
 				 journal_ino_t ino)
 {
   if (ino >= MAX_INODE_VALUE)

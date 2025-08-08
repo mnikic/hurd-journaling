@@ -35,7 +35,7 @@ hash_ino (journal_ino_t ino)
 }
 
 bool
-journal_filter_should_log (journal_filter_instance_t *instance,
+journal_filter_should_log (journal_filter_instance_t * instance,
 			   journal_ino_t ino, time_t now)
 {
   if (!instance || !instance->table)
