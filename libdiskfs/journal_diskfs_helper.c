@@ -19,11 +19,12 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 
-#include "diskfs.h"
+#include <libdiskfs/diskfs.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_diskfs_helper.h>
+
 #include <pthread.h>
 #include <string.h>
 
