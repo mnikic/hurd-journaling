@@ -164,8 +164,11 @@ diskfs_make_file (struct node *dir, const char *filename, struct protid *cred,
       diskfs_drop_dirstat (dir, ds);
       return err;
     }
-
-  diskfs_node_update (new_node, 1);
+  if (diskfs_synchronous)
+    {
+      diskfs_file_update (dir, 1);
+      diskfs_file_update (new_node, 1);
+    }
   *out = new_node;
 
   diskfs_drop_dirstat (dir, ds);

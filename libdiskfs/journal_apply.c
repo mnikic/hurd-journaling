@@ -67,7 +67,8 @@ node_matches_fingerprint (const struct node *np,
 }
 
 static error_t
-find_or_create_directory (struct node *fs_root, struct node *restore_root, const char *dir_path,
+find_or_create_directory (struct node *fs_root, struct node *restore_root,
+			  const char *dir_path,
 			  const inode_replay_state_t * state,
 			  struct protid *cred, struct node **out)
 {
@@ -204,7 +205,7 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
       *out = NULL;
       return err;
     }
-  struct node * dir = NULL;
+  struct node *dir = NULL;
   JOURNAL_LOG_DEBUG
     ("inode %u: In lookup path for the dir the came out of mkdir_p. Let see Dir: '%s'.",
      state->ino, dir_path);
@@ -219,11 +220,6 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
     }
   struct node *file = NULL;
   err = diskfs_make_file (dir, file_name, cred, &file);
-  if (diskfs_synchronous)
-    {
-      diskfs_file_update (file, 1);
-      diskfs_file_update (dir, 1);
-    }
   diskfs_nput (dir);
   if (err)
     {
@@ -242,10 +238,11 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
 }
 
 static error_t
-find_by_path_or_create (inode_replay_state_t * state, struct node * fs_root,
+find_by_path_or_create (inode_replay_state_t * state, struct node *fs_root,
 			struct node *restore_root, struct protid *cred,
 			struct node **out)
-{ char full_path[JOURNAL_NORMALIZED_PATH_MAX];
+{
+  char full_path[JOURNAL_NORMALIZED_PATH_MAX];
   error_t err = journal_resolve_full_path (state->resolved_path, state->name,
 					   full_path, sizeof (full_path));
   if (err)
@@ -258,12 +255,14 @@ find_by_path_or_create (inode_replay_state_t * state, struct node * fs_root,
     return find_or_create_directory (fs_root, restore_root, full_path,
 				     state, cred, out);
   else
-    return find_or_create_file (fs_root, restore_root, full_path, state, cred, out);
+    return find_or_create_file (fs_root, restore_root, full_path, state, cred,
+				out);
 }
 
 error_t
-apply_node_replay (inode_replay_state_t * state,struct node *fs_root, struct node *restore_root,
-		   struct protid *cred) {
+apply_node_replay (inode_replay_state_t * state, struct node *fs_root,
+		   struct node *restore_root, struct protid *cred)
+{
   if (state->ino < JOURNAL_REPLAY_MIN_INO)
     {
       JOURNAL_LOG_DEBUG ("inode %" PRIu32
@@ -330,11 +329,17 @@ apply_node_replay (inode_replay_state_t * state,struct node *fs_root, struct nod
       changes++;
     }
 
-  if (
-       np->dn_stat.st_gid != state->gid)
+  if (np->dn_stat.st_gid != state->gid)
     {
       APPEND_CHANGE ("gid");
       np->dn_stat.st_gid = state->gid;
+      changes++;
+    }
+
+  if (np->dn_stat.st_author != state->author)
+    {
+      APPEND_CHANGE ("author");
+      np->dn_stat.st_author = state->author;
       changes++;
     }
 
@@ -402,4 +407,3 @@ apply_node_replay (inode_replay_state_t * state,struct node *fs_root, struct nod
   diskfs_nput (np);
   return 0;
 }
-

@@ -74,7 +74,7 @@ struct journal_entries
  * Performs CRC and magic/version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_header (journal_header_t *out)
+fetch_and_validate_header (journal_header_t * out)
 {
   error_t err = journal_read_header (out);
   if (err)
@@ -106,7 +106,7 @@ fetch_and_validate_header (journal_header_t *out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
+fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
 {
   error_t err = journal_read_entry (out, index);
   if (err)
@@ -142,7 +142,7 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
 
 static bool
 add_event_to_list (struct journal_entries *list,
-		   journal_payload_bin_t *payload)
+		   journal_payload_bin_t * payload)
 {
   if (list->count == list->capacity)
     {
@@ -186,7 +186,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-			    const journal_inode_denylist_t *denylist,
+			    const journal_inode_denylist_t * denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -278,28 +278,37 @@ static void
 test (struct journal_arena *arena)
 {
   JOURNAL_LOG_DEBUG ("TESTING: Starting.");
-  journal_payload_bin_t *payload =
-    journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
-  payload->ino = 999999;
-  payload->mtime = 1788211200;
-  payload->has_mtime = true;
-  payload->ctime = 1788211200;
-  payload->has_ctime = true;
-  payload->st_mode = 0100755;
-  payload->tx_id = 7113;
-  payload->timestamp_ms = time (NULL) + 60;
-  payload->uid = 0;
-  payload->st_gen = 1754326282;
-  payload->st_size = 1000;
-  payload->st_blocks = 26;
-  payload->gid = 0;
-  payload->action = JOURNAL_ACTION_CHOWN;
-  payload->st_nlink = 12;
-  safe_strncpy (payload->path,
-		"/home/loshmi/nonexisting/dir/andanewfile123.txt",
-		sizeof (payload->path));
-  safe_strncpy (payload->name, "andanewfile123.txt", sizeof (payload->name));
-
+  for (int i = 0; i < 20; i++)
+    {
+      journal_payload_bin_t *payload =
+	journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
+      payload->ino = 999997 - i;
+      payload->mtime = 1788211200;
+      payload->has_mtime = true;
+      payload->ctime = 1788211200;
+      payload->has_ctime = true;
+      payload->st_mode = 0100755;
+      payload->tx_id = 7113;
+      payload->timestamp_ms = time (NULL) + 60;
+      payload->uid = 1001;
+      payload->st_gen = 1754326282;
+      payload->st_size = 1000;
+      payload->st_blocks = 26;
+      payload->gid = 1001;
+      payload->action = JOURNAL_ACTION_CHOWN;
+      payload->st_nlink = 12;
+      safe_strncpy (payload->path,
+		    "/home/loshmi/nonexisting/dir/", sizeof (payload->path));
+      char name[20];
+      sprintf (name, "file-%d", i);
+      safe_strncpy (payload->name, name, sizeof (name));
+      if (!journal_write (payload))
+	JOURNAL_LOG_DEBUG
+	  ("TESTING: Didn't manage to write payload num %d for some reason",
+	   i);
+      else
+	JOURNAL_LOG_DEBUG ("TESTING: Payload num %d inserted.", i);
+    }
   journal_payload_bin_t *payload1 =
     journal_arena_alloc (arena, sizeof (journal_payload_bin_t));
   payload1->ino = 999998;
@@ -323,10 +332,6 @@ test (struct journal_arena *arena)
   safe_strncpy (payload1->path, "/home/loshmi/", sizeof (payload1->path));
 
   safe_strncpy (payload1->name, "something.c", sizeof (payload1->name));
-  if (!journal_write (payload))
-    JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
-  else
-    JOURNAL_LOG_DEBUG ("TESTING: Payload inserted.");
   if (!journal_write (payload1))
     JOURNAL_LOG_DEBUG ("TESTING: Didn't manage to write for some reason");
   else
@@ -410,7 +415,7 @@ CLEANUP:
  */
 static void
 replay_main_pass (struct journal_arena *arena,
-		  journal_inode_denylist_t *denylist)
+		  journal_inode_denylist_t * denylist)
 {
   test (arena);
   struct journal_entries list = { 0 };
@@ -443,7 +448,7 @@ replay_main_pass (struct journal_arena *arena,
  * and finally restores the system state.
  */
 void
-journal_replay (journal_inode_denylist_t *denylist)
+journal_replay (journal_inode_denylist_t * denylist)
 {
   struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)

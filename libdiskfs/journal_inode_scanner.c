@@ -86,7 +86,7 @@ stack_pop (struct node **np_out, char *path_out)
 
 error_t
 journal_scan_path_for_inos (const char *root_path,
-			    journal_inode_denylist_builder_t *builder)
+			    journal_inode_denylist_builder_t * builder)
 {
   struct protid *cred = NULL;
   struct node *start_np = NULL;
@@ -141,8 +141,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->
-					  dn_stat.st_ino);
+					  (journal_ino_t) start_np->dn_stat.
+					  st_ino);
       count++;
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;
