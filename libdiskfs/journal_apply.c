@@ -27,6 +27,7 @@
 #include <libdiskfs/journal_diskfs_helper.h>
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/diskfs.h>
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -66,6 +67,91 @@ node_matches_fingerprint (const struct node *np,
   return true;
 }
 
+/* Lookup `path` under `fs_root` and verify it matches `state` fingerprint.
+   On success: returns 0 and sets *out to a LOCKED node (caller must nput()).
+   On ENOENT: returns ENOENT and sets *out = NULL (caller may create).
+   On fingerprint mismatch: returns EINVAL and sets *out = NULL (caller should NOT create).
+   On other errors: returns the error and sets *out = NULL. */
+static inline error_t
+find_matching_node_by_path (const char *path,
+			    const inode_replay_state_t * state,
+			    const struct node *fs_root,
+			    struct protid *cred, struct node **out)
+{
+  if (!path || !*path || !state || !fs_root || !out)
+    return EINVAL;
+
+  *out = NULL;
+
+  struct node *np = NULL;
+  error_t err = diskfs_lookup_path (fs_root, path, cred, &np);
+  if (err)
+    {
+      if (err != ENOENT)
+	JOURNAL_LOG_DEBUG ("lookup_path('%s') failed: %s", path,
+			   strerror (err));
+      return err;		/* ENOENT means "not found", others bubble up */
+    }
+
+  if (!node_matches_fingerprint (np, state))
+    {
+      JOURNAL_LOG_DEBUG ("Node %" PRIu64
+			 " at '%s' failed fingerprint; skipping.",
+			 np->dn_stat.st_ino, path);
+      diskfs_nput (np);
+      return EINVAL;		/* mismatch: do not create */
+    }
+
+  *out = np;			/* locked */
+  return 0;
+}
+
+/* Ensure directory exists under restore_root:
+ * - Calls diskfs_mkdir_p(restore_root, dir_path, cred)
+ * - Re-looks up the directory and returns a LOCKED node in *out
+ * - If diskfs_synchronous, updates the dir
+ *
+ * On success: returns 0 and *out is a locked node (caller must diskfs_nput()).
+ * On failure: returns error and sets *out = NULL.
+ *
+ * restore_root must be locked by the caller.
+ */
+static inline error_t
+mkdirp_lookup_dir_locked (struct node *restore_root,
+			  const char *dir_path,
+			  struct protid *cred,
+			  const inode_replay_state_t * state,
+			  struct node **out)
+{
+  if (!restore_root || !dir_path || !cred || !out)
+    return EINVAL;
+
+  *out = NULL;
+
+  error_t err = diskfs_mkdir_p (restore_root, dir_path, cred);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR ("inode %u: mkdir_p('%s') failed: %s",
+			 state ? state->ino : 0, dir_path, strerror (err));
+      return err;
+    }
+
+  struct node *dir = NULL;
+  err = diskfs_lookup_path (restore_root, dir_path, cred, &dir);
+  if (err || !dir)
+    {
+      JOURNAL_LOG_ERROR ("inode %u: re-lookup of dir '%s' failed: %s",
+			 state ? state->ino : 0, dir_path, strerror (err));
+      return err ? err : EIO;
+    }
+
+  JOURNAL_LOG_DEBUG ("inode %u: Directory ensured. Path: %s. Ino: %" PRIu64,
+		     state ? state->ino : 0, dir_path, dir->dn_stat.st_ino);
+
+  *out = dir;			/* locked */
+  return 0;
+}
+
 static error_t
 find_or_create_directory (struct node *fs_root, struct node *restore_root,
 			  const char *dir_path,
@@ -81,25 +167,8 @@ find_or_create_directory (struct node *fs_root, struct node *restore_root,
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path (fs_root, dir_path, cred, &np);
-  if (!err)
-    {
-      if (!node_matches_fingerprint (np, state))
-	{
-	  JOURNAL_LOG_DEBUG
-	    ("Node %" PRIu64
-	     " found for path %s but it doesn't match the fingerprint. Skipping.",
-	     np->dn_stat.st_ino, dir_path);
-	  diskfs_nput (np);
-	  return EINVAL;
-	}
-      JOURNAL_LOG_DEBUG
-	("ino %u: Directory found node. ino: %" PRIu64 ". Path: %s",
-	 state->ino, np->dn_stat.st_ino, dir_path);
-      *out = np;
-      return 0;
-    }
-
+  error_t err =
+    find_matching_node_by_path (dir_path, state, fs_root, cred, &np);
   if (err != ENOENT)
     return err;
 
@@ -107,30 +176,13 @@ find_or_create_directory (struct node *fs_root, struct node *restore_root,
     ("inode %u: Directory not found. Creating a new one. Path: %s",
      state->ino, dir_path);
 
-  err = diskfs_mkdir_p (restore_root, dir_path, cred);
+  struct node *dir = NULL;
+  err = mkdirp_lookup_dir_locked (restore_root, dir_path, cred, state, &dir);
   if (err)
     {
-      JOURNAL_LOG_ERROR
-	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
-	 state->ino, dir_path, strerror (err));
       *out = NULL;
       return err;
     }
-
-  struct node *dir = NULL;
-  err = diskfs_lookup_path (restore_root, dir_path, cred, &dir);
-  if (err || !dir)
-    {
-      JOURNAL_LOG_DEBUG
-	("inode %u: It seems we failed to lookup dir mkdir_p create. Err: %s.",
-	 state->ino, strerror (err));
-      *out = NULL;
-      return err;
-    }
-
-  JOURNAL_LOG_DEBUG
-    ("inode %u: Directory created. Path: %s. New Ino: %" PRIu64 "",
-     state->ino, dir_path, dir->dn_stat.st_ino);
   *out = dir;
   return 0;
 }
@@ -170,56 +222,22 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
     }
 
   struct node *np = NULL;
-  error_t err = diskfs_lookup_path (fs_root, full_path, cred, &np);
-  if (!err)
-    {
-      if (!node_matches_fingerprint (np, state))
-	{
-	  JOURNAL_LOG_DEBUG
-	    ("Node %" PRIu64
-	     " found for path %s but it doesn't match the fingerprint. Skipping.",
-	     np->dn_stat.st_ino, full_path);
-	  diskfs_nput (np);
-	  *out = NULL;
-	  return EINVAL;
-	}
-      *out = np;
-      return 0;
-    }
-
+  error_t err =
+    find_matching_node_by_path (full_path, state, fs_root, cred, &np);
   if (err != ENOENT)
-    {
-      *out = NULL;
-      return err;
-    }
+    return err;
 
   JOURNAL_LOG_DEBUG
     ("inode %u: File not found. Creating new one. Path: %s. Dir: '%s' File: '%s'",
      state->ino, full_path, dir_path, file_name);
-  err = diskfs_mkdir_p (restore_root, dir_path, cred);
+  struct node *dir = NULL;
+  err = mkdirp_lookup_dir_locked (restore_root, dir_path, cred, state, &dir);
   if (err)
     {
-      JOURNAL_LOG_ERROR
-	("inode %u: Failed to create a directory. Skipping. Path: %s. Error: %s",
-	 state->ino, dir_path, strerror (err));
       *out = NULL;
       return err;
     }
-  struct node *dir = NULL;
-  JOURNAL_LOG_DEBUG
-    ("inode %u: In lookup path for the dir the came out of mkdir_p. Let see Dir: '%s'.",
-     state->ino, dir_path);
-  err = diskfs_lookup_path (restore_root, dir_path, cred, &dir);
-  if (err || !dir)
-    {
-      JOURNAL_LOG_DEBUG
-	("inode %u: It seems we failed to lookup dir mkdir_p create. Err: %s.",
-	 state->ino, strerror (err));
-      *out = NULL;
-      return err;
-    }
-  struct node *file = NULL;
-  err = diskfs_make_file (dir, file_name, cred, &file);
+  err = diskfs_make_file (dir, file_name, cred, out);
   diskfs_nput (dir);
   if (err)
     {
@@ -232,8 +250,7 @@ find_or_create_file (struct node *fs_root, struct node *restore_root,
 
   JOURNAL_LOG_DEBUG
     ("inode %u: File created. Path: %s. New Ino: %" PRIu64 "",
-     state->ino, full_path, file->dn_stat.st_ino);
-  *out = file;
+     state->ino, full_path, (*out)->dn_stat.st_ino);
   return 0;
 }
 
