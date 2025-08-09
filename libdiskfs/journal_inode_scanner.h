@@ -30,4 +30,7 @@ error_t
 journal_scan_path_for_inos (const char *dir_path,
 			    journal_inode_denylist_builder_t * builder);
 
+error_t
+journal_seed_shadow_fs (void);
+
 #endif /*  LIBDISKFS_JOURNAL_INODE_SCANNER_H */

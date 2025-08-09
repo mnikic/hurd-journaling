@@ -30,6 +30,7 @@
 #include <dirent.h>
 
 #include <libdiskfs/journal_inode_denylist.h>
+#include <libdiskfs/journal_shadow_fs.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_diskfs_helper.h>
 
@@ -86,12 +87,11 @@ stack_pop (struct node **np_out, char *path_out)
 
 error_t
 journal_scan_path_for_inos (const char *root_path,
-			    journal_inode_denylist_builder_t * builder)
+			    journal_inode_denylist_builder_t *builder)
 {
   struct protid *cred = NULL;
   struct node *start_np = NULL;
   error_t err = 0;
-  size_t count = 0;
   struct node *root = diskfs_root_node;
   pthread_mutex_lock (&root->lock);
   diskfs_nref (root);
@@ -141,9 +141,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->
-					  dn_stat.st_ino);
-      count++;
+					  (journal_ino_t) start_np->dn_stat.
+					  st_ino);
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;
       int nentries = 0;
@@ -189,8 +188,133 @@ journal_scan_path_for_inos (const char *root_path,
 	      JOURNAL_LOG_DEBUG ("denylist: couldnt add %u (%s)",
 				 (unsigned) ino, name);
 	    }
-	  count++;
 
+	  if (S_ISDIR (mode))
+	    {
+	      if (!stack_push (child_np, name))
+		{
+		  diskfs_nput (child_np);
+		  JOURNAL_LOG_DEBUG
+		    ("Stack overflow, skipping subdirectory: %s", name);
+		}
+	      // else: ownership of child_np is now with the stack
+	    }
+	  else
+	    {
+	      diskfs_nput (child_np);
+	    }
+
+	  entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+	}
+
+      vm_deallocate (mach_task_self (), (vm_address_t) data, datacnt);
+      diskfs_nput (start_np);
+    }
+
+  JOURNAL_LOG_DEBUG ("scan_path_for_inos: done with %s. Found %u inos.",
+		     root_path, count);
+
+  struct node *remaining_np = NULL;
+  while (stack_pop (&remaining_np, NULL))
+    diskfs_nput (remaining_np);
+
+cleanup_creds:
+  if (cred)
+    ports_port_deref (cred);
+cleanup_root:
+  diskfs_nput (root);
+  return err;
+}
+
+error_t
+journal_seed_shadow_fs (void)
+{
+  struct protid *cred = NULL;
+  struct node *start_np = NULL;
+  error_t err = 0;
+  struct node *root = diskfs_root_node;
+  pthread_mutex_lock (&root->lock);
+  diskfs_nref (root);
+
+  err = diskfs_create_creds (root, O_READ | O_EXEC | O_WRITE, &cred);
+  if (err)
+    {
+      JOURNAL_LOG_ERROR ("create_creds failed: %d", err);
+      goto cleanup_root;
+    }
+
+  stack_init ();
+  if (!stack_push (root, "/"))
+    {
+      JOURNAL_LOG_ERROR ("Failed to initialize traversal stack");
+      diskfs_nput (start_np);
+      err = ENOMEM;
+      goto cleanup_creds;
+    }
+
+  while (stack_pop (&start_np, NULL))
+    {
+      if ((start_np->dn_stat.st_mode & S_IFMT) != S_IFDIR ||
+	  start_np->dn_stat.st_size == 0)
+	{
+	  diskfs_nput (start_np);
+	  continue;
+	}
+
+      char *data = NULL;
+      mach_msg_type_number_t datacnt = 0;
+      int nentries = 0;
+
+      err =
+	diskfs_get_directs (start_np, 0, -1, &data, &datacnt, 0, &nentries);
+      if (err || !data)
+	{
+	  JOURNAL_LOG_DEBUG ("diskfs_get_directs failed: %s", strerror (err));
+	  diskfs_nput (start_np);
+	  continue;
+	}
+
+      struct dirent *entry = (struct dirent *) data;
+      char *end = data + datacnt;
+
+      ino_t parent_ino = start_np->dn_stat.st_ino;
+      while ((char *) entry < end)
+	{
+	  char name[NAME_MAX + 1];
+	  safe_strncpy (name, entry->d_name, entry->d_namlen);
+	  name[entry->d_namlen] = '\0';
+
+	  if (strcmp (name, ".") == 0 || strcmp (name, "..") == 0)
+	    {
+	      entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+	      continue;
+	    }
+
+	  struct node *child_np = NULL;
+	  error_t cerr =
+	    diskfs_lookup_hard (start_np, name, LOOKUP, &child_np, NULL,
+				cred);
+	  if (cerr || !child_np)
+	    {
+	      entry = (struct dirent *) ((char *) entry + entry->d_reclen);
+	      continue;
+	    }
+
+	  mode_t mode = child_np->dn_stat.st_mode;
+	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
+	  shadowfs_capture_t cap = {
+	    .action = JOURNAL_ACTION_CREATE,
+	    .tx_id = 0,		/* bootscan sentinel */
+	    .ino = ino,
+	    .parent_ino = parent_ino,
+	    .name = name,
+	    .dst_parent_ino = 0,
+	    .new_name = NULL,
+	    .src_parent_ino = parent_ino,
+	    .old_name = name,
+	    .victim_ino = 0,
+	  };
+	  journal_sfs_capture (&cap);
 	  if (S_ISDIR (mode))
 	    {
 	      if (!stack_push (child_np, name))

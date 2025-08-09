@@ -24,6 +24,8 @@
 #include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_writer.h>
+#include <libdiskfs/journal_shadow_fs.h>
+#include <libdiskfs/journal_arena.h>
 #include <libdiskfs/journal_policy.h>
 #include <libdiskfs/journal_globals.h>
 #include <libdiskfs/journal_replayer.h>
@@ -53,12 +55,12 @@
 static volatile uint64_t journal_tx_id = 1;
 static volatile bool journal_enabled = false;
 static journal_inode_denylist_t ino_denylist;
+static struct journal_arena *sfs_arena;
 journal_layout_t journal_layout;
 
 static inline bool
 layout_init (struct store *store, journal_config_t config)
 {
-
   journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
   journal_layout.header_size = JOURNAL_HEADER_SIZE;
   journal_layout.device_block_size = store->block_size;
@@ -93,6 +95,14 @@ denylist_init (void)
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
 
+static void
+shadowfs_init (void)
+{
+  sfs_arena = journal_arena_create (6 * 1024 * 1024);
+  journal_sfs_init (sfs_arena);
+  journal_seed_shadow_fs ();
+}
+
 void
 journal_init (struct store *store, journal_config_t config)
 {
@@ -101,6 +111,7 @@ journal_init (struct store *store, journal_config_t config)
     return;
 
   denylist_init ();
+  shadowfs_init ();
   journal_io_set_store (store);
   journal_replay (&ino_denylist);
   journal_enabled = true;
@@ -112,6 +123,7 @@ journal_shutdown (void)
 {
   JOURNAL_LOG_DEBUG ("journal_shutdown() called.");
   journal_enabled = false;
+  journal_arena_destroy (sfs_arena);
 }
 
 static inline bool
@@ -122,7 +134,7 @@ should_log_time (time_t value, int flag_set)
 }
 
 void
-journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 {
   if (!journal_enabled)
     {
