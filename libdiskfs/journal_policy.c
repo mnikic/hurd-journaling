@@ -226,8 +226,8 @@ should_journal_filename_fallback (const char *name, const char *path)
 
 bool
 journal_should_log_event (const struct node *np,
-			  const journal_entry_info_t * info,
-			  const journal_inode_denylist_t * ino_denylist,
+			  const journal_entry_info_t *info,
+			  const journal_inode_denylist_t *ino_denylist,
 			  const char *full_path)
 {
   if (!np)
@@ -245,9 +245,9 @@ journal_should_log_event (const struct node *np,
     }
 
   const struct stat *st = &np->dn_stat;
-  if (info->action == JOURNAL_ACTION_TOMBSTONE)
+  if (journal_is_structural_action (info->action))
     {
-      JOURNAL_LOG_DEBUG ("ino: %" PRIu64 " but tombstones are important!",
+      JOURNAL_LOG_DEBUG ("ino: %" PRIu64 " structure is important!",
 			 st->st_ino);
       return true;
     }

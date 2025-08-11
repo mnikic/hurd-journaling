@@ -98,7 +98,7 @@ denylist_init (void)
 static void
 shadowfs_init (void)
 {
-  sfs_arena = journal_arena_create (16 * 1024 * 1024);
+  sfs_arena = journal_arena_create (32 * 1024 * 1024);
   journal_sfs_init (sfs_arena);
   journal_seed_shadow_fs ();
 }
@@ -134,6 +134,24 @@ should_log_time (time_t value, int flag_set)
 }
 
 void
+shadow_fs_capture (const struct node *np, const journal_entry_info_t *info,
+		   uint64_t tx)
+{
+  shadowfs_capture_t cap = {
+    .action = info->action,
+    .tx_id = tx,
+    .ino = np->dn_stat.st_ino,
+    .parent_ino = info->parent_ino,
+    .name = info->name ? info->name : "",
+    .dst_parent_ino = info->dst_parent_ino,
+    .new_name = info->new_name ? info->new_name : "",
+    .src_parent_ino = info->src_parent_ino,
+    .old_name = info->old_name ? info->old_name : ""
+  };
+  journal_sfs_capture (&cap);
+}
+
+void
 journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 {
   if (!journal_enabled)
@@ -141,9 +159,12 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
       return;
     }
   const struct node *np = (struct node *) node_ptr;
+  uint64_t tx = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
+  shadow_fs_capture (np, info, tx);
   const char *normalized_path = journal_normalize_path (info->path);
   if (!journal_should_log_event (np, info, &ino_denylist, normalized_path))
     return;
+
 
   const char *name = info->name ? info->name : "";
   const char *extra = info->extra ? info->extra : "";
@@ -158,7 +179,7 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 
   journal_payload_bin_t *entry = (journal_payload_bin_t *) buf;
 
-  entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
+  entry->tx_id = tx;
   entry->timestamp_ms = journal_current_time_ms ();
 
   const struct stat *st = &np->dn_stat;

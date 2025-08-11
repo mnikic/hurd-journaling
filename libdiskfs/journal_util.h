@@ -111,4 +111,15 @@ journal_current_time_ms (void)
   return ((uint64_t) tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
 
+static inline bool
+journal_is_structural_action (journal_action_t action)
+{
+  return (action == JOURNAL_ACTION_CREATE || action == JOURNAL_ACTION_MKDIR
+	  || action == JOURNAL_ACTION_MKFILE
+	  || action == JOURNAL_ACTION_SYMLINK || action == JOURNAL_ACTION_LINK
+	  || action == JOURNAL_ACTION_UNLINK
+	  || action == JOURNAL_ACTION_RENAME || action == JOURNAL_ACTION_RMDIR
+	  || action == JOURNAL_ACTION_TOMBSTONE);
+}
+
 #endif /* LIBDISKFS_JOURNAL_UTIL_H */

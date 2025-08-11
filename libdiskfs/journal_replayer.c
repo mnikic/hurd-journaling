@@ -74,7 +74,7 @@ struct journal_entries
  * Performs CRC and magic/version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_header (journal_header_t * out)
+fetch_and_validate_header (journal_header_t *out)
 {
   error_t err = journal_read_header (out);
   if (err)
@@ -106,7 +106,7 @@ fetch_and_validate_header (journal_header_t * out)
  * Performs CRC, magic, and version checks. Returns true if valid.
  */
 static bool
-fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
+fetch_and_validate_entry (uint64_t index, journal_entry_bin_t *out)
 {
   error_t err = journal_read_entry (out, index);
   if (err)
@@ -142,7 +142,7 @@ fetch_and_validate_entry (uint64_t index, journal_entry_bin_t * out)
 
 static bool
 add_event_to_list (struct journal_entries *list,
-		   journal_payload_bin_t * payload)
+		   journal_payload_bin_t *payload)
 {
   if (list->count == list->capacity)
     {
@@ -186,7 +186,7 @@ sort_entries (struct journal_entries *list)
  */
 static bool
 fetch_and_validate_journal (struct journal_arena *arena,
-			    const journal_inode_denylist_t * denylist,
+			    const journal_inode_denylist_t *denylist,
 			    struct journal_entries *out_entries)
 {
   journal_header_t *hdr =
@@ -234,8 +234,7 @@ fetch_and_validate_journal (struct journal_arena *arena,
 	  return false;
 	}
       journal_payload_bin_t *payload = &entry->payload;
-      // Tombstones are important!!!
-      if (payload->action != JOURNAL_ACTION_TOMBSTONE)
+      if (!journal_is_structural_action (payload->action))
 	{
 	  if (journal_inode_denylist_contains (denylist, payload->ino))
 	    {
@@ -351,7 +350,7 @@ CLEANUP:
  */
 static void
 replay_main_pass (struct journal_arena *arena,
-		  journal_inode_denylist_t * denylist)
+		  journal_inode_denylist_t *denylist)
 {
   struct journal_entries list = { 0 };
   if (!fetch_and_validate_journal (arena, denylist, &list))
@@ -383,7 +382,7 @@ replay_main_pass (struct journal_arena *arena,
  * and finally restores the system state.
  */
 void
-journal_replay (journal_inode_denylist_t * denylist)
+journal_replay (journal_inode_denylist_t *denylist)
 {
   struct journal_arena *arena = journal_arena_create (arena_size ());
   if (!arena)
