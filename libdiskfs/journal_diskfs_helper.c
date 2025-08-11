@@ -274,7 +274,6 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred)
   diskfs_nput (root);
   return 0;
 }
-<<<<<<< HEAD
 
 /* Return true if NP appears to be a live, allocated inode.
    This does not acquire a new reference; caller must hold NP->lock
@@ -282,7 +281,8 @@ diskfs_mkdir_p (struct node *root, const char *path, struct protid *cred)
 bool
 diskfs_cached_node_alive (struct node *np)
 {
-  return np && (np->dn_stat.st_nlink > 0) && (np->dn_stat.st_mode > 0) && (np->allocsize > 0);
+  return np && (np->dn_stat.st_nlink > 0) && (np->dn_stat.st_mode > 0)
+    && (np->allocsize > 0);
 }
 
 

@@ -300,8 +300,8 @@ journal_sfs_capture (const shadowfs_capture_t *c)
     }
 }
 
-int
-journal_sfs_resolve_path (uint64_t leaf_ino, char *out, size_t out_sz)
+error_t
+journal_sfs_resolve_path (ino_t leaf_ino, char *out, size_t out_sz)
 {
   if (!out || !out_sz)
     return EINVAL;
@@ -378,7 +378,7 @@ journal_sfs_get_stats (shadowfs_stats_t *out)
 }
 
 void
-journal_sfs_dump  (FILE *fp)
+journal_sfs_dump (FILE *fp)
 {
   if (!fp)
     fp = stderr;

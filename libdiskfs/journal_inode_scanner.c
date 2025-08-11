@@ -26,6 +26,7 @@
 #include <hurd/fs.h>
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <dirent.h>
 
@@ -34,8 +35,8 @@
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/journal_diskfs_helper.h>
 
-#define MAX_PATH_LEN 256
-#define MAX_STACK_DEPTH 128
+#define MAX_PATH_LEN 1024
+#define MAX_STACK_DEPTH 1024
 
 typedef struct
 {
@@ -141,8 +142,8 @@ journal_scan_path_for_inos (const char *root_path,
 	}
 
       journal_inode_denylist_builder_add (builder,
-					  (journal_ino_t) start_np->dn_stat.
-					  st_ino);
+					  (journal_ino_t) start_np->
+					  dn_stat.st_ino);
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;
       int nentries = 0;
@@ -211,9 +212,6 @@ journal_scan_path_for_inos (const char *root_path,
       diskfs_nput (start_np);
     }
 
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: done with %s. Found %u inos.",
-		     root_path, count);
-
   struct node *remaining_np = NULL;
   while (stack_pop (&remaining_np, NULL))
     diskfs_nput (remaining_np);
@@ -229,9 +227,11 @@ cleanup_root:
 error_t
 journal_seed_shadow_fs (void)
 {
+  JOURNAL_LOG_DEBUG ("Scanning for shadow FS now.");
   struct protid *cred = NULL;
   struct node *start_np = NULL;
   error_t err = 0;
+  bool root_pushed = false;
   struct node *root = diskfs_root_node;
   pthread_mutex_lock (&root->lock);
   diskfs_nref (root);
@@ -247,12 +247,14 @@ journal_seed_shadow_fs (void)
   if (!stack_push (root, "/"))
     {
       JOURNAL_LOG_ERROR ("Failed to initialize traversal stack");
-      diskfs_nput (start_np);
+      diskfs_nput (root);
       err = ENOMEM;
       goto cleanup_creds;
     }
-
-  while (stack_pop (&start_np, NULL))
+  root_pushed = true;
+  size_t count = 0;
+  char n[1024];
+  while (stack_pop (&start_np, n))
     {
       if ((start_np->dn_stat.st_mode & S_IFMT) != S_IFDIR ||
 	  start_np->dn_stat.st_size == 0)
@@ -260,7 +262,8 @@ journal_seed_shadow_fs (void)
 	  diskfs_nput (start_np);
 	  continue;
 	}
-
+      JOURNAL_LOG_DEBUG ("We are now doing %s ino: %" PRIu64, n,
+			 start_np->dn_stat.st_ino);
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;
       int nentries = 0;
@@ -281,8 +284,7 @@ journal_seed_shadow_fs (void)
       while ((char *) entry < end)
 	{
 	  char name[NAME_MAX + 1];
-	  safe_strncpy (name, entry->d_name, entry->d_namlen);
-	  name[entry->d_namlen] = '\0';
+	  safe_strncpy (name, entry->d_name, sizeof (name));
 
 	  if (strcmp (name, ".") == 0 || strcmp (name, "..") == 0)
 	    {
@@ -302,6 +304,7 @@ journal_seed_shadow_fs (void)
 
 	  mode_t mode = child_np->dn_stat.st_mode;
 	  journal_ino_t ino = (journal_ino_t) child_np->dn_stat.st_ino;
+	  count++;
 	  shadowfs_capture_t cap = {
 	    .action = JOURNAL_ACTION_CREATE,
 	    .tx_id = 0,		/* bootscan sentinel */
@@ -314,7 +317,7 @@ journal_seed_shadow_fs (void)
 	    .old_name = name,
 	    .victim_ino = 0,
 	  };
-	  journal_sfs_capture (&cap);
+//        journal_sfs_capture (&cap);
 	  if (S_ISDIR (mode))
 	    {
 	      if (!stack_push (child_np, name))
@@ -337,17 +340,15 @@ journal_seed_shadow_fs (void)
       diskfs_nput (start_np);
     }
 
-  JOURNAL_LOG_DEBUG ("scan_path_for_inos: done with %s. Found %u inos.",
-		     root_path, count);
-
   struct node *remaining_np = NULL;
   while (stack_pop (&remaining_np, NULL))
     diskfs_nput (remaining_np);
-
+  JOURNAL_LOG_DEBUG ("Scanned the total of %d inodes", count);
 cleanup_creds:
   if (cred)
     ports_port_deref (cred);
 cleanup_root:
-  diskfs_nput (root);
+  if (!root_pushed)
+    diskfs_nput (root);
   return err;
 }
