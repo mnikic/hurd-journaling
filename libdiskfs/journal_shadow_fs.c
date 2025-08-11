@@ -19,6 +19,7 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
 #include <libdiskfs/journal_shadow_fs.h>
+#include <libdiskfs/journal_util.h>
 
 #include <stdbool.h>
 #include <sys/types.h>
@@ -92,11 +93,13 @@ arena_alloc (void)
     {
       g_degraded = true;
       g_stats.degraded = 1;
+      JOURNAL_LOG_ERROR ("Arena is NULL. No bueno! Continuing degraded");
       return NULL;
     }
   void *p = journal_arena_alloc (g_arena, sizeof (shadow_inode_t));
   if (!p)
     {
+      JOURNAL_LOG_ERROR ("Shadow fs OOM, continuing degraded");
       g_degraded = true;
       g_stats.degraded = 1;
       return NULL;
@@ -143,8 +146,10 @@ map_get_or_create (uint64_t ino, uint32_t *out_bidx)
 
   n = arena_alloc ();
   if (!n)
-    return NULL;		/* degraded; caller may just skip */
-
+    {
+      bucket_unlock (b);
+      return NULL;
+    }
   n->ino = ino;
   n->next = g_buckets[b].head;
   g_buckets[b].head = n;
@@ -164,7 +169,7 @@ static inline void
 record_path_locked (shadow_inode_t *n, uint64_t parent, const char *name,
 		    uint64_t tx)
 {
-  if (tx > n->last_tx_id)
+  if (tx >= n->last_tx_id)
     {
       n->parent = parent;
       copy_name (n->name, name);
@@ -316,11 +321,14 @@ journal_sfs_resolve_path (ino_t leaf_ino, char *out, size_t out_sz)
 
   while (cur && depth < MAX_DEPTH)
     {
+      if (cur == SHADOWFS_ROOT_INO)
+	break;
       uint32_t b = hash_ino (cur);
       bucket_lock (b);
       shadow_inode_t *n = bucket_find (b, cur);
       if (!n || n->is_deleted || n->name[0] == '\0')
 	{
+	  JOURNAL_LOG_DEBUG ("Nothing found");
 	  bucket_unlock (b);
 	  g_stats.resolve_fail++;
 	  return ENOENT;
@@ -350,6 +358,8 @@ journal_sfs_resolve_path (ino_t leaf_ino, char *out, size_t out_sz)
   for (int i = depth - 1; i >= 0; --i)
     {
       int len = seg_lens[i];
+      if (len == 0)
+	continue;
       if ((pos + (size_t) len + 1) >= out_sz)
 	{
 	  g_stats.resolve_fail++;

@@ -251,9 +251,25 @@ journal_seed_shadow_fs (void)
       err = ENOMEM;
       goto cleanup_creds;
     }
+
   root_pushed = true;
   size_t count = 0;
   char n[1024];
+  ino_t root_ino = root->dn_stat.st_ino;
+  count++;
+  shadowfs_capture_t cap = {
+    .action = JOURNAL_ACTION_CREATE,
+    .tx_id = 0,			/* bootscan sentinel */
+    .ino = root_ino,
+    .parent_ino = root_ino,
+    .name = "",
+    .dst_parent_ino = 0,
+    .new_name = NULL,
+    .src_parent_ino = root_ino,
+    .old_name = "",
+    .victim_ino = 0,
+  };
+  journal_sfs_capture (&cap);
   while (stack_pop (&start_np, n))
     {
       if ((start_np->dn_stat.st_mode & S_IFMT) != S_IFDIR ||
@@ -262,8 +278,6 @@ journal_seed_shadow_fs (void)
 	  diskfs_nput (start_np);
 	  continue;
 	}
-      JOURNAL_LOG_DEBUG ("We are now doing %s ino: %" PRIu64, n,
-			 start_np->dn_stat.st_ino);
       char *data = NULL;
       mach_msg_type_number_t datacnt = 0;
       int nentries = 0;
@@ -317,7 +331,7 @@ journal_seed_shadow_fs (void)
 	    .old_name = name,
 	    .victim_ino = 0,
 	  };
-//        journal_sfs_capture (&cap);
+	  journal_sfs_capture (&cap);
 	  if (S_ISDIR (mode))
 	    {
 	      if (!stack_push (child_np, name))
@@ -343,7 +357,16 @@ journal_seed_shadow_fs (void)
   struct node *remaining_np = NULL;
   while (stack_pop (&remaining_np, NULL))
     diskfs_nput (remaining_np);
+  shadowfs_stats_t st;
+  journal_sfs_get_stats (&st);
   JOURNAL_LOG_DEBUG ("Scanned the total of %d inodes", count);
+
+  JOURNAL_LOG_DEBUG
+    ("ShadowFS stats: entries=%zu, arena_used=%zu, updates=%zu, renames=%zu, "
+     "victims=%zu, deletes=%zu, resolve_ok=%zu, resolve_fail=%zu, degraded=%d",
+     (size_t) st.entries, (size_t) st.arena_used, (size_t) st.updates,
+     (size_t) st.renames, (size_t) st.victims, (size_t) st.deletes,
+     (size_t) st.resolve_ok, (size_t) st.resolve_fail, (int) st.degraded);
 cleanup_creds:
   if (cred)
     ports_port_deref (cred);

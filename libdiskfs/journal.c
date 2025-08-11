@@ -98,7 +98,7 @@ denylist_init (void)
 static void
 shadowfs_init (void)
 {
-  sfs_arena = journal_arena_create (6 * 1024 * 1024);
+  sfs_arena = journal_arena_create (16 * 1024 * 1024);
   journal_sfs_init (sfs_arena);
   journal_seed_shadow_fs ();
 }
@@ -202,9 +202,28 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
   safe_strncpy (entry->target, target, sizeof (entry->target));
 
   snprintf (entry->path, sizeof (entry->path), "%s", normalized_path);
+  char shadow_path[1024];
+  error_t r =
+    journal_sfs_resolve_path (st->st_ino, shadow_path, sizeof shadow_path);
+  if (r != 0)
+    {
+      JOURNAL_LOG_DEBUG ("Couldn't resolve shadow path (ino=%" PRIu64
+			 ", err=%s)", (uint64_t) st->st_ino, strerror (r));
+      shadow_path[0] = '\0';	// already ensured by resolver, but harmless
+      shadowfs_stats_t st;
+      journal_sfs_get_stats (&st);
+
+      JOURNAL_LOG_DEBUG
+	("ShadowFS stats: entries=%zu, arena_used=%zu, updates=%zu, renames=%zu, "
+	 "victims=%zu, deletes=%zu, resolve_ok=%zu, resolve_fail=%zu, degraded=%d",
+	 (size_t) st.entries, (size_t) st.arena_used, (size_t) st.updates,
+	 (size_t) st.renames, (size_t) st.victims, (size_t) st.deletes,
+	 (size_t) st.resolve_ok, (size_t) st.resolve_fail, (int) st.degraded);
+    }
   JOURNAL_LOG_DEBUG ("Logging inode: %u tx_id=%" PRIu64
-		     " action=%u name=%s path=%s", entry->ino, entry->tx_id,
-		     entry->action, entry->name, normalized_path);
+		     " action=%u name=%s path=%s shadow path=%s", entry->ino,
+		     entry->tx_id, entry->action, entry->name,
+		     normalized_path, shadow_path);
 
   if (journal_enabled)
     {
