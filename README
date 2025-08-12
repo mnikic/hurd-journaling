@@ -1,3 +1,6 @@
+> Note: This is a fork of GNU Hurd. Branch **journal-main** includes a metadata journaling prototype.
+> For setup and usage see **JOURNALING.md** (ext2fs only; not ext3/4).
+
 This is the GNU Hurd, <http://www.gnu.org/software/hurd/>.  Welcome.
 
 GNU Hurd runs on 32-bit x86 machines.  A version running on 64-bit x86
