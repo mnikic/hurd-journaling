@@ -123,7 +123,6 @@ lookup_by_path_locked (const char *path, const inode_replay_state_t *st,
       diskfs_nput (np);
       return RES_SKIP;
     }
-  JOURNAL_LOG_DEBUG ("Done with lookup");
   *out = np;
   return RES_FOUND;
 }

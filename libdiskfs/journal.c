@@ -98,7 +98,7 @@ denylist_init (void)
 static void
 shadowfs_init (void)
 {
-  sfs_arena = journal_arena_create (32 * 1024 * 1024);
+  sfs_arena = journal_arena_create (12 * 1024 * 1024);
   journal_sfs_init (sfs_arena);
   journal_seed_shadow_fs ();
 }

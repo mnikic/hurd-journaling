@@ -22,6 +22,7 @@
 #include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_format.h>
 #include <libdiskfs/journal_globals.h>
+#include <libdiskfs/journal_path_util.h>
 #include <libdiskfs/journal_util.h>
 #include <libdiskfs/crc32.h>
 #include <libdiskfs/diskfs.h>
@@ -330,9 +331,9 @@ replay_apply_graph (struct journal_arena *arena)
   for (size_t i = 0; i < count; ++i)
     {
       inode_replay_state_t *state = entries[i];
-      if (state->resolved_path[0] != '\0')
+      if (is_path_usable (state->resolved_path))
 	with_paths++;
-      if (state->shadow_path[0] != '\0')
+      if (is_path_usable (state->shadow_path))
 	with_shadow_path++;
       err = apply_node_replay (state, root, restore_root, cred);
       if (err)
@@ -373,9 +374,9 @@ replay_main_pass (struct journal_arena *arena,
   size_t with_shadow_path = 0;
   for (size_t i = 0; i < list.count; ++i)
     {
-      if (list.entries[i]->path[0] != '\0')
+      if (is_path_usable (list.entries[i]->path))
 	with_path++;
-      if (list.entries[i]->shadow_path[0] != '\0')
+      if (is_path_usable (list.entries[i]->shadow_path))
 	with_shadow_path++;
       if (!journal_graph_add_event (list.entries[i], arena))
 	{

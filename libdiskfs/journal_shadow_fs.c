@@ -18,6 +18,7 @@
 
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd; if not, see <https://www.gnu.org/licenses/>.  */
+
 #include <libdiskfs/journal_shadow_fs.h>
 #include <libdiskfs/journal_util.h>
 
@@ -27,15 +28,27 @@
 #include <string.h>
 #include <pthread.h>
 
+/* --- Tunables ---------------------------------------------------------- */
+
+/* Hard cap for a single filename copied into the arena (defensive). */
+#ifndef SHADOWFS_NAME_HARD_MAX
+#define SHADOWFS_NAME_HARD_MAX 255
+#endif
+
 /* --- Internal types ---------------------------------------------------- */
 
 typedef struct shadow_inode
 {
   ino_t ino;
   ino_t parent;
-  char name[SHADOWFS_NAME_MAX];
   uint64_t last_tx_id;
   bool is_deleted;
+
+  /* Variable-length name stored in arena. */
+  char *name;			/* may be NULL */
+  uint16_t name_len;		/* excludes NUL */
+  uint16_t _pad;		/* keep struct aligned; reserved for future */
+
   struct shadow_inode *next;	/* bucket chain */
 } shadow_inode_t;
 
@@ -86,48 +99,74 @@ bucket_unlock (uint32_t bidx)
 
 /* --- Arena allocation -------------------------------------------------- */
 
-static shadow_inode_t *
-arena_alloc (void)
+static inline void *
+arena_alloc_bytes (size_t n)
 {
   if (!g_arena)
     {
       g_degraded = true;
       g_stats.degraded = 1;
-      JOURNAL_LOG_ERROR ("Arena is NULL. No bueno! Continuing degraded");
+      JOURNAL_LOG_ERROR ("Arena is NULL. Continuing degraded.");
       return NULL;
     }
-  void *p = journal_arena_alloc (g_arena, sizeof (shadow_inode_t));
+  void *p = journal_arena_alloc (g_arena, n);
   if (!p)
     {
-      JOURNAL_LOG_ERROR ("Shadow fs OOM, continuing degraded");
+      JOURNAL_LOG_ERROR
+	("ShadowFS arena OOM (%zu bytes), continuing degraded", n);
       g_degraded = true;
       g_stats.degraded = 1;
       return NULL;
     }
-  memset (p, 0, sizeof (shadow_inode_t));
+  return p;
+}
+
+static shadow_inode_t *
+arena_alloc_node (void)
+{
+  shadow_inode_t *n =
+    (shadow_inode_t *) arena_alloc_bytes (sizeof (shadow_inode_t));
+  if (!n)
+    return NULL;
+  memset (n, 0, sizeof (*n));
   g_stats.arena_used++;
-  return (shadow_inode_t *) p;
+  return n;
+}
+
+/* --- Name handling (bucket locked) ------------------------------------ */
+
+static inline void
+set_name_from_arena_locked (shadow_inode_t *n, const char *src)
+{
+  if (!src || !src[0])
+    {
+      n->name = NULL;
+      n->name_len = 0;
+      return;
+    }
+
+  size_t len = strnlen (src, SHADOWFS_NAME_HARD_MAX);
+  char *buf = (char *) arena_alloc_bytes (len + 1);
+  if (!buf)
+    {
+      /* degraded mode: keep previous name if any */
+      return;
+    }
+
+  memcpy (buf, src, len);
+  buf[len] = '\0';
+
+  n->name = buf;
+  n->name_len = (uint16_t) len;	/* filenames > 65535 are clamped by HARD_MAX */
 }
 
 /* --- Map ops ----------------------------------------------------------- */
-
-static inline void
-copy_name (char dst[SHADOWFS_NAME_MAX], const char *src)
-{
-  if (!src)
-    {
-      dst[0] = '\0';
-      return;
-    }
-  strncpy (dst, src, SHADOWFS_NAME_MAX - 1);
-  dst[SHADOWFS_NAME_MAX - 1] = '\0';
-}
 
 static shadow_inode_t *
 bucket_find (uint32_t bidx, uint64_t ino)
 {
   for (shadow_inode_t * p = g_buckets[bidx].head; p; p = p->next)
-    if (p->ino == ino)
+    if (p->ino == (ino_t) ino)
       return p;
   return NULL;
 }
@@ -139,22 +178,25 @@ map_get_or_create (uint64_t ino, uint32_t *out_bidx)
   uint32_t b = hash_ino (ino);
   if (out_bidx)
     *out_bidx = b;
+
   bucket_lock (b);
+
   shadow_inode_t *n = bucket_find (b, ino);
   if (n)
     return n;
 
-  n = arena_alloc ();
+  n = arena_alloc_node ();
   if (!n)
     {
       bucket_unlock (b);
       return NULL;
     }
-  n->ino = ino;
+
+  n->ino = (ino_t) ino;
   n->next = g_buckets[b].head;
   g_buckets[b].head = n;
   g_stats.entries++;
-  return n;
+  return n;			/* still locked */
 }
 
 static inline void
@@ -171,8 +213,8 @@ record_path_locked (shadow_inode_t *n, uint64_t parent, const char *name,
 {
   if (tx >= n->last_tx_id)
     {
-      n->parent = parent;
-      copy_name (n->name, name);
+      n->parent = (ino_t) parent;
+      set_name_from_arena_locked (n, name);
       n->last_tx_id = tx;
       n->is_deleted = false;
     }
@@ -189,7 +231,6 @@ mark_deleted_locked (shadow_inode_t *n, uint64_t tx)
 }
 
 /* --- Public API -------------------------------------------------------- */
-
 
 void
 journal_sfs_init (struct journal_arena *arena)
@@ -229,9 +270,10 @@ journal_sfs_capture (const shadowfs_capture_t *c)
 	shadow_inode_t *n = map_get_or_create (c->ino, &bidx);
 	if (n)
 	  {
-	    const char *nm = (c->name && c->name[0]) ? c->name
-	      : (c->new_name && c->new_name[0]) ? c->new_name
-	      : (c->old_name && c->old_name[0]) ? c->old_name : "";
+	    const char *nm =
+	      (c->name && c->name[0]) ? c->name :
+	      (c->new_name && c->new_name[0]) ? c->new_name :
+	      (c->old_name && c->old_name[0]) ? c->old_name : "";
 	    uint64_t parent =
 	      c->parent_ino ? c->parent_ino : c->src_parent_ino;
 	    record_path_locked (n, parent, nm, c->tx_id);
@@ -248,9 +290,10 @@ journal_sfs_capture (const shadowfs_capture_t *c)
 	shadow_inode_t *src = map_get_or_create (c->ino, &b1);
 	if (src)
 	  {
-	    const char *nm = (c->new_name && c->new_name[0]) ? c->new_name
-	      : (c->name && c->name[0]) ? c->name
-	      : (c->old_name && c->old_name[0]) ? c->old_name : "";
+	    const char *nm =
+	      (c->new_name && c->new_name[0]) ? c->new_name :
+	      (c->name && c->name[0]) ? c->name :
+	      (c->old_name && c->old_name[0]) ? c->old_name : "";
 	    uint64_t parent = c->dst_parent_ino ? c->dst_parent_ino
 	      : (c->parent_ino ? c->parent_ino : c->src_parent_ino);
 	    record_path_locked (src, parent, nm, c->tx_id);
@@ -258,7 +301,6 @@ journal_sfs_capture (const shadowfs_capture_t *c)
 	    map_release (b1);
 	  }
 
-	/* Optional: clobber victim if you ever capture it */
 	if (c->victim_ino)
 	  {
 	    uint32_t b2 = 0;
@@ -321,26 +363,27 @@ journal_sfs_resolve_path (ino_t leaf_ino, char *out, size_t out_sz)
 
   while (cur && depth < MAX_DEPTH)
     {
+      /* Stop before trying to fetch the root entry from the map. */
       if (cur == SHADOWFS_ROOT_INO)
 	break;
+
       uint32_t b = hash_ino (cur);
       bucket_lock (b);
       shadow_inode_t *n = bucket_find (b, cur);
-      if (!n || n->is_deleted || n->name[0] == '\0')
+      if (!n || n->is_deleted || !n->name)	/* name may be NULL now */
 	{
 	  JOURNAL_LOG_DEBUG ("Nothing found");
 	  bucket_unlock (b);
 	  g_stats.resolve_fail++;
 	  return ENOENT;
 	}
+
       segs[depth] = n->name;
-      seg_lens[depth] = (int) strnlen (n->name, SHADOWFS_NAME_MAX);
+      seg_lens[depth] = (int) n->name_len;
       uint64_t parent = n->parent;
       bucket_unlock (b);
 
       depth++;
-      if (cur == SHADOWFS_ROOT_INO)
-	break;
       if (parent == 0 || parent == cur)
 	break;
       cur = parent;
@@ -353,28 +396,36 @@ journal_sfs_resolve_path (ino_t leaf_ino, char *out, size_t out_sz)
     }
 
   size_t pos = 0;
-  if (pos < out_sz)
-    out[pos++] = '/';
+  out[pos++] = '/';
+
+  int first = 1;
   for (int i = depth - 1; i >= 0; --i)
     {
       int len = seg_lens[i];
-      if (len == 0)
+      if (len == 0)		/* skip empty (e.g., synthetic root) */
 	continue;
-      if ((pos + (size_t) len + 1) >= out_sz)
+
+      if (!first)
+	{
+	  if (pos + 1 >= out_sz)
+	    {
+	      g_stats.resolve_fail++;
+	      return ENAMETOOLONG;
+	    }
+	  out[pos++] = '/';
+	}
+
+      if (pos + (size_t) len >= out_sz)
 	{
 	  g_stats.resolve_fail++;
 	  return ENAMETOOLONG;
 	}
+
       memcpy (out + pos, segs[i], (size_t) len);
       pos += (size_t) len;
-      if (i != 0)
-	out[pos++] = '/';
+      first = 0;
     }
-  if (pos >= out_sz)
-    {
-      g_stats.resolve_fail++;
-      return ENAMETOOLONG;
-    }
+
   out[pos] = '\0';
   g_stats.resolve_ok++;
   return 0;
@@ -392,16 +443,20 @@ journal_sfs_dump (FILE *fp)
 {
   if (!fp)
     fp = stderr;
+
   for (uint32_t b = 0; b < SHADOWFS_BUCKETS; ++b)
     {
       bucket_lock (b);
       for (shadow_inode_t * n = g_buckets[b].head; n; n = n->next)
 	{
+	  const char *nm = n->name ? n->name : "";
 	  fprintf (fp,
-		   "ino=%llu parent=%llu deleted=%d tx=%llu name=\"%s\"\n",
+		   "ino=%llu parent=%llu deleted=%d tx=%llu name_len=%u name=\"%s\"\n",
 		   (unsigned long long) n->ino,
-		   (unsigned long long) n->parent, n->is_deleted ? 1 : 0,
-		   (unsigned long long) n->last_tx_id, n->name);
+		   (unsigned long long) n->parent,
+		   n->is_deleted ? 1 : 0,
+		   (unsigned long long) n->last_tx_id,
+		   (unsigned) n->name_len, nm);
 	}
       bucket_unlock (b);
     }
