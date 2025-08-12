@@ -325,15 +325,24 @@ replay_apply_graph (struct journal_arena *arena)
   JOURNAL_LOG_DEBUG
     ("Starting restoration. Have %zu entries and restore path is '%s'", count,
      restore_prefix);
+  size_t with_paths = 0;
+  size_t with_shadow_path = 0;
   for (size_t i = 0; i < count; ++i)
     {
       inode_replay_state_t *state = entries[i];
+      if (state->resolved_path[0] != '\0')
+	with_paths++;
+      if (state->shadow_path[0] != '\0')
+	with_shadow_path++;
       err = apply_node_replay (state, root, restore_root, cred);
       if (err)
 	JOURNAL_LOG_ERROR ("Restore error: ino=%u name=%s path=%s err=%s",
 			   state->ino,
 			   state->name, state->resolved_path, strerror (err));
     }
+  JOURNAL_LOG_DEBUG
+    ("Out of %zu graph entries, %zu of them had paths and %zu had shadow paths.",
+     count, with_paths, with_shadow_path);
 
   diskfs_nput (restore_root);
 CLEANUP:
@@ -360,9 +369,14 @@ replay_main_pass (struct journal_arena *arena,
     }
 
   sort_entries (&list);
-
+  size_t with_path = 0;
+  size_t with_shadow_path = 0;
   for (size_t i = 0; i < list.count; ++i)
     {
+      if (list.entries[i]->path[0] != '\0')
+	with_path++;
+      if (list.entries[i]->shadow_path[0] != '\0')
+	with_shadow_path++;
       if (!journal_graph_add_event (list.entries[i], arena))
 	{
 	  JOURNAL_LOG_ERROR ("Graph construction failed for tx=%" PRIu64,
@@ -370,6 +384,9 @@ replay_main_pass (struct journal_arena *arena,
 	  return;
 	}
     }
+  JOURNAL_LOG_DEBUG
+    ("Out of %zu there are %zu entries with paths and %zu with shadow paths straight from journal.",
+     list.count, with_path, with_shadow_path);
 
   replay_apply_graph (arena);
 }

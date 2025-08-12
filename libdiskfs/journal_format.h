@@ -83,6 +83,7 @@ struct __attribute__((__packed__)) journal_payload_bin
   char new_name[MAX_FIELD_LEN];
   char target[MAX_FIELD_LEN];
   char path[JOURNAL_NORMALIZED_PATH_MAX];
+  char shadow_path[JOURNAL_NORMALIZED_PATH_MAX];
   char extra[MAX_FIELD_LEN];
 };
 

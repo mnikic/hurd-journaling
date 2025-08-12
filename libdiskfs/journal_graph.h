@@ -31,7 +31,7 @@ typedef struct inode_replay_state
 {
   journal_ino_t ino;		/* Always required during replay */
   char resolved_path[JOURNAL_NORMALIZED_PATH_MAX];
-
+  char shadow_path[JOURNAL_NORMALIZED_PATH_MAX];
   uint64_t last_seen;		/* Last event timestamp (to skip stale entries) */
   uint64_t last_tx;		/* Last transaction affecting this inode */
 

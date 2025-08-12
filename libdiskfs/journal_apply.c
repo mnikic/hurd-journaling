@@ -160,9 +160,9 @@ resolve_existing_node_locked (const char *opt_full_path,
   if (np)
     {
       if (alive)
-	  diskfs_nput (np);
+	diskfs_nput (np);
       else
-	  diskfs_cached_node_nput_dead (np);
+	diskfs_cached_node_nput_dead (np);
       np = NULL;
     }
 
@@ -396,6 +396,10 @@ apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
   error_t err = journal_resolve_full_path (state->resolved_path, state->name,
 					   full_path, sizeof (full_path));
   const char *opt_path = err ? NULL : full_path;
+  if (!err && strcmp (full_path, state->shadow_path))
+    JOURNAL_LOG_DEBUG
+      ("Full path and shadow path diverge! Full path: '%s', shadow path: '%s'",
+       full_path, state->shadow_path);
   resolve_result_t rr =
     resolve_existing_node_locked (opt_path, state, fs_root, cred, &np, &err);
 
@@ -422,4 +426,3 @@ apply_node_replay (inode_replay_state_t *state, struct node *fs_root,
   diskfs_nput (np);
   return 0;
 }
-

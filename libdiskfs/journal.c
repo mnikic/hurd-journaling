@@ -245,7 +245,7 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 		     " action=%u name=%s path=%s shadow path=%s", entry->ino,
 		     entry->tx_id, entry->action, entry->name,
 		     normalized_path, shadow_path);
-
+  safe_strncpy (entry->shadow_path, shadow_path, sizeof (entry->shadow_path));
   if (journal_enabled)
     {
       if (!journal_write (entry))
