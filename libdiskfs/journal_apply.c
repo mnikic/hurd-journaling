@@ -81,9 +81,6 @@ typedef enum
 static inline bool
 eligible_for_replay (const struct node *np, const inode_replay_state_t *st)
 {
-  if (!journal_is_safe_stat (np->dn_stat.st_mode))
-    return false;
-
   if ((int64_t) np->dn_stat.st_mtime < 0
       || (int64_t) np->dn_stat.st_ctime < 0)
     return false;

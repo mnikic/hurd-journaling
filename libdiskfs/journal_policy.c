@@ -262,13 +262,6 @@ journal_should_log_event (const struct node *np,
       return false;
     }
 
-  if (!journal_is_safe_stat (st->st_mode))
-    {
-      JOURNAL_LOG_DEBUG ("Skipped node %" PRIu64 " (mode %o) as unsafe.",
-			 st->st_ino, st->st_mode);
-      return false;
-    }
-
   /* Low signal here, lets skip */
   if ((!full_path || full_path[0] == '\0') &&
       (info->action == JOURNAL_ACTION_ATIME ||
@@ -299,7 +292,7 @@ journal_should_log_event (const struct node *np,
     ignore_time =
       !journal_filter_should_log (&timestamp_filter, st->st_ino, ts);
 
-  /* If we don't think its worth logging and the change was only atime/utime, skip it */
+  /* If there was a recent log of this inode and the change is only atime/utime, skip it */
   if (ignore_time &&
       (info->action == JOURNAL_ACTION_ATIME ||
        info->action == JOURNAL_ACTION_UTIME))

@@ -244,13 +244,6 @@ fetch_and_validate_journal (struct journal_arena *arena,
 		 payload->ino, payload->tx_id);
 	      goto NEXT;
 	    }
-	  if (!journal_is_safe_stat (payload->st_mode))
-	    {
-	      JOURNAL_LOG_ERROR
-		("Invalid mode on a journal entry ino=%u mode=%o. Aborting.",
-		 payload->ino, payload->st_mode);
-	      return false;
-	    }
 	  if (payload->action == JOURNAL_ACTION_UNKNOWN || payload->ino == 0
 	      || payload->tx_id == 0 || payload->timestamp_ms == 0
 	      || !(payload->has_mtime || payload->has_atime

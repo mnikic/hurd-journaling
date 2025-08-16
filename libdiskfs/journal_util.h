@@ -84,25 +84,6 @@ journal_compute_payload_crc32 (const journal_payload_bin_t * payload)
   return crc32 ((const char *) payload, sizeof (journal_payload_bin_t));
 }
 
-/* Check if a given stat structure describes a journal-safe file.  */
-static inline bool
-journal_is_safe_stat (const uint32_t mode)
-{
-  if (mode == 0)
-    return false;
-
-  if (S_ISBLK (mode) || S_ISCHR (mode))
-    return false;
-
-  if (S_ISFIFO (mode) || S_ISSOCK (mode))
-    return false;
-
-  if (S_ISLNK (mode))
-    return false;
-
-  return S_ISREG (mode) || S_ISDIR (mode);
-}
-
 static inline uint64_t
 journal_current_time_ms (void)
 {
