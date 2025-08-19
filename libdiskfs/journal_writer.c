@@ -1,4 +1,4 @@
-/* journal_writer.c - Raw journal writer for GNU Hurd journaling
+/* journal_writer.c - Journal writer for GNU Hurd journaling
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -37,6 +37,8 @@
 #include <libdiskfs/journal_io.h>
 #include <libdiskfs/journal_writer.h>
 
+#define MAX_DELAY_MICRO 10000
+
 volatile size_t journal_dropped_events = 0;
 static pthread_mutex_t sync_write_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -51,73 +53,127 @@ persist_header_with_retry (uint64_t start_index,
     .end_index = end_index,
     .crc32 = 0,
   };
-  hdr.crc32 = journal_compute_header_crc32 (&hdr);
+  uint32_t crc32 = journal_compute_header_crc32 (&hdr);
+  hdr.crc32 = crc32;
 
+  size_t delay_micro = 1000;
   while (retries-- > 0)
     {
       error_t err = journal_write_header (&hdr);
       if (!err)
-	return true;
-
-      JOURNAL_LOG_ERROR
-	("journal: header write failed, retrying (%d left): %s", retries,
-	 strerror (err));
-      usleep (1000);
+	{
+	  journal_header_t same = { 0 };
+	  err = journal_read_header (&same);
+	  if (!err && same.crc32 == crc32 && same.magic == JOURNAL_MAGIC
+	      && same.version == JOURNAL_VERSION
+	      && same.start_index == start_index
+	      && same.end_index == end_index)
+	    return true;
+	  JOURNAL_LOG_ERROR
+	    ("Couldn't verify header write success. retrying (%d left).",
+	     retries);
+	}
+      else
+	JOURNAL_LOG_ERROR
+	  ("journal: header write failed, retrying (%d left): %s", retries,
+	   strerror (err));
+      usleep (delay_micro);
+      delay_micro *= 2;
+      if (delay_micro > MAX_DELAY_MICRO)
+	delay_micro = MAX_DELAY_MICRO;
     }
 
   return false;
 }
 
 static bool
-initialize_indices (uint64_t * start_index, uint64_t * end_index)
+read_and_validate_header (journal_header_t *out_hdr)
 {
-  journal_header_t hdr = { 0 };
-  error_t err = journal_read_header (&hdr);
+  error_t err = journal_read_header (out_hdr);
   if (err != 0)
     {
-      JOURNAL_LOG_ERROR ("journal_write: header read failed or missing");
-      *start_index = 0;
-      *end_index = 0;
-      return true;		// Allow system to start fresh
+      return false;
     }
 
-  if (hdr.crc32 != journal_compute_header_crc32 (&hdr) ||
-      hdr.magic != JOURNAL_MAGIC || hdr.version != JOURNAL_VERSION)
+  if (out_hdr->crc32 != journal_compute_header_crc32 (out_hdr) ||
+      out_hdr->magic != JOURNAL_MAGIC || out_hdr->version != JOURNAL_VERSION)
     {
-      JOURNAL_LOG_ERROR ("journal_write: header CRC mismatch or invalid");
-      *start_index = 0;
-      *end_index = 0;
-      return true;
+      return false;
     }
 
-  if (hdr.start_index >= journal_layout.num_entries ||
-      hdr.end_index >= journal_layout.num_entries)
+  if (out_hdr->start_index >= journal_layout.num_entries ||
+      out_hdr->end_index >= journal_layout.num_entries)
     {
-      JOURNAL_LOG_ERROR ("journal_write: header indices out of bounds");
-      *start_index = 0;
-      *end_index = 0;
-      return true;
+      return false;
     }
-
-  *start_index = hdr.start_index;
-  *end_index = hdr.end_index;
-
-  JOURNAL_LOG_DEBUG ("journal_write: start_index=%" PRIu64 ", end_index=%"
-		     PRIu64, *start_index, *end_index);
   return true;
 }
 
+static void
+initialize_indices (uint64_t *start_index, uint64_t *end_index)
+{
+  journal_header_t hdr = { 0 };
+  if (read_and_validate_header (&hdr))
+    {
+      *start_index = hdr.start_index;
+      *end_index = hdr.end_index;
+
+      JOURNAL_LOG_DEBUG ("journal_write: start_index=%" PRIu64 ", end_index=%"
+			 PRIu64, *start_index, *end_index);
+      return;
+    }
+
+  *start_index = 0;
+  *end_index = 0;
+}
+
 bool
-journal_write (const journal_payload_bin_t * payload_bin)
+journal_write (const journal_payload_bin_t *payload_bin)
 {
   pthread_mutex_lock (&sync_write_lock);
 
   uint64_t start_index = 0, end_index = 0;
-  if (!initialize_indices (&start_index, &end_index))
+  initialize_indices (&start_index, &end_index);
+
+  const journal_entry_bin_t entry = {
+    .magic = JOURNAL_MAGIC,
+    .version = JOURNAL_VERSION,
+    .payload = *payload_bin,
+    .crc32 = journal_compute_payload_crc32 (payload_bin)
+  };
+  error_t err = journal_write_entry (&entry, end_index);
+  if (err)
     {
+      JOURNAL_LOG_ERROR ("journal_write: write failed: %s", strerror (err));
       pthread_mutex_unlock (&sync_write_lock);
       return false;
     }
+
+  uint64_t next_index = (end_index + 1) % journal_layout.num_entries;
+  if (next_index == start_index)
+    start_index = (start_index + 1) % journal_layout.num_entries;
+
+  if (!persist_header_with_retry (start_index, next_index, 3))
+    {
+      JOURNAL_LOG_ERROR ("journal_write: failed to persist header");
+      pthread_mutex_unlock (&sync_write_lock);
+      return false;
+    }
+
+  pthread_mutex_unlock (&sync_write_lock);
+  return true;
+}
+
+
+bool
+journal_commit (const journal_payload_bin_t *payload_bin)
+{
+  //TODO: Add more fields to header, last_tx_id, last_committed_tx_id, last_committed_end_index.
+  //TODO: Add retry logic here on writes to both entry and header. This is important!!!
+  pthread_mutex_lock (&sync_write_lock);
+
+  uint64_t start_index = 0, end_index = 0;
+  initialize_indices (&start_index, &end_index);
 
   const journal_entry_bin_t entry = {
     .magic = JOURNAL_MAGIC,

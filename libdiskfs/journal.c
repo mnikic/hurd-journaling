@@ -58,7 +58,6 @@ journal_layout_t journal_layout;
 static inline bool
 layout_init (struct store *store, journal_config_t config)
 {
-
   journal_layout.reserved_space = JOURNAL_HEADER_SIZE;
   journal_layout.header_size = JOURNAL_HEADER_SIZE;
   journal_layout.device_block_size = store->block_size;
@@ -89,8 +88,6 @@ denylist_init (void)
 
   for (int i = 0; journal_excluded_prefixes[i]; i++)
     journal_scan_path_for_inos (journal_excluded_prefixes[i], &builder);
-
-
 
   ino_denylist = journal_inode_denylist_finalize (&builder);
 }
@@ -124,7 +121,7 @@ should_log_time (time_t value, int flag_set)
 }
 
 void
-journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
+journal_log_metadata (void *node_ptr, const journal_entry_info_t *info)
 {
   if (!journal_enabled)
     {
@@ -148,8 +145,9 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
 
   journal_payload_bin_t *entry = (journal_payload_bin_t *) buf;
 
-  entry->tx_id = __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
+  entry->tx_id = info->tx_id;
   entry->timestamp_ms = journal_current_time_ms ();
+  entry->type = REC_EVENT;
 
   const struct stat *st = &np->dn_stat;
   entry->parent_ino = (journal_ino_t) info->parent_ino;
@@ -203,4 +201,35 @@ journal_log_metadata (void *node_ptr, const journal_entry_info_t * info)
     }
 
   free (buf);
+}
+
+jrnl_tx_id
+journal_begin_tx (void)
+{
+  return __atomic_add_fetch (&journal_tx_id, 1, __ATOMIC_SEQ_CST);
+}
+
+void
+journal_commit_tx (jrnl_tx_id jnl_tx_id)
+{
+  if (!journal_enabled)
+    return;
+  journal_payload_bin_t bin;
+  memset (&bin, 0, sizeof (bin));
+
+  bin.tx_id = jnl_tx_id;
+  bin.timestamp_ms = journal_current_time_ms ();
+  bin.type = REC_COMMIT;
+  if (journal_enabled)
+    {
+      if (!journal_commit (&bin))
+	JOURNAL_LOG_ERROR ("Failed to commit a transaction %" PRIu64
+			   " to journal.", jnl_tx_id);
+    }
+}
+
+void
+journal_abort_tx (jrnl_tx_id tx_id)
+{
+  JOURNAL_LOG_DEBUG ("Aborting transaction %" PRIu64 ".", tx_id);
 }

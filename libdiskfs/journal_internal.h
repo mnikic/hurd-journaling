@@ -1,4 +1,4 @@
-/* journal_internal.h - Internal journal struct definitions
+/* journal_internal.h - Internal journal definitions
 
    Copyright (C) 2025 Free Software Foundation, Inc.
 
@@ -37,5 +37,11 @@ typedef struct journal_layout
   size_t device_block_size;
   size_t device_span_bytes;
 } journal_layout_t;
+
+typedef enum
+{
+  REC_EVENT = 0,		// carries journal_action_t + payload
+  REC_COMMIT = 1,		// carries tx_id (and maybe end_index)
+} journal_record_type_t;
 
 #endif /* LIBDISKFS_JOURNAL_INTERNAL_H */

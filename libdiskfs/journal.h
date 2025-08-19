@@ -29,6 +29,8 @@
 
 #define JOURNAL_PATH_FROM_CRED(cred) ((cred) && (cred)->po && (cred)->po->path ? (cred)->po->path : "")
 
+typedef uint64_t jrnl_tx_id;
+
 /* Journaling actions representing metadata changes.  */
 typedef enum
 {
@@ -62,6 +64,7 @@ typedef struct journal_config
 /* Metadata event structure passed to the journaling system.  */
 typedef struct journal_entry_info
 {
+  jrnl_tx_id tx_id;
   /* Identity and naming.  */
   journal_action_t action;	/* e.g. "create", "unlink", "rename" */
   const char *name;		/* Affected file name */
@@ -91,5 +94,11 @@ void journal_shutdown (void);
    NODE_PTR is a filesystem node (e.g. struct node *).
    INFO describes the additional detals about the metadata event. */
 void journal_log_metadata (void *node_ptr, const journal_entry_info_t * info);
+
+jrnl_tx_id journal_begin_tx (void);
+
+void journal_commit_tx (jrnl_tx_id tx_id);
+
+void journal_abort_tx (jrnl_tx_id tx_id);
 
 #endif /* LIBDISKFS_JOURNAL_H */

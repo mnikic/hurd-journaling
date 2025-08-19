@@ -226,8 +226,8 @@ should_journal_filename_fallback (const char *name, const char *path)
 
 bool
 journal_should_log_event (const struct node *np,
-			  const journal_entry_info_t * info,
-			  const journal_inode_denylist_t * ino_denylist,
+			  const journal_entry_info_t *info,
+			  const journal_inode_denylist_t *ino_denylist,
 			  const char *full_path)
 {
   if (!np)
@@ -241,6 +241,14 @@ journal_should_log_event (const struct node *np,
     {
       JOURNAL_LOG_ERROR
 	("NULL info pointer received in journal_log_metadata, skipping.");
+      return false;
+    }
+
+  if (info->tx_id == 0)
+    {
+      JOURNAL_LOG_ERROR
+	("Rejecting event without transaction id. Action type %zu.",
+	 info->action);
       return false;
     }
 
@@ -265,8 +273,7 @@ journal_should_log_event (const struct node *np,
   /* Low signal here, lets skip */
   if ((!full_path || full_path[0] == '\0') &&
       (info->action == JOURNAL_ACTION_ATIME ||
-       info->action == JOURNAL_ACTION_UTIME ||
-       info->action == JOURNAL_ACTION_WRITE))
+       info->action == JOURNAL_ACTION_UTIME))
     {
       //JOURNAL_LOG_DEBUG ("Skipped node %" PRIu64 " low-value event with no path",
       //               st->st_ino);
@@ -284,7 +291,7 @@ journal_should_log_event (const struct node *np,
     return false;
 
   /* Please keep time filtering last. If any event is recorded timestamps are updated. 
-     So we need to update timestamp_filter when things pass eveything else. */
+     So we need to update timestamp_filter when things pass everything else. */
   time_t ts = safe_max_timestamp (st->st_atime, st->st_ctime, st->st_mtime);
   bool ignore_time = false;
   /* If one of the timestamps changed, check if it's worth logging */

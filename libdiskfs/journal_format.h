@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <libdiskfs/journal.h>
+#include <libdiskfs/journal_internal.h>
 #include <libdiskfs/journal_config.h>
 
 #define JOURNAL_MAGIC    0x4A4E4C30	/* "JNL0" */
@@ -48,6 +49,7 @@ struct __attribute__((__packed__)) journal_payload_bin
   /* Transaction data */
   uint64_t tx_id;
   uint64_t timestamp_ms;
+  journal_record_type_t type;
 
   /* Inode and parent relationships */
   journal_ino_t ino;

@@ -30,4 +30,10 @@
    Returns true on success, false on error. */
 bool journal_write (const struct journal_payload_bin *payload);
 
+/* Write a single parsed journal payload that represents a commit 
+   synchronously. Performs internal serialization and CRC generation.
+   Might attempt additional durabilty attempts.
+   Returns true on success, false on error. */
+bool journal_commit (const struct journal_payload_bin *payload);
+
 #endif /* LIBDISKFS_JOURNAL_WRITER_H */
