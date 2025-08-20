@@ -18,6 +18,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include <libdiskfs/journal.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -764,10 +765,11 @@ diskfs_file_update (struct node *node, int wait)
   pthread_spin_unlock (&node_to_page_lock);
 
   if (pager)
-    {
-      pager_sync (pager, wait);
-      ports_port_deref (pager);
-    }
+  {
+    pager_sync(pager, wait);
+    //if (S_ISDIR(node->dn_stat.st_mode))
+      journal_dir_marked_blocks_synced(node->dn_stat.st_ino, /*strong=*/wait != 0);
+  }
 
   pokel_sync (&diskfs_node_disknode (node)->indir_pokel, wait);
 
@@ -1446,6 +1448,8 @@ diskfs_sync_everything (int wait)
 
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
+
+  journal_flush_all_pending_dir_syncs(/*strong=*/wait != 0);
 
   /* Do things on the the disk pager.  */
   sync_global (wait);

@@ -20,6 +20,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include <libdiskfs/journal.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -510,7 +511,11 @@ write_all_disknodes (void)
       /* Update the inode image.  */
       di = write_node (node);
       if (di)
-	record_global_poke (di);
+       {
+         block_t b = boffs_block (bptr_offs (di));
+         journal_mark_inode_block_dirty (node->dn_stat.st_ino, b);
+	 record_global_poke (di);
+       }
 
       return 0;
     }
@@ -527,10 +532,15 @@ diskfs_write_disknode (struct node *np, int wait)
   struct ext2_inode *di = write_node (np);
   if (di)
     {
+      block_t b = boffs_block (bptr_offs (di));
+      journal_mark_inode_block_dirty (np->dn_stat.st_ino, b);
       if (wait)
-	sync_global_ptr (di, 1);
+        {
+	  sync_global_ptr (di, 1);
+          journal_inode_synced (np->dn_stat.st_ino, true);
+        }
       else
-	record_global_poke (di);
+	 record_global_poke (di); 
     }
 }
 

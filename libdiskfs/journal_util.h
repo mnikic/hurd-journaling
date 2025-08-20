@@ -33,7 +33,7 @@
 #include <string.h>
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 0		/* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 1		/* Set to enable (very chatty) debug messages. */
 #endif
 
 #define JOURNAL_LOG_ERROR(fmt, ...)                            \

@@ -21,6 +21,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include <libdiskfs/journal.h>
 
 void
 pokel_init (struct pokel *pokel, struct pager *pager, void *image)
@@ -133,6 +134,16 @@ _pokel_exec (struct pokel *pokel, int sync, int wait)
 	{
 	  ext2_debug ("syncing 0x%lx[%ul]", pl->offset, pl->length);
 	  pager_sync_some (pokel->pager, pl->offset, pl->length, wait);
+
+          vm_offset_t begin = trunc_block (pl->offset);
+          vm_offset_t end   = round_block (pl->offset + pl->length);
+          for (vm_offset_t i = begin; i != end; i += block_size)
+            {
+              void   *block_ptr = pokel->image + i;             // pointer inside disk_cache
+  	      off_t   dev_off   = bptr_offs(block_ptr);         // convert to device byte offset
+  	      block_t b         = boffs_block(dev_off);         // convert to device block number
+              journal_meta_block_synced(b, /*strong=*/wait != 0);
+            }
 	}
 
       if (pokel->image == disk_cache)

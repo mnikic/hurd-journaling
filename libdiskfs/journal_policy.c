@@ -246,9 +246,9 @@ journal_should_log_event (const struct node *np,
 
   if (info->tx_id == 0)
     {
-      JOURNAL_LOG_ERROR
-	("Rejecting event without transaction id. Action type %zu.",
-	 info->action);
+    //  JOURNAL_LOG_ERROR
+//	("Rejecting event without transaction id. Action type %zu.",
+//	 info->action);
       return false;
     }
 

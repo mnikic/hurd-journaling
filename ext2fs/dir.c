@@ -20,6 +20,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include <libdiskfs/journal.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -705,6 +706,7 @@ diskfs_direnter_hard (struct node *dp, const char *name, struct node *np,
 	}
     }
 
+  journal_mark_dir_lblk_dirty(dp->dn_stat.st_ino, ds->idx);
   diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;
@@ -743,6 +745,7 @@ diskfs_dirremove_hard (struct node *dp, struct dirstat *ds)
       && diskfs_node_disknode (dp)->dirents[ds->idx] != -1)
     diskfs_node_disknode (dp)->dirents[ds->idx]--;
 
+  journal_mark_dir_lblk_dirty(dp->dn_stat.st_ino, ds->idx);
   diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;
@@ -769,6 +772,7 @@ diskfs_dirrewrite_hard (struct node *dp, struct node *np, struct dirstat *ds)
 
   munmap ((caddr_t) ds->mapbuf, ds->mapextent);
 
+  journal_mark_dir_lblk_dirty(dp->dn_stat.st_ino, ds->idx);
   diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;

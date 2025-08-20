@@ -233,3 +233,33 @@ journal_abort_tx (jrnl_tx_id tx_id)
 {
   JOURNAL_LOG_DEBUG ("Aborting transaction %" PRIu64 ".", tx_id);
 }
+
+void journal_mark_dir_lblk_dirty(uint32_t pino, uint32_t lblk) 
+{
+  JOURNAL_LOG_DEBUG ("Marking node %u logical block %u dirty", pino, lblk); 
+}
+
+void journal_dir_marked_blocks_synced (uint32_t pino, bool strong)
+{
+  JOURNAL_LOG_DEBUG ("Marking dir %u synced %d", pino, strong); 
+}
+ 
+void journal_meta_block_synced (block_t b, bool strong)
+{
+  JOURNAL_LOG_DEBUG ("Marking block %u synced %d",b, strong); 
+}
+  
+void journal_mark_inode_block_dirty(uint32_t inode, block_t block)
+{
+  JOURNAL_LOG_DEBUG ("Marking inode %u block %u dirty", inode, block); 
+}
+   
+void journal_inode_synced(uint32_t inode, bool strong)
+{
+  JOURNAL_LOG_DEBUG ("Marking node %u synced %d", inode, strong); 
+}
+
+void journal_flush_all_pending_dir_syncs(bool strong) 
+{
+  JOURNAL_LOG_DEBUG ("Marking all dirs synced %d", strong); 
+}

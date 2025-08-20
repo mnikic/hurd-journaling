@@ -30,6 +30,7 @@
 #define JOURNAL_PATH_FROM_CRED(cred) ((cred) && (cred)->po && (cred)->po->path ? (cred)->po->path : "")
 
 typedef uint64_t jrnl_tx_id;
+typedef uint32_t block_t;
 
 /* Journaling actions representing metadata changes.  */
 typedef enum
@@ -100,5 +101,14 @@ jrnl_tx_id journal_begin_tx (void);
 void journal_commit_tx (jrnl_tx_id tx_id);
 
 void journal_abort_tx (jrnl_tx_id tx_id);
+
+void journal_mark_dir_lblk_dirty(uint32_t pino, uint32_t lblk);
+void journal_dir_marked_blocks_synced (uint32_t pino, bool strong);
+void journal_meta_block_synced (block_t b, bool strong);
+
+void journal_mark_inode_block_dirty(uint32_t inode, block_t block);
+void journal_inode_synced(uint32_t inode, bool strong);
+
+void journal_flush_all_pending_dir_syncs(bool strong);
 
 #endif /* LIBDISKFS_JOURNAL_H */

@@ -21,6 +21,7 @@
 #define _EXT2FS_H
 
 #include <mach.h>
+#include <libdiskfs/journal.h>
 #include <hurd.h>
 #include <hurd/ports.h>
 #include <hurd/pager.h>
@@ -521,6 +522,7 @@ sync_global_ptr (void *ptr, int wait)
   disk_cache_block_deref (block_ptr);
   pager_sync_some (diskfs_disk_pager,
 		   block_ptr - disk_cache, block_size, wait);
+  journal_meta_block_synced(block, /*strong=*/wait != 0);
 
 }
 
