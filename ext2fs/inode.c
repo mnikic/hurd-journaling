@@ -20,6 +20,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include "journal.h"
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -524,14 +525,38 @@ write_all_disknodes (void)
 void
 diskfs_write_disknode (struct node *np, int wait)
 {
+  if (ext2_journal)
+  {
+    journal_start_transaction(ext2_journal);
+  }
+
   struct ext2_inode *di = write_node (np);
+
   if (di)
+  {
+    if (ext2_journal)
     {
-      if (wait)
-	sync_global_ptr (di, 1);
-      else
-	record_global_poke (di);
+      unsigned long ino = np->dn_stat.st_ino;
+      unsigned long group = inode_group_num(ino);
+      block_t table_start = le32toh (group_desc(group)->bg_inode_table);
+      unsigned long inodes_per_group = le32toh (sblock->s_inodes_per_group);
+      unsigned long inode_index = (ino - 1) % inodes_per_group;
+      unsigned long byte_offset = inode_index * le16toh (sblock->s_inode_size);
+      block_t block_num = table_start + (byte_offset / block_size);
+      void *block_ptr = bptr (block_num);
+      journal_dirty_block(ext2_journal, block_num, block_ptr);
     }
+
+    if (wait)
+      sync_global_ptr (di, 1);
+    else
+      record_global_poke (di);
+  }
+
+  if (ext2_journal)
+  {
+    journal_stop_transaction(ext2_journal);
+  }
 }
 
 /* Set *ST with appropriate values to reflect the current state of the
@@ -861,4 +886,12 @@ diskfs_shutdown_soft_ports (void)
 {
   /* Should initiate termination of internally held pager ports
      (the only things that should be soft) XXX */
+}
+
+void
+diskfs_notify_change (struct node *np)
+{
+    /* If journaling is active, capture this metadata change immediately */
+    if (ext2_journal)
+        diskfs_node_update (np, 0);
 }

@@ -507,6 +507,11 @@ error_t diskfs_validate_flags_change (struct node *np, int flags);
    changed to RDEV; otherwise return an error code. */
 error_t diskfs_validate_rdev_change (struct node *np, dev_t rdev);
 
+/* The user may define this function.  It is called immediately when
+   a node's metadata (stat info) is modified in memory, even if
+   diskfs_synchronous is false.  The default definition does nothing. */
+void diskfs_notify_change (struct node *np);
+
 /* The user must define this function.  Sync the info in NP->dn_stat
    and any associated format-specific information to disk.  If WAIT is true,
    then return only after the physicial media has been completely updated. */

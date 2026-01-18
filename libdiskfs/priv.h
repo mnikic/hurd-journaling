@@ -140,7 +140,13 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
   pthread_mutex_lock (&np->lock);					    \
   (OPERATION);								    \
   if (diskfs_synchronous)						    \
+   {  									    \
     diskfs_node_update (np, 1);						    \
+   }  									    \
+  else   								    \
+   {  									    \
+    diskfs_notify_change (np);  					    \
+   }  									    \
   pthread_mutex_unlock (&np->lock);					    \
   return err;								    \
 })
