@@ -456,7 +456,6 @@ journal_force_checkpoint (journal_t *journal, uint32_t current_tid)
   JRNL_LOG_DEBUG
     ("[CHECKPOINT] Reset complete. Tail moved to %u. Free space restored.",
      journal->j_tail);
-  sync_global (1);		// Make sure the superblock hit the disk
 }
 
 static uint32_t
@@ -642,15 +641,12 @@ journal_commit_transaction (journal_t *journal)
   /* BARRIER & UPDATE at the end */
   if (!err)
     {
-      journal_sync_everything ();
       if (journal->j_tail == 0)
 	{
 	  JRNL_LOG_DEBUG ("[COMMIT] First Time: Anchoring Tail at Block %u",
 			  journal->j_first);
 
-	  journal_update_superblock (journal, txn->t_tid, journal->j_first);	/* Block 1 */
-	  sync_global (1);
-
+	  journal_update_superblock (journal, txn->t_tid, journal->j_first);
 	  journal->j_tail = journal->j_first;
 	}
     }
