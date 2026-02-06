@@ -16,10 +16,12 @@
    You should have received a copy of the GNU General Public License
    along with the GNU Hurd.  If not, see <http://www.gnu.org/licenses/>.  */
 
+#include "diskfs.h"
 #include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/file.h>
+#include "diskfs.h"
 #include <hurd/fshelp.h>
 #include <hurd/fsys.h>
 #include <hurd/paths.h>
@@ -57,6 +59,7 @@ diskfs_S_dir_lookup (struct protid *dircred,
   int type;
   struct protid *newpi = 0;
   struct peropen *newpo = 0;
+  diskfs_transaction_t *txn;
   int orig_flags = flags;
 
   if (!dircred)
@@ -84,6 +87,7 @@ diskfs_S_dir_lookup (struct protid *dircred,
   *do_retry = FS_RETRY_NORMAL;
   *retry_name = '\0';
 
+  txn = diskfs_journal_start_transaction ();
   if (*filename == '\0')
     {
       /* Set things up in the state expected by the code from gotit: on. */
@@ -570,6 +574,10 @@ diskfs_S_dir_lookup (struct protid *dircred,
     ports_port_deref (newpi);
   if (newpo)
     diskfs_release_peropen (newpo);
+  if (newnode && !err && (diskfs_synchronous || diskfs_journal_needs_sync (txn)))
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
 
   free (relpath);
 
