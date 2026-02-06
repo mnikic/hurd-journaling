@@ -19,6 +19,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include "journal.h"
 
 #ifdef DONT_CACHE_MEMORY_OBJECTS
 #define MAY_CACHE 0
@@ -385,5 +386,7 @@ diskfs_truncate (struct node *node, off_t length)
 
   pthread_rwlock_unlock (&diskfs_node_disknode (node)->alloc_lock);
 
+  /* This informs the journal about the changes. */
+  diskfs_node_update (node, diskfs_synchronous);
   return err;
 }
