@@ -29,6 +29,7 @@
 #include <hurd/store.h>
 #include <hurd/diskfs.h>
 #include <hurd/ihash.h>
+#include <libdiskfs/diskfs.h>
 #include <assert-backtrace.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -284,6 +285,10 @@ extern int sblock_dirty;
 /* Size of one inode. */
 extern uint16_t global_inode_size;
 
+/* Forward declaration prevents circular dependency with journal.h */
+struct journal;
+extern struct journal *ext2_journal;
+
 /* Where the super-block is located on disk (at min-block 1).  */
 #define SBLOCK_BLOCK	1	/* Default location, second 1k block.  */
 #define SBLOCK_SIZE	(sizeof (struct ext2_super_block))
@@ -419,8 +424,20 @@ extern struct ext2_group_desc *group_desc_image;
    implementation is provided in 'xinl.c'.  */
 extern struct ext2_inode * dino_ref (ino_t inum);
 extern void _dino_deref (struct ext2_inode *inode);
+extern block_t dino_block (ino_t inum);
 
 #if defined(__USE_EXTERN_INLINES) || defined(EXT2FS_DEFINE_EI)
+/* Convert an inode number to the block on disk. */
+EXT2FS_EI block_t
+dino_block (ino_t inum)
+{
+  unsigned long inodes_per_group = le32toh (sblock->s_inodes_per_group);
+  unsigned long bg_num = (inum - 1) / inodes_per_group;
+  unsigned long group_inum = (inum - 1) % inodes_per_group;
+  struct ext2_group_desc *bg = group_desc (bg_num);
+  return le32toh (bg->bg_inode_table) + (group_inum / inodes_per_block);
+}
+
 /* Convert an inode number to the dinode on disk. */
 EXT2FS_EI struct ext2_inode *
 dino_ref (ino_t inum)
@@ -548,17 +565,22 @@ sync_global (int wait)
   pokel_sync (&global_pokel, wait);
 }
 
-/* Sync all allocation information and node NP if diskfs_synchronous. */
+/* Sync all allocation information and node NP if diskfs_synchronous.
+   If journaling is active, we just update memory (wait=0) and let the
+   transaction commit handle durability. */
 EXT2FS_EI void
 alloc_sync (struct node *np)
 {
+  /* Serialization for the Journal (Always needed if journaling) */
+  if (np && (ext2_journal || diskfs_synchronous))
+    diskfs_node_update (np, diskfs_synchronous);
+
+  /* Physical Pager Flushing (Strictly limited to synchronous mode) */
   if (diskfs_synchronous)
     {
       if (np)
-	{
-	  diskfs_node_update (np, 1);
-	  pokel_sync (&diskfs_node_disknode (np)->indir_pokel, 1);
-	}
+        pokel_sync (&diskfs_node_disknode (np)->indir_pokel, 1);
+
       diskfs_set_hypermetadata (1, 0);
     }
 }
