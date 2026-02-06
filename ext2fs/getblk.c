@@ -37,6 +37,7 @@
 
 #include <string.h>
 #include "ext2fs.h"
+#include "journal.h"
 
 /*
  * ext2_discard_prealloc and ext2_alloc_block are atomic wrt. the
@@ -141,6 +142,9 @@ inode_getblk (struct node *node, int nr, int create, int zero,
   if (!create)
     return EINVAL;
 
+  if (ext2_journal)
+    journal_start_transaction (ext2_journal);
+
   if (diskfs_node_disknode (node)->info.i_next_alloc_block == new_block)
     goal = diskfs_node_disknode (node)->info.i_next_alloc_goal;
 
@@ -171,7 +175,11 @@ inode_getblk (struct node *node, int nr, int create, int zero,
 	      create ? "" : "no", hint, goal, *result);
 
   if (!*result)
-    return ENOSPC;
+    {
+      if (ext2_journal)
+        journal_stop_transaction (ext2_journal);
+      return ENOSPC;
+    }
 
   diskfs_node_disknode (node)->info.i_data[nr] = *result;
 
@@ -180,6 +188,9 @@ inode_getblk (struct node *node, int nr, int create, int zero,
   node->dn_set_ctime = node->dn_set_mtime = 1;
   node->dn_stat.st_blocks += 1 << log2_stat_blocks_per_fs_block;
   node->dn_stat_dirty = 1;
+
+  if (ext2_journal)
+    journal_stop_transaction (ext2_journal);
 
   if (diskfs_synchronous || diskfs_node_disknode (node)->info.i_osync)
     diskfs_node_update (node, 1);

@@ -19,6 +19,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include "journal.h"
 
 #ifdef DONT_CACHE_MEMORY_OBJECTS
 #define MAY_CACHE 0
@@ -339,12 +340,15 @@ diskfs_truncate (struct node *node, off_t length)
 
   pthread_rwlock_wrlock (&diskfs_node_disknode (node)->alloc_lock);
 
+  if (ext2_journal)
+    journal_start_transaction (ext2_journal);
+
   /* Update the size on disk; fsck will finish freeing blocks if necessary
      should we crash. */
   node->dn_stat.st_size = length;
   node->dn_set_mtime = 1;
   node->dn_set_ctime = 1;
-  diskfs_node_update (node, diskfs_synchronous);
+  diskfs_node_update (node, 0);
 
   err = diskfs_catch_exception ();
   if (!err)
@@ -380,10 +384,23 @@ diskfs_truncate (struct node *node, off_t length)
   node->dn_set_ctime = 1;
   node->dn_stat_dirty = 1;
 
+  if (ext2_journal)
+    journal_stop_transaction (ext2_journal);
+
   /* Now we can permit delayed copies again. */
   enable_delayed_copies (node);
 
   pthread_rwlock_unlock (&diskfs_node_disknode (node)->alloc_lock);
+
+  if (diskfs_synchronous)
+    {
+      diskfs_node_update (node, 1);
+    }
+  else
+    {
+      if (ext2_journal)
+	diskfs_node_update (node, 0);
+    }
 
   return err;
 }
