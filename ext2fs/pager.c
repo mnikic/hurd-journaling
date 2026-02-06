@@ -25,6 +25,7 @@
 #include <inttypes.h>
 #include <hurd/store.h>
 #include "ext2fs.h"
+#include "journal.h"
 
 /* XXX */
 #include "../libpager/priv.h"
@@ -648,6 +649,11 @@ disk_pager_write_page (vm_offset_t page, void *buf)
       while (length > 0 && !err)
 	{
 	  block_t block = boffs_block (offset);
+	  if (ext2_journal && journal_block_is_active(ext2_journal, block))
+	    {
+	       JRNL_LOG_DEBUG ("Pageout conflict on Block %u -> Forcing Commit", block);
+	       journal_commit_transaction(ext2_journal, NULL);
+	    }
 
 	  /* We don't clear the block modified bit here because this paging
 	     write request may not be the same one that actually set the bit,
@@ -1580,6 +1586,30 @@ diskfs_shutdown_pager (void)
      pager, just make sure it's synced. */
 }
 
+static error_t
+journal_sync_one (void *v_p)
+{
+  struct pager *p = v_p;
+  pager_sync (p, 1);
+  return 0;
+}
+
+/**
+ * Sync all the pagers synchronously, but don't call
+ * journal_commit here. It would deadlock.
+ **/
+void
+journal_sync_everything (void)
+{
+  write_all_disknodes ();
+  ports_bucket_iterate (file_pager_bucket, journal_sync_one);
+  sync_global (1);
+  error_t err = store_sync (store);
+  /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
+  if (err && err != EOPNOTSUPP)
+    ext2_warning ("device flush failed: %s", strerror (err));
+}
+
 /* Sync all the pagers. */
 void
 diskfs_sync_everything (int wait)
@@ -1591,6 +1621,12 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
+  uint32_t safe_journal_limit = 0;
+  if (ext2_journal)
+    {
+      /* We only commit if we have a running transaction */
+      journal_commit_transaction (ext2_journal, &safe_journal_limit);
+    }
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
 
@@ -1602,6 +1638,8 @@ diskfs_sync_everything (int wait)
       /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
       if (err && err != EOPNOTSUPP)
         ext2_warning ("device flush failed: %s", strerror (err));
+      if (!err && ext2_journal)
+	journal_reclaim_space (ext2_journal, safe_journal_limit);
     }
 }
 

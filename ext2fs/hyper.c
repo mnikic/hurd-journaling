@@ -196,11 +196,20 @@ diskfs_set_hypermetadata (int wait, int clean)
     /* The filesystem is clean, so we need to set the clean flag.  */
     {
       sblock->s_state |= htole16 (EXT2_VALID_FS);
+      if (ext2_journal)
+       {
+	  sblock->s_feature_incompat &= htole32(~EXT3_FEATURE_INCOMPAT_RECOVER);
+       }
       sblock_dirty = 1;
     }
   else if (!clean && (sblock->s_state & htole16 (EXT2_VALID_FS)))
     /* The filesystem just became dirty, so clear the clean flag.  */
     {
+      if (ext2_journal &&
+          !(sblock->s_feature_incompat & htole32(EXT3_FEATURE_INCOMPAT_RECOVER)))
+	{
+           sblock->s_feature_incompat |= htole32(EXT3_FEATURE_INCOMPAT_RECOVER);
+        }
       sblock->s_state &= htole16 (~EXT2_VALID_FS);
       sblock_dirty = 1;
       wait = 1;
