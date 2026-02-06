@@ -20,6 +20,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
+#include "journal.h"
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -559,24 +560,55 @@ write_all_disknodes (void)
   diskfs_node_iterate (write_one_disknode);
 }
 
+static void
+write_disknode_journaled (struct node *np, int wait)
+{
+  journal_start_transaction(ext2_journal);
+  struct ext2_inode *di = write_node (np);
+
+  if (di)
+   {
+      unsigned long ino = np->dn_stat.st_ino;
+      unsigned long group = inode_group_num(ino);
+      block_t table_start = le32toh (group_desc(group)->bg_inode_table);
+      unsigned long inodes_per_group = le32toh (sblock->s_inodes_per_group);
+      unsigned long inode_index = (ino - 1) % inodes_per_group;
+      unsigned long byte_offset = inode_index * le16toh (sblock->s_inode_size);
+      block_t block_num = table_start + (byte_offset / block_size);
+      void *block_ptr = bptr (block_num);
+      journal_dirty_block(ext2_journal, block_num, block_ptr);
+   }
+  journal_stop_transaction(ext2_journal);
+  if (wait && di)
+    journal_commit_transaction(ext2_journal, NULL);
+}
+
 /* Sync the info in NP->dn_stat and any associated format-specific
    information to disk.  If WAIT is true, then return only after the
    physicial media has been completely updated.  */
 void
 diskfs_write_disknode (struct node *np, int wait)
 {
-  struct ext2_inode *di = write_node (np);
+  struct ext2_inode *di;
+
+  if (ext2_journal)
+  {
+    write_disknode_journaled (np, wait);
+    return;
+  }
+  di = write_node (np);
   if (di)
     {
       if (wait)
         {
-	  sync_global_ptr (di, 1);
+          sync_global_ptr (di, 1);
           error_t err = store_sync (store);
+          /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
           if (err && err != EOPNOTSUPP)
-            ext2_warning ("inode flush failed: %s", strerror (err));
+            ext2_warning ("device flush failed: %s", strerror (err));
         }
       else
-	record_global_poke (di);
+        record_global_poke (di);
     }
 }
 
@@ -907,4 +939,12 @@ diskfs_shutdown_soft_ports (void)
 {
   /* Should initiate termination of internally held pager ports
      (the only things that should be soft) XXX */
+}
+
+void
+diskfs_notify_change (struct node *np)
+{
+    /* If journaling is active, capture this metadata change immediately */
+    if (ext2_journal)
+        diskfs_node_update (np, 0);
 }

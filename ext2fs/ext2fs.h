@@ -284,6 +284,10 @@ extern int sblock_dirty;
 /* Size of one inode. */
 extern uint16_t global_inode_size;
 
+/* Forward declaration prevents circular dependency with journal.h */
+struct journal;
+extern struct journal *ext2_journal;
+
 /* Where the super-block is located on disk (at min-block 1).  */
 #define SBLOCK_BLOCK	1	/* Default location, second 1k block.  */
 #define SBLOCK_SIZE	(sizeof (struct ext2_super_block))
