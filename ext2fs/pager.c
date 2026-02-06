@@ -25,6 +25,7 @@
 #include <inttypes.h>
 #include <hurd/store.h>
 #include "ext2fs.h"
+#include "journal.h"
 
 /* XXX */
 #include "../libpager/priv.h"
@@ -326,6 +327,9 @@ pending_blocks_write (struct pending_blocks *pb)
 
       ext2_debug ("writing block %u[%ld]", pb->block, pb->num);
 
+      /* Lets make sure these are all already committed. */
+      journal_ensure_blocks_journaled (pb->block, pb->num);
+
       if (pb->offs > 0)
 	/* Put what we're going to write into a page-aligned buffer.  */
 	{
@@ -336,6 +340,12 @@ pending_blocks_write (struct pending_blocks *pb)
 	}
       else
 	err = store_write (store, dev_block, pb->buf, length, &amount);
+
+      /* Now tell the journal about the partial/full success. */
+      size_t written_blocks = amount >> log2_block_size;
+      journal_notify_blocks_written (pb->block, written_blocks);
+
+
       if (err)
 	return err;
       else if (amount != length)
@@ -484,7 +494,6 @@ file_pager_write_pages (struct node *node,
 	err = werr;
 
       pthread_rwlock_unlock (lock);
-
       /* Advance only by what we actually enumerated and flushed.  */
       done += built;
 
@@ -674,8 +683,17 @@ disk_pager_write_page (vm_offset_t page, void *buf)
     }
   else
     {
+      block_t start_block = offset >> log2_block_size;
+      size_t n_blocks = length >> log2_block_size;
+      /* Ensure that we don't have these blocks in the currently
+       * running or committing transaction. This functiono will block
+       * if it needs to ensure this holds true. */
+      journal_ensure_blocks_journaled (start_block, n_blocks);
+
       err = store_write (store, offset >> store->log2_block_size,
 			 buf, length, &amount);
+      size_t written_blocks = amount >> log2_block_size;
+      journal_notify_blocks_written (start_block, written_blocks);
       if (!err && length != amount)
 	err = EIO;
     }
@@ -916,9 +934,12 @@ diskfs_file_update (struct node *node, int wait)
       ports_port_deref (pager);
     }
 
-  pokel_sync (&diskfs_node_disknode (node)->indir_pokel, wait);
+  /* If there is a journal present we will not sync metadata immediately
+     We will let the journal do it when its ready. */
+  int meta_wait = ext2_journal ? 0 : wait;
+  pokel_sync (&diskfs_node_disknode (node)->indir_pokel, meta_wait);
 
-  diskfs_node_update (node, wait);
+  diskfs_node_update (node, meta_wait);
 }
 
 /* Invalidate any pager data associated with NODE.  */
@@ -1569,15 +1590,41 @@ diskfs_shutdown_pager (void)
       return 0;
     }
 
+  journal_commit_running_transaction ();
   write_all_disknodes ();
 
   ports_bucket_iterate (file_pager_bucket, shutdown_one);
 
   /* Sync everything on the the disk pager.  */
   sync_global (1);
+  journal_quiesce_checkpoints ();
   store_sync (store);
   /* Despite the name of this function, we never actually shutdown the disk
      pager, just make sure it's synced. */
+}
+
+static error_t
+journal_sync_one (void *v_p)
+{
+  struct pager *p = v_p;
+  pager_sync (p, 1);
+  return 0;
+}
+
+/**
+ * Sync all the pagers synchronously, but don't call
+ * journal_commit here. It would deadlock.
+ **/
+void
+journal_sync_everything (void)
+{
+  write_all_disknodes ();
+  ports_bucket_iterate (file_pager_bucket, journal_sync_one);
+  sync_global (1);
+  error_t err = store_sync (store);
+  /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
+  if (err && err != EOPNOTSUPP)
+    ext2_warning ("device flush failed: %s", strerror (err));
 }
 
 /* Sync all the pagers. */
@@ -1591,6 +1638,9 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
+  /* We only commit if there is a journal and we have a running transaction */
+  journal_commit_running_transaction ();
+
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
 
@@ -1599,7 +1649,6 @@ diskfs_sync_everything (int wait)
   if (wait)
     {
       error_t err = store_sync (store);
-      /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
       if (err && err != EOPNOTSUPP)
         ext2_warning ("device flush failed: %s", strerror (err));
     }
