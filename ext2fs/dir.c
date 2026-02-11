@@ -705,7 +705,7 @@ diskfs_direnter_hard (struct node *dp, const char *name, struct node *np,
 	}
     }
 
-  diskfs_file_update (dp, diskfs_synchronous);
+  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
 
   return 0;
 }
@@ -743,7 +743,7 @@ diskfs_dirremove_hard (struct node *dp, struct dirstat *ds)
       && diskfs_node_disknode (dp)->dirents[ds->idx] != -1)
     diskfs_node_disknode (dp)->dirents[ds->idx]--;
 
-  diskfs_file_update (dp, diskfs_synchronous);
+  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
 
   return 0;
 }
@@ -769,7 +769,7 @@ diskfs_dirrewrite_hard (struct node *dp, struct node *np, struct dirstat *ds)
 
   munmap ((caddr_t) ds->mapbuf, ds->mapextent);
 
-  diskfs_file_update (dp, diskfs_synchronous);
+  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
 
   return 0;
 }

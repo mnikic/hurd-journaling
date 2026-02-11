@@ -19,6 +19,7 @@
    Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111, USA. */
 
 
+#include <libdiskfs/diskfs.h>
 #include "priv.h"
 
 /* Add NP to directory DP under the name NAME.  This will only be
@@ -36,6 +37,7 @@ diskfs_direnter (struct node *dp,
 {
   error_t err;
 
+  diskfs_journal_start_transaction ();
   err = diskfs_direnter_hard (dp, name, np, ds, cred);
   if (err)
     return err;
@@ -44,5 +46,7 @@ diskfs_direnter (struct node *dp,
     diskfs_notice_dirchange (dp, DIR_CHANGED_NEW, name);
 
   diskfs_enter_lookup_cache (dp, np, name);
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
   return 0;
 }
