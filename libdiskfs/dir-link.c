@@ -15,6 +15,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include <libdiskfs/diskfs.h>
+#include "diskfs.h"
 #include "priv.h"
 #include "fs_S.h"
 
@@ -30,6 +32,7 @@ diskfs_S_dir_link (struct protid *dircred,
   struct node *dnp;		/* directory of new entry */
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!dircred)
     return EOPNOTSUPP;
@@ -99,9 +102,10 @@ diskfs_S_dir_link (struct protid *dircred,
       pthread_mutex_unlock (&dnp->lock);
       return EMLINK;
     }
+  diskfs_journal_start_transaction ();
   np->dn_stat.st_nlink++;
   np->dn_set_ctime = 1;
-  diskfs_node_update (np, diskfs_synchronous);
+  diskfs_node_update (np, sync_pass);
 
   /* Attach it */
   if (tnp)
@@ -113,21 +117,28 @@ diskfs_S_dir_link (struct protid *dircred,
 	  /* Deallocate link on TNP */
 	  tnp->dn_stat.st_nlink--;
 	  tnp->dn_set_ctime = 1;
-	  if (diskfs_synchronous)
-	    diskfs_node_update (tnp, 1);
+	  diskfs_node_update (tnp, sync_pass);
 	}
       diskfs_nput (tnp);
     }
   else
     err = diskfs_direnter (dnp, name, np, ds, dircred);
 
-  if (diskfs_synchronous)
-    diskfs_node_update (dnp, 1);
+  if (err && diskfs_journal_is_running ())
+    {
+      np->dn_stat.st_nlink--;
+      np->dn_set_ctime = 1;
+    }
+  diskfs_node_update (dnp, sync_pass);
+  diskfs_journal_stop_transaction ();
 
   pthread_mutex_unlock (&dnp->lock);
   pthread_mutex_unlock (&np->lock);
   if (!err)
     /* MiG won't do this for us, which it ought to. */
     mach_port_deallocate (mach_task_self (), filecred->pi.port_right);
+
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
   return err;
 }
