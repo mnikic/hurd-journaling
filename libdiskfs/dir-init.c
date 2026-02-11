@@ -15,7 +15,9 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include "diskfs.h"
 #include "priv.h"
+#include <libdiskfs/diskfs.h>
 
 /* Locked node DP is a new directory; add whatever links are necessary
    to give it structure; its parent is the (locked) node PDP. 
@@ -28,6 +30,7 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   struct node *foo;
   error_t err;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   /* Fabricate a protid that represents root credentials. */
   static uid_t zero = 0;
@@ -40,30 +43,53 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   if (pdp->dn_stat.st_nlink == diskfs_link_max - 1)
     return EMLINK;
 
+  diskfs_journal_start_transaction ();
   dp->dn_stat.st_nlink++;	/* for `.' */
   dp->dn_set_ctime = 1;
   err = diskfs_lookup (dp, ".", CREATE, &foo, ds, &lookupcred);
+  diskfs_node_update (dp, sync_pass);
   assert_backtrace (err == ENOENT);
   err = diskfs_direnter (dp, ".", dp, ds, cred);
   if (err)
     {
       dp->dn_stat.st_nlink--;
       dp->dn_set_ctime = 1;
+      if (diskfs_journal_is_running ())
+	diskfs_node_update (dp, sync_pass);
+
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
   pdp->dn_stat.st_nlink++;	/* for `..' */
   pdp->dn_set_ctime = 1;
   err = diskfs_lookup (dp, "..", CREATE, &foo, ds, &lookupcred);
+  diskfs_node_update (pdp, sync_pass);
   assert_backtrace (err == ENOENT);
   err = diskfs_direnter (dp, "..", pdp, ds, cred);
   if (err)
     {
       pdp->dn_stat.st_nlink--;
       pdp->dn_set_ctime = 1;
+      /* Only cleanup if journal is running */
+      if (diskfs_journal_is_running ())
+	{
+	  /* ROLLBACK'.' on Parent */
+	  diskfs_node_update (pdp, sync_pass);
+
+	  /* CLEANUP '.' on Child */
+	  dp->dn_stat.st_nlink--;
+	  dp->dn_set_ctime = 1;
+	  diskfs_node_update (dp, sync_pass);
+	}
+      /* Stop, just like start, does nothing if no journal */
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
-  diskfs_node_update (dp, diskfs_synchronous);
+  diskfs_node_update (dp, sync_pass);
+  diskfs_journal_stop_transaction ();
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
   return 0;
 }
