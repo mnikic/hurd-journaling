@@ -17,8 +17,10 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include "diskfs.h"
 #include "priv.h"
 #include "fs_S.h"
+#include "ext2fs.h"
 #include <string.h>
 
 /* To avoid races in checkpath, and to prevent a directory from being
@@ -37,7 +39,8 @@ diskfs_S_dir_rename (struct protid *fromcred,
   struct node *fdp, *tdp, *fnp, *tnp, *tmpnp;
   error_t err;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
-  
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
+
   if (!fromcred)
     return EOPNOTSUPP;
 
@@ -165,9 +168,11 @@ diskfs_S_dir_rename (struct protid *fromcred,
       pthread_mutex_unlock (&tdp->lock);
       return EMLINK;
     }
+
+  diskfs_journal_start_transaction ();
   fnp->dn_stat.st_nlink++;
   fnp->dn_set_ctime = 1;
-  diskfs_node_update (fnp, diskfs_synchronous);
+  diskfs_node_update (fnp, sync_pass);
 
   if (tnp)
     {
@@ -176,21 +181,29 @@ diskfs_S_dir_rename (struct protid *fromcred,
 	{
 	  tnp->dn_stat.st_nlink--;
 	  tnp->dn_set_ctime = 1;
-	  if (diskfs_synchronous)
-	    diskfs_node_update (tnp, 1);
+	  diskfs_node_update (tnp, sync_pass);
 	}
       diskfs_nput (tnp);
     }
   else
     err = diskfs_direnter (tdp, toname, fnp, ds, tocred);
 
-  if (diskfs_synchronous)
-    diskfs_node_update (tdp, 1);
+  diskfs_node_update (tdp, sync_pass);
+  diskfs_journal_stop_transaction ();
 
   pthread_mutex_unlock (&tdp->lock);
   pthread_mutex_unlock (&fnp->lock);
+
   if (err)
     {
+      pthread_mutex_lock (&fnp->lock);
+      diskfs_journal_start_transaction ();
+      if (fnp->dn_stat.st_nlink > 0)
+	fnp->dn_stat.st_nlink--;
+      fnp->dn_set_ctime = 1;
+      diskfs_node_update (fnp, sync_pass);
+      diskfs_journal_stop_transaction ();
+      pthread_mutex_unlock (&fnp->lock);
       diskfs_nrele (fnp);
       return err;
     }
@@ -223,18 +236,23 @@ diskfs_S_dir_rename (struct protid *fromcred,
   
   diskfs_nrele (tmpnp);
 
+  diskfs_journal_start_transaction ();
   err = diskfs_dirremove (fdp, fnp, fromname, ds);
-  if (diskfs_synchronous)
-    diskfs_node_update (fdp, 1);
+  diskfs_node_update (fdp, sync_pass);
 
   fnp->dn_stat.st_nlink--;
   fnp->dn_set_ctime = 1;
   
-  if (diskfs_synchronous)
-    diskfs_node_update (fnp, 1);
-  
+  diskfs_node_update (fnp, sync_pass);
+
+  diskfs_journal_stop_transaction ();
+
   diskfs_nput (fnp);
   pthread_mutex_unlock (&fdp->lock);
+
+  if (diskfs_synchronous && diskfs_journal_is_running ())
+    diskfs_journal_commit_transaction ();
+
   if (!err)
     mach_port_deallocate (mach_task_self (), tocred->pi.port_right);
 
