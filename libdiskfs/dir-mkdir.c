@@ -28,6 +28,7 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   struct node *np = 0;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   int error;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!dircred)
     return EOPNOTSUPP;
@@ -54,17 +55,19 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   mode &= ~(S_ISPARE | S_IFMT | S_ITRANS);
   mode |= S_IFDIR;
 
+  diskfs_journal_start_transaction ();
   error = diskfs_create_node (dnp, name, mode, &np, dircred, ds);
 
-  if (diskfs_synchronous)
-    {
-      diskfs_file_update (dnp, 1);
-      diskfs_file_update (np, 1);
-    }
+  diskfs_file_update (dnp, sync_pass);
+  if (!error && np)
+    diskfs_file_update (np, sync_pass);
+  diskfs_journal_stop_transaction ();
 
   if (!error)
     diskfs_nput (np);
 
   pthread_mutex_unlock (&dnp->lock);
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
   return error;
 }

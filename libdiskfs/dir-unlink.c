@@ -15,6 +15,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include "diskfs.h"
 #include "priv.h"
 #include "fs_S.h"
 #include <hurd/fsys.h>
@@ -29,6 +30,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
   mach_port_t control = MACH_PORT_NULL;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!dircred)
     return EOPNOTSUPP;
@@ -62,11 +64,12 @@ diskfs_S_dir_unlink (struct protid *dircred,
       return EPERM;		/* 1003.1-1996 5.5.1.4 */
     }
 
+  diskfs_journal_start_transaction ();
   err = diskfs_dirremove (dnp, np, name, ds);
-  if (diskfs_synchronous)
-    diskfs_node_update (dnp, 1);
+  diskfs_node_update (dnp, sync_pass);
   if (err)
     {
+      diskfs_journal_stop_transaction ();
       diskfs_nput (np);
       pthread_mutex_unlock (&dnp->lock);
       return err;
@@ -74,8 +77,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
 
   np->dn_stat.st_nlink--;
   np->dn_set_ctime = 1;
-  if (diskfs_synchronous)
-    diskfs_node_update (np, 1);
+  diskfs_node_update (np, sync_pass);
 
   if (np->dn_stat.st_nlink == 0)
     fshelp_fetch_control (&np->transbox, &control);
@@ -86,6 +88,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     diskfs_nrele (np);
   else
     diskfs_nput (np);
+  diskfs_journal_stop_transaction ();
   pthread_mutex_unlock (&dnp->lock);
 
   if (control)
@@ -93,6 +96,8 @@ diskfs_S_dir_unlink (struct protid *dircred,
       fsys_goaway (control, FSYS_GOAWAY_UNLINK);
       mach_port_deallocate (mach_task_self (), control);
     }
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
 
   return err;
 }
