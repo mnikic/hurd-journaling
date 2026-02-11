@@ -158,11 +158,14 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       assert_backtrace (err != ENOENT);
       if (err)
 	{
-	  tdp->dn_stat.st_nlink--;
-          tdp->dn_set_ctime = 1;
-          diskfs_node_update (tdp, sync_pass);
+	  if (diskfs_journal_is_running ())
+	    {
+	      tdp->dn_stat.st_nlink--;
+	      tdp->dn_set_ctime = 1;
+	      diskfs_node_update (tdp, sync_pass);
 
-	  diskfs_journal_stop_transaction ();
+	      diskfs_journal_stop_transaction ();
+	    }
 	  diskfs_drop_dirstat (fnp, tmpds);
 	  goto out;
 	}
@@ -172,11 +175,14 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       diskfs_file_update (fnp, sync_pass);
       if (err)
 	{
-	  tdp->dn_stat.st_nlink--;
-          tdp->dn_set_ctime = 1;
-          diskfs_node_update (tdp, sync_pass);
+	  if (diskfs_journal_is_running ())
+	    {
+	      tdp->dn_stat.st_nlink--;
+	      tdp->dn_set_ctime = 1;
+	      diskfs_node_update (tdp, sync_pass);
 
-	  diskfs_journal_stop_transaction ();
+	      diskfs_journal_stop_transaction ();
+	    }
 	  goto out;
 	}
 
@@ -225,15 +231,17 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 
   if (err)
     {
-      /* fnp is locked, so this is safe */
-      diskfs_journal_start_transaction ();
+      if (diskfs_journal_is_running ())
+	{
+	  /* fnp is locked, so this is safe */
+	  diskfs_journal_start_transaction ();
+	  if (fnp->dn_stat.st_nlink > 0)
+	    fnp->dn_stat.st_nlink--;
+	  fnp->dn_set_ctime = 1;
+	  diskfs_node_update (fnp, sync_pass);
 
-      if (fnp->dn_stat.st_nlink > 0)
-        fnp->dn_stat.st_nlink--;
-      fnp->dn_set_ctime = 1;
-      diskfs_node_update (fnp, sync_pass);
-
-      diskfs_journal_stop_transaction ();
+	  diskfs_journal_stop_transaction ();
+	}
       goto out;
     }
 

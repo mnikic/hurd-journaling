@@ -196,14 +196,17 @@ diskfs_S_dir_rename (struct protid *fromcred,
 
   if (err)
     {
-      pthread_mutex_lock (&fnp->lock);
-      diskfs_journal_start_transaction ();
-      if (fnp->dn_stat.st_nlink > 0)
-	fnp->dn_stat.st_nlink--;
-      fnp->dn_set_ctime = 1;
-      diskfs_node_update (fnp, sync_pass);
-      diskfs_journal_stop_transaction ();
-      pthread_mutex_unlock (&fnp->lock);
+      if (diskfs_journal_is_running ())
+	{
+	  pthread_mutex_lock (&fnp->lock);
+	  diskfs_journal_start_transaction ();
+	  if (fnp->dn_stat.st_nlink > 0)
+	    fnp->dn_stat.st_nlink--;
+	  fnp->dn_set_ctime = 1;
+	  diskfs_node_update (fnp, sync_pass);
+	  diskfs_journal_stop_transaction ();
+	  pthread_mutex_unlock (&fnp->lock);
+        }
       diskfs_nrele (fnp);
       return err;
     }
