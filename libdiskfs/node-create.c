@@ -50,8 +50,6 @@ diskfs_create_node (struct node *dir,
       return EROFS;
     }
 
-  diskfs_journal_start_transaction ();
-
   /* Make the node */
   err = diskfs_alloc_node (dir, mode, newnode);
   if (err)
@@ -59,7 +57,6 @@ diskfs_create_node (struct node *dir,
       if (name)
 	diskfs_drop_dirstat (dir, ds);
       *newnode = NULL;
-      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -146,7 +143,6 @@ diskfs_create_node (struct node *dir,
       if (name)
 	diskfs_drop_dirstat (dir, ds);
       *newnode = NULL;
-      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -166,6 +162,5 @@ diskfs_create_node (struct node *dir,
   if (err)
     *newnode = NULL;
 
-  diskfs_journal_stop_transaction ();
   return err;
 }

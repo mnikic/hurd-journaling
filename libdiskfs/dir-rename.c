@@ -61,6 +61,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
   fdp = fromcred->po->np;
   tdp = tocred->po->np;
 
+ diskfs_journal_start_transaction ();
  try_again:
   /* Acquire the source; hold a reference to it.  This 
      will prevent anyone from deleting it before we create
@@ -71,7 +72,10 @@ diskfs_S_dir_rename (struct protid *fromcred,
   if (err == EAGAIN)
     err = EINVAL;
   if (err)
-    return err;
+    {
+      diskfs_journal_stop_transaction (); 
+      return err;
+    }
 
   if (S_ISDIR (fnp->dn_stat.st_mode))
     {
@@ -103,6 +107,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       if (!err)
 	/* MiG won't do this for us, which it ought to. */
 	mach_port_deallocate (mach_task_self (), tocred->pi.port_right);
+      diskfs_journal_stop_transaction (); 
       return err;
     }
 
@@ -111,10 +116,12 @@ diskfs_S_dir_rename (struct protid *fromcred,
   /* We now hold no locks */
 
   if (toname[strlen (toname) - 1] == '/')
+  {
+    diskfs_journal_stop_transaction (); 
     /* Source must be directory.  */
     return ENOTDIR;
+  }
 
-  diskfs_journal_start_transaction ();
   /* Link the node into the new directory. */
   pthread_mutex_lock (&tdp->lock);
   

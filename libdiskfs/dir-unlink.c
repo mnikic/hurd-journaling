@@ -39,6 +39,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   if (diskfs_check_readonly ())
     return EROFS;
 
+  diskfs_journal_start_transaction ();
   pthread_mutex_lock (&dnp->lock);
 
   err = diskfs_lookup (dnp, name, REMOVE, &np, ds, dircred);
@@ -48,6 +49,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     {
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -61,17 +63,17 @@ diskfs_S_dir_unlink (struct protid *dircred,
 	diskfs_nput (np);
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return EPERM;		/* 1003.1-1996 5.5.1.4 */
     }
 
-  diskfs_journal_start_transaction ();
   err = diskfs_dirremove (dnp, np, name, ds);
   diskfs_node_update (dnp, sync_pass);
   if (err)
     {
-      diskfs_journal_stop_transaction ();
       diskfs_nput (np);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -88,7 +90,6 @@ diskfs_S_dir_unlink (struct protid *dircred,
     diskfs_nrele (np);
   else
     diskfs_nput (np);
-  diskfs_journal_stop_transaction ();
   pthread_mutex_unlock (&dnp->lock);
 
   if (control)
@@ -96,6 +97,8 @@ diskfs_S_dir_unlink (struct protid *dircred,
       fsys_goaway (control, FSYS_GOAWAY_UNLINK);
       mach_port_deallocate (mach_task_self (), control);
     }
+
+  diskfs_journal_stop_transaction ();
   if (diskfs_synchronous)
     diskfs_journal_commit_transaction ();
 

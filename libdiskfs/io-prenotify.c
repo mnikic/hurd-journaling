@@ -14,7 +14,7 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
-
+#include "diskfs.h"
 #include "priv.h"
 #include "io_S.h"
 
@@ -30,7 +30,7 @@ diskfs_S_io_prenotify (struct protid *cred,
 {
   struct node *np;
   int err = 0;
-  
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();  
   if (!cred)
     return EOPNOTSUPP;
 
@@ -39,6 +39,7 @@ diskfs_S_io_prenotify (struct protid *cred,
 
   np = cred->po->np;
 
+  diskfs_journal_start_transaction ();
   /* Clamp it down */
   pthread_mutex_lock (&np->lock);
 
@@ -71,5 +72,8 @@ diskfs_S_io_prenotify (struct protid *cred,
     diskfs_notice_filechange (np, FILE_CHANGED_EXTEND, 0, end);
  out:
   pthread_mutex_unlock (&np->lock);
+  diskfs_journal_stop_transaction ();
+  if (!err && diskfs_synchronous)
+    diskfs_journal_commit_transaction ();
   return err;
 }

@@ -37,6 +37,7 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   if (diskfs_check_readonly ())
     return EROFS;
 
+  diskfs_journal_start_transaction ();
   pthread_mutex_lock (&dnp->lock);
 
   error = diskfs_lookup (dnp, name, CREATE, 0, ds, dircred);
@@ -49,25 +50,26 @@ diskfs_S_dir_mkdir (struct protid *dircred,
     {
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return error;
     }
 
   mode &= ~(S_ISPARE | S_IFMT | S_ITRANS);
   mode |= S_IFDIR;
 
-  diskfs_journal_start_transaction ();
   error = diskfs_create_node (dnp, name, mode, &np, dircred, ds);
 
   diskfs_file_update (dnp, sync_pass);
   if (!error && np)
     diskfs_file_update (np, sync_pass);
-  diskfs_journal_stop_transaction ();
 
   if (!error)
     diskfs_nput (np);
 
   pthread_mutex_unlock (&dnp->lock);
-  if (diskfs_synchronous)
+
+  diskfs_journal_stop_transaction ();
+  if (diskfs_synchronous && !error)
     diskfs_journal_commit_transaction ();
   return error;
 }
