@@ -32,6 +32,7 @@ diskfs_S_io_read (struct protid *cred,
   off_t off = offset;
   char *buf;
   int ourbuf = 0;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!cred)
     return EOPNOTSUPP;
@@ -96,8 +97,7 @@ diskfs_S_io_read (struct protid *cred,
     err = _diskfs_rdwr_internal (np, buf, off, datalen, 0,
 				 cred->po->openstat & O_NOATIME);
 
-  if (diskfs_synchronous)
-    diskfs_node_update (np, 1);	/* atime! */
+  diskfs_node_update (np, sync_pass);	/* atime! */
 
   if (offset == -1 && !err)
     cred->po->filepointer += *datalen;

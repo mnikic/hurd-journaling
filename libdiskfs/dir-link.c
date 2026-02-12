@@ -15,7 +15,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
-#include <libdiskfs/diskfs.h>
 #include "diskfs.h"
 #include "priv.h"
 #include "fs_S.h"
@@ -44,10 +43,12 @@ diskfs_S_dir_link (struct protid *dircred,
     return EXDEV;
 
   np = filecred->po->np;
+  diskfs_journal_start_transaction ();
   pthread_mutex_lock (&np->lock);
   if (S_ISDIR (np->dn_stat.st_mode))
     {
       pthread_mutex_unlock (&np->lock);
+      diskfs_journal_stop_transaction ();
       return EPERM;
     }
   pthread_mutex_unlock (&np->lock);
@@ -61,6 +62,7 @@ diskfs_S_dir_link (struct protid *dircred,
     {
       err = EEXIST;
       diskfs_nput (tnp);
+      tnp = NULL;
     }
   if (err && err != ENOENT)
     {
@@ -68,6 +70,7 @@ diskfs_S_dir_link (struct protid *dircred,
 	err = EINVAL;
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -77,6 +80,7 @@ diskfs_S_dir_link (struct protid *dircred,
       pthread_mutex_unlock (&dnp->lock);
       pthread_mutex_unlock (&tnp->lock);
       mach_port_deallocate (mach_task_self (), filecred->pi.port_right);
+      diskfs_journal_stop_transaction ();
       return 0;
     }
 
@@ -85,6 +89,7 @@ diskfs_S_dir_link (struct protid *dircred,
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
       pthread_mutex_unlock (&tnp->lock);
+      diskfs_journal_stop_transaction ();
       return EISDIR;
     }
 
@@ -100,9 +105,9 @@ diskfs_S_dir_link (struct protid *dircred,
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&np->lock);
       pthread_mutex_unlock (&dnp->lock);
+      diskfs_journal_stop_transaction ();
       return EMLINK;
     }
-  diskfs_journal_start_transaction ();
   np->dn_stat.st_nlink++;
   np->dn_set_ctime = 1;
   diskfs_node_update (np, sync_pass);
@@ -124,13 +129,16 @@ diskfs_S_dir_link (struct protid *dircred,
   else
     err = diskfs_direnter (dnp, name, np, ds, dircred);
 
-  if (err && diskfs_journal_is_running ())
+  if (err)
     {
-      np->dn_stat.st_nlink--;
-      np->dn_set_ctime = 1;
+      if (tnp->dn_stat.st_nlink > 0)
+      {
+	np->dn_stat.st_nlink--;
+	np->dn_set_ctime = 1;
+	diskfs_node_update (np, sync_pass);
+      }
     }
   diskfs_node_update (dnp, sync_pass);
-  diskfs_journal_stop_transaction ();
 
   pthread_mutex_unlock (&dnp->lock);
   pthread_mutex_unlock (&np->lock);
@@ -138,6 +146,7 @@ diskfs_S_dir_link (struct protid *dircred,
     /* MiG won't do this for us, which it ought to. */
     mach_port_deallocate (mach_task_self (), filecred->pi.port_right);
 
+  diskfs_journal_stop_transaction ();
   if (diskfs_synchronous)
     diskfs_journal_commit_transaction ();
   return err;
