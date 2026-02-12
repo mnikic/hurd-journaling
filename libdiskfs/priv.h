@@ -137,15 +137,15 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
   									    \
   np = (PROTID)->po->np;						    \
   									    \
+  diskfs_journal_start_transaction ();					    \
   pthread_mutex_lock (&np->lock);					    \
   									    \
-  diskfs_journal_start_transaction ();					    \
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();       \
   (OPERATION);								    \
   diskfs_node_update (np, sync_pass);					    \
-  diskfs_journal_stop_transaction ();					    \
   									    \
   pthread_mutex_unlock (&np->lock);					    \
+  diskfs_journal_stop_transaction ();					    \
   return err;								    \
 })
 

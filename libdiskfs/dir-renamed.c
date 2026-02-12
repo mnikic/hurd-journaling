@@ -90,6 +90,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   if (err)
     return err;
 
+  diskfs_journal_start_transaction ();
   /* Now, lock the parent directories.  This is legal because tdp is not
      a child of fnp (guaranteed by checkpath above). */
   pthread_mutex_lock (&fdp->lock);
@@ -115,6 +116,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       pthread_mutex_unlock (&tdp->lock);
       if (fdp != tdp)
 	pthread_mutex_unlock (&fdp->lock);
+      diskfs_journal_stop_transaction ();
       return 0;
     }
 
@@ -152,7 +154,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 	  err = EMLINK;
 	  goto out;
 	}
-      diskfs_journal_start_transaction ();
       tdp->dn_stat.st_nlink++;
       tdp->dn_set_ctime = 1;
       diskfs_node_update (tdp, sync_pass);
@@ -167,7 +168,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
           tdp->dn_set_ctime = 1;
           diskfs_node_update (tdp, sync_pass);
 
-	  diskfs_journal_stop_transaction ();
 	  diskfs_drop_dirstat (fnp, tmpds);
 	  goto out;
 	}
@@ -181,26 +181,23 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
           tdp->dn_set_ctime = 1;
           diskfs_node_update (tdp, sync_pass);
 
-	  diskfs_journal_stop_transaction ();
 	  goto out;
 	}
 
       fdp->dn_stat.st_nlink--;
       fdp->dn_set_ctime = 1;
       diskfs_node_update (fdp, sync_pass);
-      diskfs_journal_stop_transaction ();
     }
 
 
-  diskfs_journal_start_transaction ();
   /* 3: Increment the link count on the node being moved and rewrite
      tdp. */
   if (fnp->dn_stat.st_nlink == diskfs_link_max - 1)
     {
-      diskfs_journal_stop_transaction ();
       pthread_mutex_unlock (&fnp->lock);
       diskfs_drop_dirstat (tdp, ds);
       pthread_mutex_unlock (&tdp->lock);
+      diskfs_journal_stop_transaction ();
       if (tnp)
 	diskfs_nput (tnp);
       return EMLINK;
@@ -226,19 +223,13 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       err = diskfs_direnter (tdp, toname, fnp, ds, tocred);
       diskfs_file_update (tdp, sync_pass);
     }
-  diskfs_journal_stop_transaction ();
 
   if (err)
     {
-      /* fnp is locked, so this is safe */
-      diskfs_journal_start_transaction ();
-
       if (fnp->dn_stat.st_nlink > 0)
         fnp->dn_stat.st_nlink--;
       fnp->dn_set_ctime = 1;
       diskfs_node_update (fnp, sync_pass);
-
-      diskfs_journal_stop_transaction ();
       goto out;
     }
 
@@ -257,7 +248,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       goto out;
     }
 
-  diskfs_journal_start_transaction ();
   diskfs_dirremove (fdp, fnp, fromname, ds);
   ds = 0;
   fnp->dn_stat.st_nlink--;
@@ -265,7 +255,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   diskfs_file_update (fdp, sync_pass);
   diskfs_node_update (fnp, sync_pass);
 
-  diskfs_journal_stop_transaction ();
  out:
   if (tdp)
     pthread_mutex_unlock (&tdp->lock);
@@ -277,7 +266,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
     pthread_mutex_unlock (&fnp->lock);
   if (ds)
     diskfs_drop_dirstat (tdp, ds);
-
+  diskfs_journal_stop_transaction ();
   if (!err && diskfs_synchronous)
     diskfs_journal_commit_transaction ();
   return err;

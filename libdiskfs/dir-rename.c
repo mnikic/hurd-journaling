@@ -114,6 +114,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
     /* Source must be directory.  */
     return ENOTDIR;
 
+  diskfs_journal_start_transaction ();
   /* Link the node into the new directory. */
   pthread_mutex_lock (&tdp->lock);
   
@@ -130,6 +131,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       diskfs_drop_dirstat (tdp, ds);
       diskfs_nrele (fnp);
       pthread_mutex_unlock (&tdp->lock);
+      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -141,6 +143,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       diskfs_nrele (fnp);
       diskfs_nput (tnp);
       pthread_mutex_unlock (&tdp->lock);
+      diskfs_journal_stop_transaction ();
       mach_port_deallocate (mach_task_self (), tocred->pi.port_right);
       return 0;
     }
@@ -152,6 +155,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
       diskfs_nrele (fnp);
       diskfs_nput (tnp);
       pthread_mutex_unlock (&tdp->lock);
+      diskfs_journal_stop_transaction ();
       return EISDIR;
     }
 
@@ -165,10 +169,10 @@ diskfs_S_dir_rename (struct protid *fromcred,
       if (tnp)
         diskfs_nput (tnp);
       pthread_mutex_unlock (&tdp->lock);
+      diskfs_journal_stop_transaction ();
       return EMLINK;
     }
 
-  diskfs_journal_start_transaction ();
   fnp->dn_stat.st_nlink++;
   fnp->dn_set_ctime = 1;
   diskfs_node_update (fnp, sync_pass);
@@ -188,7 +192,6 @@ diskfs_S_dir_rename (struct protid *fromcred,
     err = diskfs_direnter (tdp, toname, fnp, ds, tocred);
 
   diskfs_node_update (tdp, sync_pass);
-  diskfs_journal_stop_transaction ();
 
   pthread_mutex_unlock (&tdp->lock);
   pthread_mutex_unlock (&fnp->lock);
@@ -196,13 +199,12 @@ diskfs_S_dir_rename (struct protid *fromcred,
   if (err)
     {
       pthread_mutex_lock (&fnp->lock);
-      diskfs_journal_start_transaction ();
       if (fnp->dn_stat.st_nlink > 0)
 	fnp->dn_stat.st_nlink--;
       fnp->dn_set_ctime = 1;
       diskfs_node_update (fnp, sync_pass);
-      diskfs_journal_stop_transaction ();
       pthread_mutex_unlock (&fnp->lock);
+      diskfs_journal_stop_transaction ();
       diskfs_nrele (fnp);
       return err;
     }
@@ -218,6 +220,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
     {
       diskfs_drop_dirstat (tdp, ds);
       pthread_mutex_unlock (&fdp->lock);
+      diskfs_journal_stop_transaction ();
       diskfs_nrele (fnp);
       return err;
     }
@@ -229,13 +232,13 @@ diskfs_S_dir_rename (struct protid *fromcred,
       diskfs_nput (tmpnp);
       diskfs_nrele (fnp);
       pthread_mutex_unlock (&fdp->lock);
+      diskfs_journal_stop_transaction ();
       mach_port_deallocate (mach_task_self (), tocred->pi.port_right);
       return 0;
     }
   
   diskfs_nrele (tmpnp);
 
-  diskfs_journal_start_transaction ();
   err = diskfs_dirremove (fdp, fnp, fromname, ds);
   diskfs_node_update (fdp, sync_pass);
 
@@ -244,11 +247,10 @@ diskfs_S_dir_rename (struct protid *fromcred,
   
   diskfs_node_update (fnp, sync_pass);
 
-  diskfs_journal_stop_transaction ();
-
   diskfs_nput (fnp);
   pthread_mutex_unlock (&fdp->lock);
 
+  diskfs_journal_stop_transaction ();
   if (diskfs_synchronous && diskfs_journal_is_running ())
     diskfs_journal_commit_transaction ();
 
