@@ -43,7 +43,6 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   if (pdp->dn_stat.st_nlink == diskfs_link_max - 1)
     return EMLINK;
 
-  diskfs_journal_start_transaction ();
   dp->dn_stat.st_nlink++;	/* for `.' */
   dp->dn_set_ctime = 1;
   err = diskfs_lookup (dp, ".", CREATE, &foo, ds, &lookupcred);
@@ -54,10 +53,8 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
     {
       dp->dn_stat.st_nlink--;
       dp->dn_set_ctime = 1;
-      if (diskfs_journal_is_running ())
-	diskfs_node_update (dp, sync_pass);
+      diskfs_node_update (dp, sync_pass);
 
-      diskfs_journal_stop_transaction ();
       return err;
     }
 
@@ -69,27 +66,17 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   err = diskfs_direnter (dp, "..", pdp, ds, cred);
   if (err)
     {
+      /* ROLLBACK '.' on Parent */
       pdp->dn_stat.st_nlink--;
       pdp->dn_set_ctime = 1;
-      /* Only cleanup if journal is running */
-      if (diskfs_journal_is_running ())
-	{
-	  /* ROLLBACK'.' on Parent */
-	  diskfs_node_update (pdp, sync_pass);
-
-	  /* CLEANUP '.' on Child */
-	  dp->dn_stat.st_nlink--;
-	  dp->dn_set_ctime = 1;
-	  diskfs_node_update (dp, sync_pass);
-	}
-      /* Stop, just like start, does nothing if no journal */
-      diskfs_journal_stop_transaction ();
+      diskfs_node_update (pdp, sync_pass);
+      /* CLEANUP '.' on Child */
+      dp->dn_stat.st_nlink--;
+      dp->dn_set_ctime = 1;
+      diskfs_node_update (dp, sync_pass);
       return err;
     }
 
   diskfs_node_update (dp, sync_pass);
-  diskfs_journal_stop_transaction ();
-  if (diskfs_synchronous)
-    diskfs_journal_commit_transaction ();
   return 0;
 }
