@@ -37,8 +37,6 @@ error_t diskfs_dirrewrite (struct node *dp,
 {
   error_t err;
 
-  diskfs_journal_start_transaction ();
-
   diskfs_purge_lookup_cache (dp, oldnp);
 
   err = diskfs_dirrewrite_hard (dp, np, ds);
@@ -48,9 +46,5 @@ error_t diskfs_dirrewrite (struct node *dp,
   if (dp->dirmod_reqs)
     diskfs_notice_dirchange (dp, DIR_CHANGED_RENUMBER, name);
   diskfs_enter_lookup_cache (dp, np, name);
-  diskfs_journal_stop_transaction ();
-  if (diskfs_synchronous)
-    diskfs_journal_commit_transaction ();
-
   return 0;
 }

@@ -241,8 +241,7 @@ diskfs_lookup_hard (struct node *dp, const char *name, enum lookup_type type,
     }
 
   diskfs_set_node_atime (dp);
-  if (diskfs_synchronous)
-    diskfs_node_update (dp, 1);
+  diskfs_node_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
 
   /* If err is set here, it's ENOENT, and we don't want to
      think about that as an error yet. */
@@ -810,9 +809,7 @@ diskfs_dirempty (struct node *dp, struct protid *cred)
 	hit = 1;
     }
 
-  diskfs_set_node_atime (dp);
-  if (diskfs_synchronous)
-    diskfs_node_update (dp, 1);
+  diskfs_node_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
 
   munmap ((caddr_t) buf, dp->dn_stat.st_size);
 
