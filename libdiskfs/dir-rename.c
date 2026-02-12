@@ -20,7 +20,6 @@
 #include "diskfs.h"
 #include "priv.h"
 #include "fs_S.h"
-#include "ext2fs.h"
 #include <string.h>
 
 /* To avoid races in checkpath, and to prevent a directory from being
