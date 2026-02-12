@@ -994,3 +994,30 @@ journal_reclaim_space (journal_t *journal, uint32_t barrier_limit)
 
   pthread_mutex_unlock (&journal->j_state_lock);
 }
+
+void
+diskfs_journal_start_transaction (void)
+{
+  if (ext2_journal)
+    journal_start_transaction(ext2_journal);
+}
+
+void
+diskfs_journal_stop_transaction (void)
+{
+  if (ext2_journal)
+    journal_stop_transaction (ext2_journal);
+}
+
+void
+diskfs_journal_commit_transaction (void)
+{
+  if (ext2_journal)
+    journal_commit_transaction(ext2_journal, NULL);
+}
+
+int
+diskfs_journal_is_running (void)
+{
+  return ext2_journal != NULL;
+}
