@@ -36,6 +36,7 @@ diskfs_S_file_set_translator (struct protid *cred,
   struct node *np;
   error_t err;
   error_t ret_val;
+  struct diskfs_transaction *txn;
   mach_port_t control = MACH_PORT_NULL;
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
@@ -53,14 +54,14 @@ diskfs_S_file_set_translator (struct protid *cred,
 
   np = cred->po->np;
 
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&np->lock);
 
   err = fshelp_isowner (&np->dn_stat, cred->user);
   if (err)
     {
       pthread_mutex_unlock (&np->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return err;
     }
 
@@ -71,7 +72,7 @@ diskfs_S_file_set_translator (struct protid *cred,
       if (err)
 	{
 	  pthread_mutex_unlock (&np->lock);
-	  diskfs_journal_stop_transaction ();
+	  diskfs_journal_stop_transaction (txn);
 	  return err;
 	}
 
@@ -83,7 +84,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	  if (err && (err != MIG_SERVER_DIED)
 	      && (err != MACH_SEND_INVALID_DEST))
 	    {
-	      diskfs_journal_stop_transaction ();
+	      diskfs_journal_stop_transaction (txn);
 	      return err;
 	    }
 	  err = 0;
@@ -99,7 +100,7 @@ diskfs_S_file_set_translator (struct protid *cred,
       && (np->dn_stat.st_mode & S_IPTRANS))
     {
       pthread_mutex_unlock (&np->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return EBUSY;
     }
 
@@ -110,7 +111,7 @@ diskfs_S_file_set_translator (struct protid *cred,
       if (err)
 	{
 	  pthread_mutex_unlock (&np->lock);
-	  diskfs_journal_stop_transaction ();
+	  diskfs_journal_stop_transaction (txn);
 	  return err;
 	}
     }
@@ -143,7 +144,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		     allowed for empty directories, but that's too much of a
 		     pain.  */
 		  pthread_mutex_unlock (&np->lock);
-		  diskfs_journal_stop_transaction ();
+		  diskfs_journal_stop_transaction (txn);
 		  return EISDIR;
 		}
 	      if (newmode == S_IFBLK || newmode == S_IFCHR)
@@ -158,7 +159,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		  if (arg == passive + passivelen)
 		    {
 		      pthread_mutex_unlock (&np->lock);
-		      diskfs_journal_stop_transaction ();
+		      diskfs_journal_stop_transaction (txn);
 		      return EINVAL;
 		    }
 		  major = strtol (arg, 0, 0);
@@ -168,7 +169,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		  if (arg == passive + passivelen)
 		    {
 		      pthread_mutex_unlock (&np->lock);
-		      diskfs_journal_stop_transaction ();
+		      diskfs_journal_stop_transaction (txn);
 		      return EINVAL;
 		    }
 		  minor = strtol (arg, 0, 0);
@@ -178,7 +179,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		  if (err)
 		    {
 		      pthread_mutex_unlock (&np->lock);
-		      diskfs_journal_stop_transaction ();
+		      diskfs_journal_stop_transaction (txn);
 		      return err;
 		    }
 		  np->dn_stat.st_rdev = gnu_dev_makedev (major, minor);
@@ -188,7 +189,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	      if (err)
 		{
 		  pthread_mutex_unlock (&np->lock);
-		  diskfs_journal_stop_transaction ();
+		  diskfs_journal_stop_transaction (txn);
 		  return err;
 		}
 
@@ -196,7 +197,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	      if (err)
 		{
 		  pthread_mutex_unlock (&np->lock);
-		  diskfs_journal_stop_transaction ();
+		  diskfs_journal_stop_transaction (txn);
 		  return err;
 		}
 
@@ -207,7 +208,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		  if (arg == passive + passivelen)
 		    {
 		      pthread_mutex_unlock (&np->lock);
-		      diskfs_journal_stop_transaction ();
+		      diskfs_journal_stop_transaction (txn);
 		      return EINVAL;
 		    }
 
@@ -221,7 +222,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 		  if (err)
 		    {
 		      pthread_mutex_unlock (&np->lock);
-		      diskfs_journal_stop_transaction ();
+		      diskfs_journal_stop_transaction (txn);
 		      return err;
 		    }
 		}
@@ -248,9 +249,10 @@ diskfs_S_file_set_translator (struct protid *cred,
   else
     ret_val = err;
 out:
-  diskfs_journal_stop_transaction ();
   if (! err && diskfs_synchronous)
-    diskfs_journal_commit_transaction();
+    diskfs_journal_commit_transaction(txn);
+  else
+    diskfs_journal_stop_transaction (txn);
 
   return ret_val;
 }

@@ -28,6 +28,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
   struct node *dnp;
   struct node *np = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
+  struct diskfs_transaction *txn;
   error_t error;
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
@@ -41,9 +42,11 @@ diskfs_S_dir_rmdir (struct protid *dircred,
       if (ds)
 	diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction (); 
       if (!error && diskfs_synchronous)
-	diskfs_journal_commit_transaction ();
+	diskfs_journal_commit_transaction (txn);
+      else
+	diskfs_journal_stop_transaction (txn); 
+
       return error;
     }
 
@@ -54,7 +57,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
   if (diskfs_check_readonly ())
     return EROFS;
   
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&dnp->lock);
 
   error = diskfs_lookup (dnp, name, REMOVE, &np, ds, dircred);
@@ -67,7 +70,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
       diskfs_nrele (np);
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return EINVAL;
     }
 

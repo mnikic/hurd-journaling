@@ -26,19 +26,19 @@
 kern_return_t
 diskfs_S_io_sigio (struct protid *cred)
 {
+  struct diskfs_transaction *txn;
   if (!cred)
     return EOPNOTSUPP;
 
   if (!((cred->po->openstat & O_FSYNC) || diskfs_synchronous))
     return 0;
 
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&cred->po->np->lock);
 
   diskfs_file_update (cred->po->np, !diskfs_journal_is_running());
 
   pthread_mutex_unlock (&cred->po->np->lock);
-  diskfs_journal_stop_transaction ();
-  diskfs_journal_commit_transaction ();
+  diskfs_journal_commit_transaction (txn);
   return 0;
 }

@@ -33,7 +33,7 @@
 #include "ext2fs.h"
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 0		/* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 1		/* Set to enable (very chatty) debug messages. */
 #endif
 
 #if JOURNAL_DEBUG
@@ -48,6 +48,7 @@
 
 /* Opaque handle for the journal object */
 typedef struct journal journal_t;
+typedef struct journal_transaction journal_transaction_t;
 
 /* Initialize the journal subsystem using the inode provided (usually Inode 8). */
 journal_t *journal_create (struct node *journal_inode);
@@ -61,7 +62,9 @@ void journal_destroy (journal_t * journal);
  * Must be called before modifying any metadata.
  * Increments the transaction update count.
  */
-error_t journal_start_transaction (journal_t * journal);
+error_t
+journal_start_transaction (journal_t *journal, journal_transaction_t **out_txn);
+
 
 /**
  * Mark dirty: Add a modified filesystem block to the current transaction.
@@ -75,7 +78,8 @@ journal_dirty_block (journal_t * journal, block_t fs_blocknr,
  * Stop tx: Decrement the transaction update count.
  * When the count reaches zero, the transaction is eligible for commit.
  */
-void journal_stop_transaction (journal_t * journal);
+void
+journal_stop_transaction (journal_t *journal, journal_transaction_t *txn);
 
 /**
  * Commit: Force the current running transaction to the log.

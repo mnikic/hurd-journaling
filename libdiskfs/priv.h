@@ -128,6 +128,7 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
 ({									    \
   error_t err = 0;							    \
   struct node *np;							    \
+  struct diskfs_transaction *txn;					    \
   									    \
   if (!(PROTID))							    \
     return EOPNOTSUPP;							    \
@@ -137,7 +138,7 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
   									    \
   np = (PROTID)->po->np;						    \
   									    \
-  diskfs_journal_start_transaction ();					    \
+  txn = diskfs_journal_start_transaction ();				    \
   pthread_mutex_lock (&np->lock);					    \
   									    \
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();       \
@@ -145,7 +146,7 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
   diskfs_node_update (np, sync_pass);					    \
   									    \
   pthread_mutex_unlock (&np->lock);					    \
-  diskfs_journal_stop_transaction ();					    \
+  diskfs_journal_stop_transaction (txn);				    \
   return err;								    \
 })
 
