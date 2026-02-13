@@ -34,6 +34,7 @@ diskfs_S_io_write (struct protid *cred,
   mach_msg_type_number_t nwritten;
   int sync_pass;
   int should_sync; 
+  struct diskfs_transaction *txn;
 
   if (!cred)
     return EOPNOTSUPP;
@@ -46,7 +47,7 @@ diskfs_S_io_write (struct protid *cred,
     return EBADF;
   should_sync = (cred->po->openstat & O_FSYNC) || diskfs_synchronous;
   sync_pass = should_sync && !diskfs_journal_is_running();
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&np->lock);
 
   assert_backtrace (!S_ISDIR(np->dn_stat.st_mode));
@@ -97,8 +98,9 @@ diskfs_S_io_write (struct protid *cred,
     diskfs_notice_filechange (np, FILE_CHANGED_WRITE, off, off + nwritten);
  out:
   pthread_mutex_unlock (&np->lock);
-  diskfs_journal_stop_transaction ();
   if (!err && should_sync)
-    diskfs_journal_commit_transaction ();
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
   return err;
 }

@@ -31,6 +31,7 @@ diskfs_S_io_prenotify (struct protid *cred,
   struct node *np;
   int err = 0;
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();  
+  struct diskfs_transaction *txn;
   if (!cred)
     return EOPNOTSUPP;
 
@@ -39,7 +40,7 @@ diskfs_S_io_prenotify (struct protid *cred,
 
   np = cred->po->np;
 
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   /* Clamp it down */
   pthread_mutex_lock (&np->lock);
 
@@ -71,8 +72,9 @@ diskfs_S_io_prenotify (struct protid *cred,
     diskfs_notice_filechange (np, FILE_CHANGED_EXTEND, 0, end);
  out:
   pthread_mutex_unlock (&np->lock);
-  diskfs_journal_stop_transaction ();
   if (!err && diskfs_synchronous)
-    diskfs_journal_commit_transaction ();
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
   return err;
 }

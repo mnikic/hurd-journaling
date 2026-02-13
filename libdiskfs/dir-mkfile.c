@@ -36,6 +36,7 @@ diskfs_S_dir_mkfile (struct protid *cred,
   error_t err;
   struct protid *newpi;
   struct peropen *newpo;
+  struct diskfs_transaction *txn;
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
   if (!cred)
@@ -43,19 +44,19 @@ diskfs_S_dir_mkfile (struct protid *cred,
   if (diskfs_check_readonly ())
     return EROFS;
   dnp = cred->po->np;
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&dnp->lock);
   if (!S_ISDIR (dnp->dn_stat.st_mode))
     {
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return ENOTDIR;
     }
   err = fshelp_access (&dnp->dn_stat, S_IWRITE, cred->user);
   if (err)
     {
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return err;
     }
 
@@ -66,7 +67,7 @@ diskfs_S_dir_mkfile (struct protid *cred,
   pthread_mutex_unlock (&dnp->lock);
   if (err)
     {
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return err;
     }
   diskfs_file_update (np, sync_pass);
@@ -91,8 +92,9 @@ diskfs_S_dir_mkfile (struct protid *cred,
   if (np)
     diskfs_nput (np);
 
-  diskfs_journal_stop_transaction ();
   if (diskfs_synchronous && !err)
-    diskfs_journal_commit_transaction ();
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
   return err;
 }

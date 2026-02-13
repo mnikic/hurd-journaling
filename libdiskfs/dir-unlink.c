@@ -29,6 +29,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   struct node *np;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
+  struct diskfs_transaction *txn;
   mach_port_t control = MACH_PORT_NULL;
   int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
@@ -39,7 +40,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   if (diskfs_check_readonly ())
     return EROFS;
 
-  diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&dnp->lock);
 
   err = diskfs_lookup (dnp, name, REMOVE, &np, ds, dircred);
@@ -49,7 +50,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     {
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return err;
     }
 
@@ -63,7 +64,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
 	diskfs_nput (np);
       diskfs_drop_dirstat (dnp, ds);
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return EPERM;		/* 1003.1-1996 5.5.1.4 */
     }
 
@@ -73,7 +74,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     {
       diskfs_nput (np);
       pthread_mutex_unlock (&dnp->lock);
-      diskfs_journal_stop_transaction ();
+      diskfs_journal_stop_transaction (txn);
       return err;
     }
 
@@ -98,9 +99,10 @@ diskfs_S_dir_unlink (struct protid *dircred,
       mach_port_deallocate (mach_task_self (), control);
     }
 
-  diskfs_journal_stop_transaction ();
   if (diskfs_synchronous)
-    diskfs_journal_commit_transaction ();
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
 
   return err;
 }

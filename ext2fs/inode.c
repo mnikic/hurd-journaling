@@ -563,7 +563,8 @@ write_all_disknodes (void)
 static void
 write_disknode_journaled (struct node *np, int wait)
 {
-  journal_start_transaction(ext2_journal);
+  journal_transaction_t *txn;
+  journal_start_transaction (ext2_journal, &txn);
   struct ext2_inode *di = write_node (np);
 
   if (di)
@@ -578,7 +579,7 @@ write_disknode_journaled (struct node *np, int wait)
       void *block_ptr = bptr (block_num);
       journal_dirty_block(ext2_journal, block_num, block_ptr);
    }
-  journal_stop_transaction(ext2_journal);
+  journal_stop_transaction(ext2_journal, txn);
   // Commit happens at the top level, not here. And commit flushes to disk.
 }
 
