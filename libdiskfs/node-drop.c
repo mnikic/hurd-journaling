@@ -16,6 +16,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "priv.h"
+#include "diskfs.h"
 
 /* Free the list of modification requests MR */
 static void
@@ -37,6 +38,7 @@ void
 diskfs_drop_node (struct node *np)
 {
   mode_t savemode;
+  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
   /* XXX: if the filesystem is readonly, we cannot remove the files with no link
      but e.g. memory mapping still in memory.  This notably happens when
@@ -79,11 +81,11 @@ diskfs_drop_node (struct node *np)
       np->dn_stat.st_mode = 0;
       np->dn_stat.st_rdev = 0;
       np->dn_set_ctime = np->dn_set_atime = 1;
-      diskfs_node_update (np, diskfs_synchronous);
+      diskfs_node_update (np, sync_pass);
       diskfs_free_node (np, savemode);
     }
   else
-    diskfs_node_update (np, diskfs_synchronous);
+    diskfs_node_update (np, sync_pass);
 
   fshelp_drop_transbox (&np->transbox);
 

@@ -20,6 +20,7 @@
 #include <hurd/ihash.h>
 
 #include "priv.h"
+#include "diskfs.h"
 
 /* The node cache is implemented using a hash table.  Access to the
    cache is protected by nodecache_lock.
@@ -180,7 +181,8 @@ diskfs_try_dropping_softrefs (struct node *np)
       np->slot = NULL;
 
       /* Flush node if needed, before forgetting it */
-      diskfs_node_update (np, diskfs_synchronous);
+      diskfs_node_update (np,
+			  diskfs_synchronous && !diskfs_journal_is_running());
 
       diskfs_nrele_light (np);
     }

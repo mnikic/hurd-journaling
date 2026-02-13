@@ -285,12 +285,14 @@ diskfs_truncate (struct node *node, off_t length)
 {
   error_t err;
   off_t offset;
+  int sync_pass;
 
   diskfs_check_readonly ();
   assert_backtrace (!diskfs_readonly);
 
   if (length >= node->dn_stat.st_size)
     return 0;
+  sync_pass = diskfs_synchronous && !ext2_journal;
 
   if (! node->dn_stat.st_blocks
       && !S_ISREG (node->dn_stat.st_mode)
@@ -315,7 +317,7 @@ diskfs_truncate (struct node *node, off_t length)
       node->dn_stat.st_size = length;
       node->dn_set_mtime = 1;
       node->dn_set_ctime = 1;
-      diskfs_node_update (node, diskfs_synchronous);
+      diskfs_node_update (node, sync_pass);
       return 0;
     }
 
@@ -331,7 +333,7 @@ diskfs_truncate (struct node *node, off_t length)
       diskfs_node_rdwr (node, (void *)zeroblock, length, block_size - offset,
 			1, 0, 0);
       /* Make sure that really happens to avoid leaks.  */
-      diskfs_file_update (node, 1);
+      diskfs_file_update (node, sync_pass);
     }
 
   ext2_discard_prealloc (node);
@@ -340,15 +342,12 @@ diskfs_truncate (struct node *node, off_t length)
 
   pthread_rwlock_wrlock (&diskfs_node_disknode (node)->alloc_lock);
 
-  if (ext2_journal)
-    journal_start_transaction (ext2_journal);
-
   /* Update the size on disk; fsck will finish freeing blocks if necessary
      should we crash. */
   node->dn_stat.st_size = length;
   node->dn_set_mtime = 1;
   node->dn_set_ctime = 1;
-  diskfs_node_update (node, 0);
+  diskfs_node_update (node, sync_pass);
 
   err = diskfs_catch_exception ();
   if (!err)
@@ -384,23 +383,11 @@ diskfs_truncate (struct node *node, off_t length)
   node->dn_set_ctime = 1;
   node->dn_stat_dirty = 1;
 
-  if (ext2_journal)
-    journal_stop_transaction (ext2_journal);
-
   /* Now we can permit delayed copies again. */
   enable_delayed_copies (node);
 
   pthread_rwlock_unlock (&diskfs_node_disknode (node)->alloc_lock);
 
-  if (diskfs_synchronous)
-    {
-      diskfs_node_update (node, 1);
-    }
-  else
-    {
-      if (ext2_journal)
-	diskfs_node_update (node, 0);
-    }
-
+  diskfs_node_update (node, sync_pass);
   return err;
 }

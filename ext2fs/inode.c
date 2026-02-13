@@ -579,8 +579,7 @@ write_disknode_journaled (struct node *np, int wait)
       journal_dirty_block(ext2_journal, block_num, block_ptr);
    }
   journal_stop_transaction(ext2_journal);
-  if (wait && di)
-    journal_commit_transaction(ext2_journal, NULL);
+  // Commit happens at the top level, not here. And commit flushes to disk.
 }
 
 /* Sync the info in NP->dn_stat and any associated format-specific
@@ -939,12 +938,4 @@ diskfs_shutdown_soft_ports (void)
 {
   /* Should initiate termination of internally held pager ports
      (the only things that should be soft) XXX */
-}
-
-void
-diskfs_notify_change (struct node *np)
-{
-    /* If journaling is active, capture this metadata change immediately */
-    if (ext2_journal)
-        diskfs_node_update (np, 0);
 }
