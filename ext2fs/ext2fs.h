@@ -29,6 +29,7 @@
 #include <hurd/store.h>
 #include <hurd/diskfs.h>
 #include <hurd/ihash.h>
+#include <libdiskfs/diskfs.h>
 #include <assert-backtrace.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -552,18 +553,22 @@ sync_global (int wait)
   pokel_sync (&global_pokel, wait);
 }
 
-/* Sync all allocation information and node NP if diskfs_synchronous. */
+/* Sync all allocation information and node NP if diskfs_synchronous. 
+   If journaling is active, we just update memory (wait=0) and let the 
+   transaction commit handle durability. */
 EXT2FS_EI void
 alloc_sync (struct node *np)
 {
+  int wait;
   if (diskfs_synchronous)
     {
+      wait = !diskfs_journal_is_running ();
       if (np)
 	{
-	  diskfs_node_update (np, 1);
-	  pokel_sync (&diskfs_node_disknode (np)->indir_pokel, 1);
+	  diskfs_node_update (np, wait);
+	  pokel_sync (&diskfs_node_disknode (np)->indir_pokel, wait);
 	}
-      diskfs_set_hypermetadata (1, 0);
+      diskfs_set_hypermetadata (wait, 0);
     }
 }
 #endif /* Use extern inlines.  */

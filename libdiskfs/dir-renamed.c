@@ -90,7 +90,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   if (err)
     return err;
 
-  diskfs_journal_start_transaction ();
   /* Now, lock the parent directories.  This is legal because tdp is not
      a child of fnp (guaranteed by checkpath above). */
   pthread_mutex_lock (&fdp->lock);
@@ -116,7 +115,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       pthread_mutex_unlock (&tdp->lock);
       if (fdp != tdp)
 	pthread_mutex_unlock (&fdp->lock);
-      diskfs_journal_stop_transaction ();
       return 0;
     }
 
@@ -197,7 +195,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       pthread_mutex_unlock (&fnp->lock);
       diskfs_drop_dirstat (tdp, ds);
       pthread_mutex_unlock (&tdp->lock);
-      diskfs_journal_stop_transaction ();
       if (tnp)
 	diskfs_nput (tnp);
       return EMLINK;
@@ -266,8 +263,5 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
     pthread_mutex_unlock (&fnp->lock);
   if (ds)
     diskfs_drop_dirstat (tdp, ds);
-  diskfs_journal_stop_transaction ();
-  if (!err && diskfs_synchronous)
-    diskfs_journal_commit_transaction ();
   return err;
 }
