@@ -342,6 +342,18 @@ pending_blocks_write (struct pending_blocks *pb)
       else if (amount != length)
 	return EIO;
 
+      if (ext2_journal)
+	{
+	  block_t b = pb->block;
+	  off_t n = pb->num;
+	  while (n > 0)
+	    {
+	      journal_notify_block_written (ext2_journal, b);
+	      b++;
+	      n--;
+	   }
+	}
+
       pb->offs += length;
       pb->num = 0;
     }
@@ -652,7 +664,7 @@ disk_pager_write_page (vm_offset_t page, void *buf)
 	  if (ext2_journal && journal_block_is_active(ext2_journal, block))
 	    {
 	       JRNL_LOG_DEBUG ("Pageout conflict on Block %u -> Forcing Commit", block);
-	       journal_commit_transaction(ext2_journal, NULL);
+	       journal_commit_transaction (ext2_journal);
 	    }
 
 	  /* We don't clear the block modified bit here because this paging
@@ -1621,11 +1633,10 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
-  uint32_t safe_journal_limit = 0;
   if (ext2_journal)
     {
       /* We only commit if we have a running transaction */
-      journal_commit_transaction (ext2_journal, &safe_journal_limit);
+      journal_commit_transaction (ext2_journal);
     }
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
@@ -1635,11 +1646,8 @@ diskfs_sync_everything (int wait)
   if (wait)
     {
       error_t err = store_sync (store);
-      /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
       if (err && err != EOPNOTSUPP)
         ext2_warning ("device flush failed: %s", strerror (err));
-      if (!err && ext2_journal)
-	journal_reclaim_space (ext2_journal, safe_journal_limit);
     }
 }
 

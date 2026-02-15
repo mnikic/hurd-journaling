@@ -85,15 +85,9 @@ journal_stop_transaction (journal_t *journal, journal_transaction_t *txn);
  * Commit: Force the current running transaction to the log.
  * This contains the write barriers (flush_to_disk) that guarantee durability.
  */
-error_t journal_commit_transaction (journal_t * journal, uint32_t * out_j_head);
+error_t journal_commit_transaction (journal_t * journal);
 
-/**
- * Called after a full filesystem sync.
- * Frees all journal space used by committed transactions,
- * since we know their data is now safe on the permanent disk.
- */
-void
-journal_reclaim_space (journal_t *journal, uint32_t barrier_limit);
+void journal_notify_block_written (journal_t * journal, block_t blocknr);
 
 /* Check if a block is currently pinned in a running transaction. */
 int journal_block_is_active (journal_t * journal, block_t blocknr);
