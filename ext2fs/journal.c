@@ -217,52 +217,25 @@ static void *
 kjournald_thread (void *arg)
 {
   journal_t *journal = (journal_t *) arg;
-  struct timespec ts;
-  struct timeval tp;
-
   while (1)
     {
-      pthread_mutex_lock (&journal->j_state_lock);
+      sleep (5);
 
-      /* 1. EXIT CHECK: Always check this while holding the lock */
-      if (journal->j_must_exit)
-        {
-          pthread_mutex_unlock (&journal->j_state_lock);
-          return NULL;
-        }
+      if (diskfs_readonly)
+	continue;
 
-      /* 2. THE NAP: This is the core change. 
-         We sleep BEFORE we check for work. */
-      gettimeofday (&tp, NULL);
-      ts.tv_sec = tp.tv_sec + 5;
-      ts.tv_nsec = tp.tv_usec * 1000;
+      if (journal->j_running_transaction)
+	{
+	  JRNL_LOG_DEBUG ("Woke the journal up:\n"
+			  " - Sequence: %u\n"
+			  " - Start (Head): %u\n"
+			  " - First Data Block: %u\n"
+			  " - Total Blocks: %u",
+			  journal->j_transaction_sequence, journal->j_head,
+			  journal->j_first, journal->j_last);
 
-      /* This releases the lock and sleeps. 
-         It only wakes up if:
-         - 5 seconds pass (The periodic sync)
-         - Someone calls broadcast on j_commit_wait (The urgent fsync)
-      */
-      pthread_cond_timedwait (&journal->j_commit_wait, 
-                              &journal->j_state_lock, 
-                              &ts);
-
-      /* 3. THE WORK: We woke up. Now we check if we should commit. */
-      if (!journal->j_must_exit && journal->j_running_transaction)
-        {
-           /* We have work. Release lock to commit. */
-           pthread_mutex_unlock (&journal->j_state_lock);
-           
-           JRNL_LOG_DEBUG ("Kjournald: Committing due to timeout or signal.");
-           journal_commit_transaction (journal, NULL);
-           
-           /* We don't 'continue' here. We go back to the top of the while(1),
-              re-lock, and immediately enter the timedwait again. */
-        }
-      else
-        {
-           /* Nothing to do, or we are exiting. */
-           pthread_mutex_unlock (&journal->j_state_lock);
-        }
+	  journal_commit_transaction (journal, NULL);
+	}
     }
   return NULL;
 }
@@ -1107,7 +1080,6 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
 }
 
 /**
- * API CONTRACT:
  * Consumes the transaction handle (caller must not call stop after this).
  * Ensures the transaction is on disk before returning.
  */
@@ -1137,9 +1109,7 @@ diskfs_journal_commit_transaction (struct diskfs_transaction *opaque_txn)
        return;
     }
     /* We missed it. Someone else (kjournald) stole it. 
-     If we committed, the transaction is freed and on disk.
-     If we didn't, we wait for the other thread to finish. 
-     Safe because we use the integer 'tid'. */
+      We will wait for them to finish here. */
   journal_wait_on_tid_locked (ext2_journal, tid);
   pthread_mutex_unlock (&ext2_journal->j_state_lock);
 }
