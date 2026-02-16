@@ -563,6 +563,7 @@ write_all_disknodes (void)
 static void
 write_disknode_journaled (struct node *np, int wait)
 {
+  error_t err;
   journal_transaction_t *txn;
   journal_start_transaction (ext2_journal, &txn);
   struct ext2_inode *di = write_node (np);
@@ -577,7 +578,14 @@ write_disknode_journaled (struct node *np, int wait)
       unsigned long byte_offset = inode_index * le16toh (sblock->s_inode_size);
       block_t block_num = table_start + (byte_offset / block_size);
       void *block_ptr = bptr (block_num);
-      journal_dirty_block(ext2_journal, block_num, block_ptr);
+      JRNL_LOG_DEBUG("Writing node %lu block num: %u.", ino, block_num);
+      err = journal_dirty_block (ext2_journal, txn, block_num, block_ptr);
+      if (err)
+        {
+           /* We modified the buffer, but failed to log it.
+              The filesystem is now in a fragile state. */
+           ext2_panic ("Journal write failed (Err: %d). FS is inconsistent.", err);
+        }
    }
   journal_stop_transaction(ext2_journal, txn);
   // Commit happens at the top level, not here. And commit flushes to disk.
@@ -592,10 +600,10 @@ diskfs_write_disknode (struct node *np, int wait)
   struct ext2_inode *di;
 
   if (ext2_journal)
-  {
-    write_disknode_journaled (np, wait);
-    return;
-  }
+    {
+      write_disknode_journaled (np, wait);
+      return;
+    }
   di = write_node (np);
   if (di)
     {

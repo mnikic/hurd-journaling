@@ -67,12 +67,14 @@ journal_start_transaction (journal_t *journal, journal_transaction_t **out_txn);
 
 
 /**
- * Mark dirty: Add a modified filesystem block to the current transaction.
+ * Mark dirty: Add a modified filesystem block to the given transaction.
  * Performs a shadow copy of 'data' into the journal memory.
  */
 error_t
-journal_dirty_block (journal_t * journal, block_t fs_blocknr,
-		     const void *data);
+journal_dirty_block (journal_t *journal,
+                     journal_transaction_t *txn, 
+                     block_t fs_blocknr, 
+                     const void *data);
 
 /**
  * Stop tx: Decrement the transaction update count.
