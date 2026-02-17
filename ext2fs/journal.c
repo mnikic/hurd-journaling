@@ -80,6 +80,21 @@
  */
 #define JRNL_LOW_WATER_RATIO   8
 
+#define JOURNAL_LOCK(j)  \
+  do { \
+    assert_backtrace ((j) != NULL); \
+    pthread_mutex_lock(&(j)->j_state_lock); \
+  } while (0)
+
+#define JOURNAL_UNLOCK(j) \
+  do { \
+    assert_backtrace ((j) != NULL); \
+    pthread_mutex_unlock(&(j)->j_state_lock); \
+  } while (0)
+
+#define JOURNAL_WAIT(cond, j) \
+    pthread_cond_wait((cond), &(j)->j_state_lock)
+
 static pthread_t kjournald_tid;
 
 /**
@@ -512,15 +527,12 @@ static int
 journal_try_advance_tail_locked (journal_t *journal)
 {
   journal_transaction_t *txn = journal->j_checkpoint_list;
-  int changed = 0;
 
   while (txn)
     {
       if (txn->t_outstanding_io > 0)
-	{
-	  /* Oldest txn is still pending. We can't advance past it. */
-	  break;
-	}
+	/* Oldest txn is still pending. We can't advance past it. */
+	break;
 
       /* This transaction is done! */
       JRNL_LOG_DEBUG ("[CHECKPOINT] TID %u fully written. Reclaiming space.",
@@ -558,9 +570,9 @@ journal_try_advance_tail_locked (journal_t *journal)
       journal_free_transaction (txn);
 
       txn = journal->j_checkpoint_list;
-      changed = 1;
+      return 1;
     }
-  return changed;
+  return 0;
 }
 
 /*
@@ -573,7 +585,7 @@ journal_notify_block_written (block_t blocknr)
   if (!ext2_journal)
     return;
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
 
   /* Iterate over checkpoint list to find who owns this block */
   journal_transaction_t *txn = ext2_journal->j_checkpoint_list;
@@ -597,9 +609,7 @@ journal_notify_block_written (block_t blocknr)
 	  /* Optimization: If this was the only block, try to advance tail immediately */
 	  if (txn->t_outstanding_io == 0
 	      && txn == ext2_journal->j_checkpoint_list)
-	    {
-	      journal_try_advance_tail_locked (ext2_journal);
-	    }
+	    sb_changed = journal_try_advance_tail_locked (ext2_journal);
 
 	  /* A block usually belongs to only one checkpoint txn (the latest committed one).
 	     We can stop searching. */
@@ -608,12 +618,10 @@ journal_notify_block_written (block_t blocknr)
       txn = txn->t_checkpoint_next;
     }
 
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
   if (sb_changed)
     {
       /* Update Superblock Persistently */
-      /* Note: We are already holding the lock, and update_superblock might do I/O.
-         But since we are passive, this is just a sector write, not a sync. */
       journal_update_superblock (ext2_journal,
 				 ext2_journal->j_transaction_sequence,
 				 ext2_journal->j_tail);
@@ -669,10 +677,10 @@ journal_create (struct node *journal_inode)
 void
 journal_destroy (journal_t *journal)
 {
-  pthread_mutex_lock (&journal->j_state_lock);
+  JOURNAL_LOCK (journal);
   journal->j_must_exit = 1;
   pthread_cond_broadcast (&journal->j_commit_wait);
-  pthread_mutex_unlock (&journal->j_state_lock);
+  JOURNAL_UNLOCK (journal);
 
   pthread_join (kjournald_tid, NULL);
 
@@ -700,14 +708,14 @@ journal_force_checkpoint_locked (journal_t *journal, uint32_t tid)
 		  journal->j_free);
   while (journal->j_free < journal->j_min_free)
     {
-      pthread_mutex_unlock (&journal->j_state_lock);
+      JOURNAL_UNLOCK (journal);
       journal_sync_everything ();
-      pthread_mutex_lock (&journal->j_state_lock);
+      JOURNAL_LOCK (journal);
 
       if (journal->j_free < journal->j_min_free)
 	{
 	  /* Wait for the specific signal from advance_tail */
-	  pthread_cond_wait (&journal->j_commit_done, &journal->j_state_lock);
+	  JOURNAL_WAIT (&journal->j_commit_done, journal);
 	}
     }
 
@@ -731,9 +739,9 @@ static inline uint32_t
 journal_next_log_block_safe (journal_t *journal)
 {
   uint32_t block;
-  pthread_mutex_lock (&journal->j_state_lock);
+  JOURNAL_LOCK (journal);
   block = journal_next_log_block (journal);
-  pthread_mutex_unlock (&journal->j_state_lock);
+  JOURNAL_UNLOCK (journal);
   return block;
 }
 
@@ -876,6 +884,9 @@ journal_cleanup_transaction (journal_transaction_t *txn, error_t err)
   return err;
 }
 
+/**
+ * Commits the transaction. This function expects
+ * journal lock to be held, and returns journal lock unlocked. */
 static error_t
 journal_commit_transaction_locked (journal_t *journal,
 				   journal_transaction_t *txn)
@@ -885,7 +896,7 @@ journal_commit_transaction_locked (journal_t *journal,
 
   JRNL_LOG_DEBUG ("About to enter wait on cond for tx id: %u.", txn->t_tid);
   while (txn->t_updates > 0)
-    pthread_cond_wait (&journal->j_commit_wait, &journal->j_state_lock);
+    JOURNAL_WAIT (&journal->j_commit_wait, journal);
 
   JRNL_LOG_DEBUG ("Entered after wait for tx id: %u.", txn->t_tid);
   txn->t_state = T_FLUSHING;
@@ -899,7 +910,7 @@ journal_commit_transaction_locked (journal_t *journal,
   if (journal->j_free < needed || journal->j_free < low_water)
     journal_force_checkpoint_locked (journal, txn->t_tid);
 
-  pthread_mutex_unlock (&journal->j_state_lock);
+  JOURNAL_UNLOCK (journal);
 
   /* Write Data (I/O) */
   err = journal_write_payload (journal, txn);
@@ -919,7 +930,7 @@ journal_commit_transaction_locked (journal_t *journal,
   flush_to_disk ();
 
   /* Finalize Metadata */
-  pthread_mutex_lock (&journal->j_state_lock);
+  JOURNAL_LOCK (journal);
 
   if (journal->j_tail == 0)
     {
@@ -955,7 +966,7 @@ journal_commit_transaction_locked (journal_t *journal,
 
   /* Wake up everyone waiting in journal_wait_on_tid */
   pthread_cond_broadcast (&journal->j_commit_done);
-  pthread_mutex_unlock (&journal->j_state_lock);
+  JOURNAL_UNLOCK (journal);
 
   JRNL_LOG_DEBUG ("Done done with tx id: %u", txn->t_tid);
   return 0;
@@ -966,12 +977,12 @@ journal_commit_transaction (void)
 {
   journal_transaction_t *txn;
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
   txn = ext2_journal->j_running_transaction;
 
   if (!txn || txn->t_state != T_RUNNING)
     {
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return EINVAL;
     }
   ext2_journal->j_running_transaction = NULL;
@@ -992,7 +1003,7 @@ journal_start_transaction (journal_transaction_t **out_txn)
   if (!ext2_journal)
     return EINVAL;
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
 
   /* If the journal is too full, we must wait for the pager 
      to flush older transactions and reclaim space. */
@@ -1002,10 +1013,8 @@ journal_start_transaction (journal_transaction_t **out_txn)
 	("[TRX] Journal full (Free: %u). Waiting for checkpoint...",
 	 ext2_journal->j_free);
 
-      /* We wait on j_commit_done. 
-         MAKE SURE: journal_try_advance_tail calls broadcast on this! */
-      pthread_cond_wait (&ext2_journal->j_commit_done,
-			 &ext2_journal->j_state_lock);
+      /* We wait on j_commit_done. */
+      JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
     }
 
   txn = ext2_journal->j_running_transaction;
@@ -1014,7 +1023,7 @@ journal_start_transaction (journal_transaction_t **out_txn)
     {
       if (txn->t_state != T_RUNNING)
 	{
-	  pthread_mutex_unlock (&ext2_journal->j_state_lock);	// Don't forget to unlock on panic path usually
+	  JOURNAL_UNLOCK (ext2_journal);
 	  ext2_panic
 	    ("[TRX] Logic Error: Running transaction is not T_RUNNING!");
 	}
@@ -1026,7 +1035,7 @@ journal_start_transaction (journal_transaction_t **out_txn)
       txn = calloc (1, sizeof (journal_transaction_t));
       if (!txn)
 	{
-	  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+	  JOURNAL_UNLOCK (ext2_journal);
 	  return ENOMEM;
 	}
 
@@ -1039,7 +1048,7 @@ journal_start_transaction (journal_transaction_t **out_txn)
       JRNL_LOG_DEBUG ("[TRX] Created NEW TID %u", txn->t_tid);
     }
 
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
   *out_txn = txn;
   return 0;
 }
@@ -1067,9 +1076,9 @@ journal_stop_transaction (journal_transaction_t *txn)
   if (!ext2_journal || !txn)
     return;
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
   journal_stop_transaction_locked (ext2_journal, txn);
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 /**
@@ -1087,15 +1096,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
   if (!ext2_journal || !txn || !data)
     return EINVAL;
 
-  if (fs_blocknr == 0)
-    {
-      JRNL_LOG_DEBUG ("[CRITICAL] Attempting to log FS Block 0! Txn ID: %u",
-		      txn->t_tid);
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
-      /* Return error to force the caller to fail/crash so we see who it is */
-      return EINVAL;
-    }
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
 
   if (txn->t_state != T_RUNNING)
     {
@@ -1103,7 +1104,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
       JRNL_LOG_DEBUG
 	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
 	 txn->t_tid, txn->t_state);
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return EROFS;		/* or EBUSY, or restart logic needed */
     }
 
@@ -1113,14 +1114,14 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
   if (jb)
     {
       memcpy (jb->jb_shadow_data, data, block_size);
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return 0;
     }
 
   new_jb = malloc (sizeof (journal_buffer_t));
   if (!new_jb)
     {
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return ENOMEM;
     }
 
@@ -1128,7 +1129,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
   if (!new_jb->jb_shadow_data)
     {
       free (new_jb);
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return ENOMEM;
     }
 
@@ -1141,7 +1142,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
     {
       free (new_jb->jb_shadow_data);
       free (new_jb);
-      pthread_mutex_unlock (&ext2_journal->j_state_lock);
+      JOURNAL_UNLOCK (ext2_journal);
       return err;
     }
 
@@ -1151,7 +1152,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
   txn->t_buffer_count++;
   txn->t_nr_blocks++;
 
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
   return 0;
 }
 
@@ -1170,7 +1171,7 @@ journal_block_is_active (block_t blocknr)
   if (!ext2_journal)
     return 0;
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
   txn = ext2_journal->j_running_transaction;
 
   if (txn && txn->t_state == T_RUNNING)
@@ -1181,7 +1182,7 @@ journal_block_is_active (block_t blocknr)
 	}
     }
 
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
   return is_active;
 }
 
@@ -1223,10 +1224,8 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
      We sleep as long as the target TID is "greater than" the 
      last committed TID. */
   while (tid_gt (target_tid, journal->j_last_committed_tid))
-    {
-      /* Sleep until a commit finishes */
-      pthread_cond_wait (&journal->j_commit_done, &journal->j_state_lock);
-    }
+    /* Sleep until a commit finishes */
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
 }
 
 /**
@@ -1244,26 +1243,24 @@ diskfs_journal_commit_transaction (struct diskfs_transaction *opaque_txn)
 
   JRNL_LOG_DEBUG ("Commiting tx id: %u.", txn->t_tid);
 
-  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  JOURNAL_LOCK (ext2_journal);
 
   /* Decrement the refcount while holding the lock. */
   journal_stop_transaction_locked (ext2_journal, txn);
 
   /* Check if the transaction is currently RUNNING. 
-     If it is, WE steal it and become the committer. */
+     If it is, We "steal" it and become the committer. */
   if (ext2_journal->j_running_transaction == txn)
     {
-      /* Steal it! */
       ext2_journal->j_running_transaction = NULL;
       txn->t_state = T_LOCKED;
-      /* Pass ownership to the locked helper. */
       journal_commit_transaction_locked (ext2_journal, txn);
       return;
     }
   /* We missed it. Someone else (kjournald) stole it. 
      We will wait for them to finish here. */
   journal_wait_on_tid_locked (ext2_journal, tid);
-  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 int
