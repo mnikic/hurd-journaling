@@ -240,7 +240,7 @@ kjournald_thread (void *arg)
 			  journal->j_transaction_sequence, journal->j_head,
 			  journal->j_first, journal->j_last);
 
-	  journal_commit_transaction (journal);
+	  journal_commit_transaction ();
 	}
     }
   return NULL;
@@ -508,7 +508,7 @@ journal_free_transaction (journal_transaction_t *txn)
  * Checks if the oldest transaction(s) are fully written.
  * If so, frees them and advances the journal tail.
  */
-static void
+static int
 journal_try_advance_tail_locked (journal_t *journal)
 {
   journal_transaction_t *txn = journal->j_checkpoint_list;
@@ -560,31 +560,23 @@ journal_try_advance_tail_locked (journal_t *journal)
       txn = journal->j_checkpoint_list;
       changed = 1;
     }
-
-  if (changed)
-    {
-      /* Update Superblock Persistently */
-      /* Note: We are already holding the lock, and update_superblock might do I/O.
-         But since we are passive, this is just a sector write, not a sync. */
-      journal_update_superblock (journal, journal->j_transaction_sequence,
-				 journal->j_tail);
-      pthread_cond_broadcast (&journal->j_commit_done);
-    }
+  return changed;
 }
 
 /*
  * Called by the Pager (store_write hook)
  */
 void
-journal_notify_block_written (journal_t *journal, block_t blocknr)
+journal_notify_block_written (block_t blocknr)
 {
-  if (!journal)
+  int sb_changed = 0;
+  if (!ext2_journal)
     return;
 
-  pthread_mutex_lock (&journal->j_state_lock);
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
 
   /* Iterate over checkpoint list to find who owns this block */
-  journal_transaction_t *txn = journal->j_checkpoint_list;
+  journal_transaction_t *txn = ext2_journal->j_checkpoint_list;
 
   while (txn)
     {
@@ -603,9 +595,10 @@ journal_notify_block_written (journal_t *journal, block_t blocknr)
 	    txn->t_outstanding_io--;
 
 	  /* Optimization: If this was the only block, try to advance tail immediately */
-	  if (txn->t_outstanding_io == 0 && txn == journal->j_checkpoint_list)
+	  if (txn->t_outstanding_io == 0
+	      && txn == ext2_journal->j_checkpoint_list)
 	    {
-	      journal_try_advance_tail_locked (journal);
+	      journal_try_advance_tail_locked (ext2_journal);
 	    }
 
 	  /* A block usually belongs to only one checkpoint txn (the latest committed one).
@@ -615,7 +608,19 @@ journal_notify_block_written (journal_t *journal, block_t blocknr)
       txn = txn->t_checkpoint_next;
     }
 
-  pthread_mutex_unlock (&journal->j_state_lock);
+  pthread_mutex_unlock (&ext2_journal->j_state_lock);
+  if (sb_changed)
+    {
+      /* Update Superblock Persistently */
+      /* Note: We are already holding the lock, and update_superblock might do I/O.
+         But since we are passive, this is just a sector write, not a sync. */
+      journal_update_superblock (ext2_journal,
+				 ext2_journal->j_transaction_sequence,
+				 ext2_journal->j_tail);
+      flush_to_disk ();
+      pthread_cond_broadcast (&ext2_journal->j_commit_done);
+    }
+
 }
 
 journal_t *
@@ -957,22 +962,22 @@ journal_commit_transaction_locked (journal_t *journal,
 }
 
 error_t
-journal_commit_transaction (journal_t *journal)
+journal_commit_transaction (void)
 {
   journal_transaction_t *txn;
 
-  pthread_mutex_lock (&journal->j_state_lock);
-  txn = journal->j_running_transaction;
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  txn = ext2_journal->j_running_transaction;
 
   if (!txn || txn->t_state != T_RUNNING)
     {
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return EINVAL;
     }
-  journal->j_running_transaction = NULL;
+  ext2_journal->j_running_transaction = NULL;
   txn->t_state = T_LOCKED;
 
-  return journal_commit_transaction_locked (journal, txn);
+  return journal_commit_transaction_locked (ext2_journal, txn);
 }
 
 /**
@@ -980,36 +985,36 @@ journal_commit_transaction (journal_t *journal)
  * Returns 0 on success, or error code.
  */
 error_t
-journal_start_transaction (journal_t *journal,
-			   journal_transaction_t **out_txn)
+journal_start_transaction (journal_transaction_t **out_txn)
 {
   journal_transaction_t *txn;
 
-  if (!journal)
+  if (!ext2_journal)
     return EINVAL;
 
-  pthread_mutex_lock (&journal->j_state_lock);
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
 
   /* If the journal is too full, we must wait for the pager 
      to flush older transactions and reclaim space. */
-  while (journal->j_free < journal->j_min_free)
+  while (ext2_journal->j_free < ext2_journal->j_min_free)
     {
       JRNL_LOG_DEBUG
 	("[TRX] Journal full (Free: %u). Waiting for checkpoint...",
-	 journal->j_free);
+	 ext2_journal->j_free);
 
       /* We wait on j_commit_done. 
          MAKE SURE: journal_try_advance_tail calls broadcast on this! */
-      pthread_cond_wait (&journal->j_commit_done, &journal->j_state_lock);
+      pthread_cond_wait (&ext2_journal->j_commit_done,
+			 &ext2_journal->j_state_lock);
     }
 
-  txn = journal->j_running_transaction;
+  txn = ext2_journal->j_running_transaction;
 
   if (txn)
     {
       if (txn->t_state != T_RUNNING)
 	{
-	  pthread_mutex_unlock (&journal->j_state_lock);	// Don't forget to unlock on panic path usually
+	  pthread_mutex_unlock (&ext2_journal->j_state_lock);	// Don't forget to unlock on panic path usually
 	  ext2_panic
 	    ("[TRX] Logic Error: Running transaction is not T_RUNNING!");
 	}
@@ -1021,20 +1026,20 @@ journal_start_transaction (journal_t *journal,
       txn = calloc (1, sizeof (journal_transaction_t));
       if (!txn)
 	{
-	  pthread_mutex_unlock (&journal->j_state_lock);
+	  pthread_mutex_unlock (&ext2_journal->j_state_lock);
 	  return ENOMEM;
 	}
 
       hurd_ihash_init (&txn->t_buffer_map, HURD_IHASH_NO_LOCP);
-      txn->t_tid = journal->j_transaction_sequence++;
+      txn->t_tid = ext2_journal->j_transaction_sequence++;
       txn->t_state = T_RUNNING;
       txn->t_updates = 1;
 
-      journal->j_running_transaction = txn;
+      ext2_journal->j_running_transaction = txn;
       JRNL_LOG_DEBUG ("[TRX] Created NEW TID %u", txn->t_tid);
     }
 
-  pthread_mutex_unlock (&journal->j_state_lock);
+  pthread_mutex_unlock (&ext2_journal->j_state_lock);
   *out_txn = txn;
   return 0;
 }
@@ -1057,14 +1062,14 @@ journal_stop_transaction_locked (journal_t *journal,
 }
 
 void
-journal_stop_transaction (journal_t *journal, journal_transaction_t *txn)
+journal_stop_transaction (journal_transaction_t *txn)
 {
-  if (!journal || !txn)
+  if (!ext2_journal || !txn)
     return;
 
-  pthread_mutex_lock (&journal->j_state_lock);
-  journal_stop_transaction_locked (journal, txn);
-  pthread_mutex_unlock (&journal->j_state_lock);
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  journal_stop_transaction_locked (ext2_journal, txn);
+  pthread_mutex_unlock (&ext2_journal->j_state_lock);
 }
 
 /**
@@ -1072,25 +1077,25 @@ journal_stop_transaction (journal_t *journal, journal_transaction_t *txn)
  * Performs a "Shadow Copy" of the data immediately.
  */
 error_t
-journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
-		     block_t fs_blocknr, const void *data)
+journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
+		     const void *data)
 {
   journal_buffer_t *jb;
   journal_buffer_t *new_jb;
   error_t err;
 
-  if (!journal || !txn || !data)
+  if (!ext2_journal || !txn || !data)
     return EINVAL;
 
   if (fs_blocknr == 0)
     {
       JRNL_LOG_DEBUG ("[CRITICAL] Attempting to log FS Block 0! Txn ID: %u",
 		      txn->t_tid);
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       /* Return error to force the caller to fail/crash so we see who it is */
       return EINVAL;
     }
-  pthread_mutex_lock (&journal->j_state_lock);
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
 
   if (txn->t_state != T_RUNNING)
     {
@@ -1098,7 +1103,7 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
       JRNL_LOG_DEBUG
 	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
 	 txn->t_tid, txn->t_state);
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return EROFS;		/* or EBUSY, or restart logic needed */
     }
 
@@ -1108,14 +1113,14 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
   if (jb)
     {
       memcpy (jb->jb_shadow_data, data, block_size);
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return 0;
     }
 
   new_jb = malloc (sizeof (journal_buffer_t));
   if (!new_jb)
     {
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return ENOMEM;
     }
 
@@ -1123,7 +1128,7 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
   if (!new_jb->jb_shadow_data)
     {
       free (new_jb);
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return ENOMEM;
     }
 
@@ -1136,7 +1141,7 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
     {
       free (new_jb->jb_shadow_data);
       free (new_jb);
-      pthread_mutex_unlock (&journal->j_state_lock);
+      pthread_mutex_unlock (&ext2_journal->j_state_lock);
       return err;
     }
 
@@ -1146,7 +1151,7 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
   txn->t_buffer_count++;
   txn->t_nr_blocks++;
 
-  pthread_mutex_unlock (&journal->j_state_lock);
+  pthread_mutex_unlock (&ext2_journal->j_state_lock);
   return 0;
 }
 
@@ -1157,16 +1162,16 @@ journal_dirty_block (journal_t *journal, journal_transaction_t *txn,
  * 0 if it is safe to write.
  */
 int
-journal_block_is_active (journal_t *journal, block_t blocknr)
+journal_block_is_active (block_t blocknr)
 {
   journal_transaction_t *txn;
   int is_active = 0;
 
-  if (!journal)
+  if (!ext2_journal)
     return 0;
 
-  pthread_mutex_lock (&journal->j_state_lock);
-  txn = journal->j_running_transaction;
+  pthread_mutex_lock (&ext2_journal->j_state_lock);
+  txn = ext2_journal->j_running_transaction;
 
   if (txn && txn->t_state == T_RUNNING)
     {
@@ -1176,7 +1181,7 @@ journal_block_is_active (journal_t *journal, block_t blocknr)
 	}
     }
 
-  pthread_mutex_unlock (&journal->j_state_lock);
+  pthread_mutex_unlock (&ext2_journal->j_state_lock);
   return is_active;
 }
 
@@ -1193,7 +1198,7 @@ diskfs_journal_start_transaction (void)
   if (ext2_journal)
     {
       journal_transaction_t *real_txn;
-      error_t err = journal_start_transaction (ext2_journal, &real_txn);
+      error_t err = journal_start_transaction (&real_txn);
       if (err)
 	return NULL;
       return (struct diskfs_transaction *) real_txn;
@@ -1207,7 +1212,7 @@ diskfs_journal_stop_transaction (struct diskfs_transaction *txn)
   if (ext2_journal)
     {
       journal_transaction_t *real_txn = (journal_transaction_t *) txn;
-      journal_stop_transaction (ext2_journal, real_txn);
+      journal_stop_transaction (real_txn);
     }
 }
 

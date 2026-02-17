@@ -63,7 +63,7 @@ void journal_destroy (journal_t * journal);
  * Increments the transaction update count.
  */
 error_t
-journal_start_transaction (journal_t *journal, journal_transaction_t **out_txn);
+journal_start_transaction (journal_transaction_t **out_txn);
 
 
 /**
@@ -71,8 +71,7 @@ journal_start_transaction (journal_t *journal, journal_transaction_t **out_txn);
  * Performs a shadow copy of 'data' into the journal memory.
  */
 error_t
-journal_dirty_block (journal_t *journal,
-                     journal_transaction_t *txn, 
+journal_dirty_block (journal_transaction_t *txn, 
                      block_t fs_blocknr, 
                      const void *data);
 
@@ -81,17 +80,17 @@ journal_dirty_block (journal_t *journal,
  * When the count reaches zero, the transaction is eligible for commit.
  */
 void
-journal_stop_transaction (journal_t *journal, journal_transaction_t *txn);
+journal_stop_transaction (journal_transaction_t *txn);
 
 /**
  * Commit: Force the current running transaction to the log.
  * This contains the write barriers (flush_to_disk) that guarantee durability.
  */
-error_t journal_commit_transaction (journal_t * journal);
+error_t journal_commit_transaction (void);
 
-void journal_notify_block_written (journal_t * journal, block_t blocknr);
+void journal_notify_block_written (block_t blocknr);
 
 /* Check if a block is currently pinned in a running transaction. */
-int journal_block_is_active (journal_t * journal, block_t blocknr);
+int journal_block_is_active (block_t blocknr);
 
 #endif //_JOURNAL_H

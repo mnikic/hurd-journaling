@@ -348,7 +348,7 @@ pending_blocks_write (struct pending_blocks *pb)
 	  off_t n = pb->num;
 	  while (n > 0)
 	    {
-	      journal_notify_block_written (ext2_journal, b);
+	      journal_notify_block_written (b);
 	      b++;
 	      n--;
 	   }
@@ -661,10 +661,10 @@ disk_pager_write_page (vm_offset_t page, void *buf)
       while (length > 0 && !err)
 	{
 	  block_t block = boffs_block (offset);
-	  if (ext2_journal && journal_block_is_active(ext2_journal, block))
+	  if (ext2_journal && journal_block_is_active(block))
 	    {
 	       JRNL_LOG_DEBUG ("Pageout conflict on Block %u -> Forcing Commit", block);
-	       journal_commit_transaction (ext2_journal);
+	       journal_commit_transaction ();
 	    }
 
 	  /* We don't clear the block modified bit here because this paging
@@ -1636,7 +1636,7 @@ diskfs_sync_everything (int wait)
   if (ext2_journal)
     {
       /* We only commit if we have a running transaction */
-      journal_commit_transaction (ext2_journal);
+      journal_commit_transaction ();
     }
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);

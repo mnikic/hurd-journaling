@@ -565,7 +565,7 @@ write_disknode_journaled (struct node *np, int wait)
 {
   error_t err;
   journal_transaction_t *txn;
-  journal_start_transaction (ext2_journal, &txn);
+  journal_start_transaction (&txn);
   struct ext2_inode *di = write_node (np);
 
   if (di)
@@ -579,7 +579,7 @@ write_disknode_journaled (struct node *np, int wait)
       block_t block_num = table_start + (byte_offset / block_size);
       void *block_ptr = bptr (block_num);
       JRNL_LOG_DEBUG("Writing node %lu block num: %u.", ino, block_num);
-      err = journal_dirty_block (ext2_journal, txn, block_num, block_ptr);
+      err = journal_dirty_block (txn, block_num, block_ptr);
       if (err)
         {
            /* We modified the buffer, but failed to log it.
@@ -587,7 +587,7 @@ write_disknode_journaled (struct node *np, int wait)
            ext2_panic ("Journal write failed (Err: %d). FS is inconsistent.", err);
         }
    }
-  journal_stop_transaction(ext2_journal, txn);
+  journal_stop_transaction(txn);
   // Commit happens at the top level, not here. And commit flushes to disk.
 }
 
