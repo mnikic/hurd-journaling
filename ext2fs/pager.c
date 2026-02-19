@@ -351,7 +351,7 @@ pending_blocks_write (struct pending_blocks *pb)
 	      journal_notify_block_written (b);
 	      b++;
 	      n--;
-	   }
+	    }
 	}
 
       pb->offs += length;
@@ -661,6 +661,15 @@ disk_pager_write_page (vm_offset_t page, void *buf)
       while (length > 0 && !err)
 	{
 	  block_t block = boffs_block (offset);
+
+	  if (block ==  622595 || block == 65538 || block == 262151 || block == 393236 || block == 622678 || block == 65661 ||  block ==  2883586 || block == 262147 || block == 262148 || block == 98506)
+        {
+           int bit_set = test_bit (block, modified_global_blocks);
+           ext2_debug ("PAGER PROBE: Visiting Block %u. Bit is %d. Action: %s", 
+                       block, bit_set, bit_set ? "WRITE (Add)" : "SKIP");
+	       JRNL_LOG_DEBUG ("PAGER PROBE: Visiting Block %u. Bit is %d. Action: %s", 
+                       block, bit_set, bit_set ? "WRITE (Add)" : "SKIP");
+        }
 	  if (ext2_journal && journal_block_is_active(block))
 	    {
 	       JRNL_LOG_DEBUG ("Pageout conflict on Block %u -> Forcing Commit", block);
@@ -696,6 +705,14 @@ disk_pager_write_page (vm_offset_t page, void *buf)
 			 buf, length, &amount);
       if (!err && length != amount)
 	err = EIO;
+      if (!err && ext2_journal)
+        {
+          block_t start_block = offset >> log2_block_size;
+          /* Calculate how many FS blocks fit in this write (usually 1 page = 1 block) */
+          size_t n_blocks = length >> log2_block_size;
+          for (size_t i = 0; i < n_blocks; i++)
+	    journal_notify_block_written (start_block + i);
+        }
     }
 
   return err;

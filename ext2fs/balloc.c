@@ -41,6 +41,7 @@
  */
 
 #include <string.h>
+#include "journal.h"
 #include "ext2fs.h"
 #include "bitmap.c"
 
@@ -112,6 +113,13 @@ ext2_free_blocks (block_t block, unsigned long count)
 		    "block = %u, count = %lu",
 		    block, count);
 
+      if (ext2_journal)
+        {
+          for (i = 0; i < gcount; i++)
+            {
+              journal_notify_block_written (block + i);
+            }
+        }
       for (i = 0; i < gcount; i++)
 	{
 	  if (!clear_bit (bit + i, bh))

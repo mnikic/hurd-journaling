@@ -26,6 +26,16 @@
    media has been completely updated.  */
 void diskfs_node_update (struct node *np, int wait)
 {
+  ino_t ino = np->dn_stat.st_ino;
+  if (ino == 20197 || ino == 262147 || ino == 262148 || ino == 98506 || ino == 715276 || ino == 154465 || ino == 16257 || ino == 24660 || ino == 98139 || ino == 157138 || ino == 20195 || ino == 65661 || ino == 622678 || ino == 393236 || ino == 65538 || ino == 622595 || ino == 2883586)
+    {
+      fprintf (stderr, "DEBUG_PROBE: Inode %llu update. Flags: [ Atime: %d | Mtime: %d | Ctime: %d ] Mode: (Mode %o)\n",
+               (unsigned long long)ino,
+               (int)np->dn_set_atime,
+               (int)np->dn_set_mtime,
+               (int)np->dn_set_ctime,
+               np->dn_stat.st_mode);
+    }
   diskfs_set_node_times (np);
   if (np->dn_stat_dirty)
     diskfs_write_disknode (np, wait);

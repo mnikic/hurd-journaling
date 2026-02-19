@@ -565,6 +565,94 @@ write_disknode_journaled (struct node *np, int wait)
 {
   error_t err;
   journal_transaction_t *txn;
+
+  /* 1. SETUP & PEEK AT DISK */
+  unsigned long ino = np->dn_stat.st_ino;
+  unsigned long group = inode_group_num(ino);
+  block_t table_start = le32toh (group_desc(group)->bg_inode_table);
+  unsigned long inodes_per_group = le32toh (sblock->s_inodes_per_group);
+  unsigned long inode_index = (ino - 1) % inodes_per_group;
+  unsigned long byte_offset = inode_index * le16toh (sblock->s_inode_size);
+  block_t block_num = table_start + (byte_offset / block_size);
+  unsigned long offset_in_block = byte_offset % block_size;
+
+  void *bh = disk_cache_block_ref (block_num);
+  struct ext2_inode *di_old = (struct ext2_inode *) (bh + offset_in_block);
+
+  int skip_write = 0;
+
+  /* -----------------------------------------------------------------------
+   * FILTER 1: THE "STRICT IDENTITY" CHECK (Nanosecond Safe)
+   * ----------------------------------------------------------------------- */
+  /* If seconds match, we assume it's a No-Op for the Journal's purpose. 
+     (Journaling a nanosecond difference that doesn't change the second 
+      is a waste of IO and causes these deadlocks). */
+  if (di_old->i_mtime == np->dn_stat.st_mtime &&
+      di_old->i_ctime == np->dn_stat.st_ctime &&
+      di_old->i_atime == np->dn_stat.st_atime &&
+      di_old->i_mode  == np->dn_stat.st_mode &&
+      di_old->i_uid   == np->dn_stat.st_uid &&
+      di_old->i_gid   == np->dn_stat.st_gid &&
+      di_old->i_size  == np->dn_stat.st_size &&
+      di_old->i_links_count == np->dn_stat.st_nlink)
+    {
+       skip_write = 1;
+    }
+    
+  /* -----------------------------------------------------------------------
+   * FILTER 2: THE "SPECIAL FILE" IGNORE (Char/Block/FIFO/Socket)
+   * ----------------------------------------------------------------------- */
+  /* If it's NOT a Regular File and NOT a Directory, it's a Device/Translator.
+     These are memory-backed. We IGNORE ALL Timestamp updates.
+     We only write if Mode/UID/Size changed (Structural Change). */
+  else if (!wait && 
+           !S_ISREG(np->dn_stat.st_mode) && 
+           !S_ISDIR(np->dn_stat.st_mode))
+    {
+       if (di_old->i_mode == np->dn_stat.st_mode &&
+           di_old->i_uid  == np->dn_stat.st_uid &&
+           di_old->i_gid  == np->dn_stat.st_gid &&
+           di_old->i_size == np->dn_stat.st_size &&
+           di_old->i_links_count == np->dn_stat.st_nlink)
+         {
+            skip_write = 1;
+         }
+    }
+
+  /* -----------------------------------------------------------------------
+   * FILTER 3: THE "NOISY DIRECTORY" RELATIME (New!)
+   * ----------------------------------------------------------------------- */
+  /* Directories (/dev, /etc, /tmp) get hammered with lookups/locking.
+     This updates atime/mtime constantly. 
+     If it is a DIRECTORY, and ONLY timestamps changed, apply Relatime. */
+  else if (!wait && S_ISDIR(np->dn_stat.st_mode))
+    {
+       /* Check if structural metadata (Mode, UID, Size) is UNCHANGED */
+       if (di_old->i_mode == np->dn_stat.st_mode &&
+           di_old->i_uid  == np->dn_stat.st_uid &&
+           di_old->i_gid  == np->dn_stat.st_gid &&
+           di_old->i_size == np->dn_stat.st_size &&
+           di_old->i_links_count == np->dn_stat.st_nlink)
+         {
+            /* Structure is same. Did Data (mtime/ctime) change? */
+            /* For directories, mtime changes when files are added/removed.
+               We usually want to log that. But if mtime is effectively identical
+               (within the same second) or just noise, we can skip. */
+               
+            /* STRICTER: Only skip if mtime/ctime are effectively same as disk. */
+            if (di_old->i_mtime == np->dn_stat.st_mtime &&
+                di_old->i_ctime == np->dn_stat.st_ctime)
+              {
+                 /* Only Atime changed? Skip it (Relatime logic) */
+                 skip_write = 1; 
+              }
+         }
+    }
+
+  disk_cache_block_deref (bh);
+
+  if (skip_write)
+    return;
   journal_start_transaction (&txn);
   struct ext2_inode *di = write_node (np);
 
@@ -578,7 +666,7 @@ write_disknode_journaled (struct node *np, int wait)
       unsigned long byte_offset = inode_index * le16toh (sblock->s_inode_size);
       block_t block_num = table_start + (byte_offset / block_size);
       void *block_ptr = bptr (block_num);
-      JRNL_LOG_DEBUG("Writing node %lu block num: %u.", ino, block_num);
+      JRNL_LOG_DEBUG("Writing block %u for not %lu", block_num, ino);
       err = journal_dirty_block (txn, block_num, block_ptr);
       if (err)
         {
@@ -586,6 +674,13 @@ write_disknode_journaled (struct node *np, int wait)
               The filesystem is now in a fragile state. */
            ext2_panic ("Journal write failed (Err: %d). FS is inconsistent.", err);
         }
+
+    int at_only = di->i_mtime == np->dn_stat.st_mtime && di->i_ctime == np->dn_stat.st_ctime && di->i_atime != np->dn_stat.st_atime;
+   JRNL_LOG_DEBUG ("JRNL PROBE: Special Inode %Ld  block %u (Mode %o) update. Atime only: %i, i_mtime %u, st_mtime %ld, i_ctime %u, st_ctime %ld, i_atime %u, st_atime %ld",
+               (long long)np->dn_stat.st_ino,
+                   block_num,
+               np->dn_stat.st_mode,
+               at_only, di->i_mtime, np->dn_stat.st_mtime, di->i_ctime, np->dn_stat.st_ctime, di->i_atime, np->dn_stat.st_atime);
    }
   journal_stop_transaction(txn);
   // Commit happens at the top level, not here. And commit flushes to disk.
