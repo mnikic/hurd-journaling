@@ -560,7 +560,7 @@ write_all_disknodes (void)
   diskfs_node_iterate (write_one_disknode);
 }
 
-static void
+static struct ext2_inode *
 write_disknode_journaled (struct node *np, int wait)
 {
   error_t err;
@@ -584,6 +584,7 @@ write_disknode_journaled (struct node *np, int wait)
    }
   journal_stop_transaction(txn);
   // Commit happens at the top level, not here. And commit flushes to disk.
+  return di;
 }
 
 /* Sync the info in NP->dn_stat and any associated format-specific
@@ -596,9 +597,12 @@ diskfs_write_disknode (struct node *np, int wait)
 
   if (ext2_journal)
     {
-      write_disknode_journaled (np, wait);
+      di = write_disknode_journaled (np, wait);
+      if (di)
+        record_global_poke (di);
       return;
     }
+
   di = write_node (np);
   if (di)
     {
@@ -611,7 +615,9 @@ diskfs_write_disknode (struct node *np, int wait)
             ext2_warning ("device flush failed: %s", strerror (err));
         }
       else
-        record_global_poke (di);
+        {
+          record_global_poke (di);
+        }
     }
 }
 

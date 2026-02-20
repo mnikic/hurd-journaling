@@ -30,7 +30,6 @@ diskfs_S_dir_rmdir (struct protid *dircred,
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   struct diskfs_transaction *txn;
   error_t error;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
   /* This routine cleans up the state we have after calling diskfs_lookup.
      After that call, all returns are done with `return done (ERROR, NP);'.  */
@@ -93,10 +92,9 @@ diskfs_S_dir_rmdir (struct protid *dircred,
       np->dn_stat.st_nlink--;
       np->dn_set_ctime = 1;
       diskfs_clear_directory (np, dnp, dircred);
-      diskfs_file_update (np, sync_pass);
+      diskfs_file_update (np, diskfs_synchronous);
     }
-  if (diskfs_synchronous)
-    diskfs_file_update (dnp, sync_pass);
+  diskfs_file_update (dnp, diskfs_synchronous);
 
   return done (error, np);
 }

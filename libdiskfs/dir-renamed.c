@@ -15,7 +15,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
-#include <libdiskfs/diskfs.h>
 #include "diskfs.h"
 #include "priv.h"
 
@@ -172,7 +171,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       assert_backtrace (tmpnp == fdp);
 
       err = diskfs_dirrewrite (fnp, fdp, tdp, "..", tmpds);
-      diskfs_file_update (fnp, sync_pass);
+      diskfs_file_update (fnp, diskfs_synchronous);
       if (err)
 	{
 	  assert_backtrace (tdp->dn_stat.st_nlink > 0);
@@ -214,12 +213,12 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 	  tnp->dn_set_ctime = 1;
 	}
       diskfs_clear_directory (tnp, tdp, tocred);
-      diskfs_file_update (tnp, sync_pass);
+      diskfs_file_update (tnp, diskfs_synchronous);
     }
   else
     {
       err = diskfs_direnter (tdp, toname, fnp, ds, tocred);
-      diskfs_file_update (tdp, sync_pass);
+      diskfs_file_update (tdp, diskfs_synchronous);
     }
 
   if (err)
@@ -251,7 +250,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   ds = 0;
   fnp->dn_stat.st_nlink--;
   fnp->dn_set_ctime = 1;
-  diskfs_file_update (fdp, sync_pass);
+  diskfs_file_update (fdp, diskfs_synchronous);
   diskfs_node_update (fnp, sync_pass);
 
  out:

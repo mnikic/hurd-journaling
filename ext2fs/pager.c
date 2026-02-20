@@ -951,9 +951,12 @@ diskfs_file_update (struct node *node, int wait)
       ports_port_deref (pager);
     }
 
-  pokel_sync (&diskfs_node_disknode (node)->indir_pokel, wait);
+  /* If there is a journal present we will not sync metadata immediately
+     We will let the journal do it when its ready. */
+  int meta_wait = ext2_journal ? 0 : wait;
+  pokel_sync (&diskfs_node_disknode (node)->indir_pokel, meta_wait);
 
-  diskfs_node_update (node, wait);
+  diskfs_node_update (node, meta_wait);
 }
 
 /* Invalidate any pager data associated with NODE.  */
