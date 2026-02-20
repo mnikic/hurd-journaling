@@ -424,8 +424,20 @@ extern struct ext2_group_desc *group_desc_image;
    implementation is provided in 'xinl.c'.  */
 extern struct ext2_inode * dino_ref (ino_t inum);
 extern void _dino_deref (struct ext2_inode *inode);
+extern block_t dino_block (ino_t inum);
 
 #if defined(__USE_EXTERN_INLINES) || defined(EXT2FS_DEFINE_EI)
+/* Convert an inode number to the block on disk. */
+EXT2FS_EI block_t
+dino_block (ino_t inum)
+{
+  unsigned long inodes_per_group = le32toh (sblock->s_inodes_per_group);
+  unsigned long bg_num = (inum - 1) / inodes_per_group;
+  unsigned long group_inum = (inum - 1) % inodes_per_group;
+  struct ext2_group_desc *bg = group_desc (bg_num);
+  return le32toh (bg->bg_inode_table) + (group_inum / inodes_per_block);
+}
+
 /* Convert an inode number to the dinode on disk. */
 EXT2FS_EI struct ext2_inode *
 dino_ref (ino_t inum)
