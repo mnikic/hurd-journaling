@@ -139,7 +139,17 @@ struct diskfs_transaction
   /* The Payload (The Shadow Buffers) */
   journal_buffer_t *t_buffers;	/* Linked List of dirty blocks */
   int t_buffer_count;
-  struct hurd_ihash t_buffer_map;	/* The Map (for O(1) lookups) */
+  /* The Map: block_t -> journal_buffer_t (for O(1) lookups).
+   * We use a per-transaction map rather than a global, journal-wide map.
+   * While a global map would make asynchronous block notifications slightly
+   * faster, it makes transaction cleanup significantly slower and more fragile.
+   * Because the strict capacity geometry of our ring buffer and proactive
+   * checkpointing strictly limit the number of concurrent transactions,
+   * the O(N) iteration over active transactions during a block notification
+   * is strictly bounded to a tiny number. Therefore, per-transaction maps
+   * provide the best balance of fast lookups and instantaneous,
+   * memory-safe cleanup. */
+  struct hurd_ihash t_buffer_map;
 
   struct diskfs_transaction *t_checkpoint_next;	/* Next in global checkpoint list */
   int t_outstanding_io;
@@ -177,7 +187,7 @@ typedef struct journal
   pthread_cond_t j_commit_wait;	/* Cond. var. while waiting for the tx to be ready. */
   /* The Transactions */
   diskfs_transaction_t *j_running_transaction;	/* Currently filling */
-
+  diskfs_transaction_t *j_committing_transaction;	/* Transaction that is beeing committed. */
   diskfs_transaction_t *j_checkpoint_list;	/* Head (Oldest, defines j_tail) */
   diskfs_transaction_t *j_checkpoint_last;
 
@@ -506,6 +516,21 @@ journal_update_superblock (journal_t *journal, uint32_t sequence,
   return 0;
 }
 
+static diskfs_transaction_t *
+journal_get_oldest_transaction_locked (journal_t *journal)
+{
+  if (journal->j_checkpoint_list)
+    return journal->j_checkpoint_list;
+
+  if (journal->j_committing_transaction)
+    return journal->j_committing_transaction;
+
+  if (journal->j_running_transaction)
+    return journal->j_running_transaction;
+
+  return NULL;
+}
+
 /**
  * Frees the SHADOW copies of data to save RAM, but keeps the
  * transaction struct and metadata alive for tracking.
@@ -574,10 +599,10 @@ journal_try_advance_tail_locked (journal_t *journal)
       if (journal->j_checkpoint_list == NULL)
 	journal->j_checkpoint_last = NULL;
 
-      if (journal->j_checkpoint_list)
-	journal->j_tail = journal->j_checkpoint_list->t_log_start;
-      else if (journal->j_running_transaction)
-	journal->j_tail = journal->j_running_transaction->t_log_start;
+      diskfs_transaction_t *oldest =
+	journal_get_oldest_transaction_locked (journal);
+      if (oldest)
+	journal->j_tail = oldest->t_log_start;
       else
 	journal->j_tail = 0;
 
@@ -640,6 +665,19 @@ journal_notify_block_written (block_t blocknr)
 			  blocknr, run->t_tid);
 	}
     }
+  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+  if (commit)
+    {
+      if (hurd_ihash_remove
+	  (&commit->t_buffer_map, (hurd_ihash_key_t) blocknr))
+	{
+	  if (commit->t_outstanding_io > 0)
+	    commit->t_outstanding_io--;
+	  JRNL_LOG_DEBUG
+	    ("[NOTIFY] Caught block %u in Limbo Committing Txn %u!", blocknr,
+	     commit->t_tid);
+	}
+    }
   /* Iterate over checkpoint list to find who owns this block */
   diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
 
@@ -683,8 +721,10 @@ journal_notify_block_written (block_t blocknr)
   if (sb_changed)
     {
       uint32_t tail_seq;
-      if (ext2_journal->j_checkpoint_list)
-	tail_seq = ext2_journal->j_checkpoint_list->t_tid;
+      diskfs_transaction_t *oldest =
+	journal_get_oldest_transaction_locked (ext2_journal);
+      if (oldest)
+	tail_seq = oldest->t_tid;
       else
 	tail_seq = ext2_journal->j_transaction_sequence;
       /* Update Superblock Persistently */
@@ -777,20 +817,16 @@ journal_clear_checkpoint_list_locked (journal_t *journal)
   journal->j_checkpoint_list = NULL;
   journal->j_checkpoint_last = NULL;
 
-  /* SAFEGUARD: Only set tail to 0 if NO transactions are active! */
-  /* (If you added j_committing_transaction, check it here as well: ) */
-  /* if (journal->j_committing_transaction)
-     journal->j_tail = journal->j_committing_transaction->t_log_start;
-     else ... */
-  if (journal->j_running_transaction)
-    journal->j_tail = journal->j_running_transaction->t_log_start;
+  diskfs_transaction_t *oldest =
+    journal_get_oldest_transaction_locked (journal);
+  if (oldest)
+    journal->j_tail = oldest->t_log_start;
   else
     journal->j_tail = 0;
 
   uint32_t capacity = journal->j_last - journal->j_first + 1;
   uint32_t used_len = 0;
 
-  /* Your math block here is perfect! */
   if (journal->j_tail > 0)
     {
       if (journal->j_head >= journal->j_tail)
@@ -1049,6 +1085,7 @@ journal_commit_transaction_locked (journal_t *journal,
      We keep the journal_buffer_t headers and the t_buffer_map alive 
      so pending_blocks_write can find them later. */
   journal_strip_transaction (txn);
+  journal->j_committing_transaction = NULL;
 
   /* Link into the Global Checkpoint Queue */
   if (journal->j_checkpoint_last)
@@ -1090,6 +1127,7 @@ journal_commit_transaction (void)
       return 0;
     }
   ext2_journal->j_running_transaction = NULL;
+  ext2_journal->j_committing_transaction = txn;
   txn->t_state = T_LOCKED;
   journal_debug_dump_head (ext2_journal);
   return journal_commit_transaction_locked (ext2_journal, txn);
@@ -1347,6 +1385,7 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
   if (ext2_journal->j_running_transaction == txn)
     {
       ext2_journal->j_running_transaction = NULL;
+      ext2_journal->j_committing_transaction = txn;
       txn->t_state = T_LOCKED;
       journal_commit_transaction_locked (ext2_journal, txn);
       return;
