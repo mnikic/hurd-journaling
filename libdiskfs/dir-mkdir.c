@@ -28,7 +28,7 @@ diskfs_S_dir_mkdir (struct protid *dircred,
   struct node *dnp;
   struct node *np = 0;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   int error;
 
   if (!dircred)

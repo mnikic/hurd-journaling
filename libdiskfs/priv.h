@@ -128,7 +128,7 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
 ({									    \
   error_t err = 0;							    \
   struct node *np;							    \
-  struct diskfs_transaction *txn;					    \
+  diskfs_transaction_t *txn;						    \
   									    \
   if (!(PROTID))							    \
     return EOPNOTSUPP;							    \

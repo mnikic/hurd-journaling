@@ -508,6 +508,7 @@ error_t diskfs_validate_flags_change (struct node *np, int flags);
 error_t diskfs_validate_rdev_change (struct node *np, dev_t rdev);
 
 struct diskfs_transaction;
+typedef struct diskfs_transaction diskfs_transaction_t;
 
 /* The user may define the following functions to implement a journaling
    system (like JBD2). If defined, libdiskfs will call them to wrap
@@ -517,11 +518,11 @@ struct diskfs_transaction;
    The default definitions in libdiskfs do nothing. If you choose to
    implement journaling, you should define ALL of these to ensure
    consistency and prevent deadlocks. */
-struct diskfs_transaction *diskfs_journal_start_transaction (void);
+diskfs_transaction_t *diskfs_journal_start_transaction (void);
 
-void diskfs_journal_stop_transaction (struct diskfs_transaction *tx);
+void diskfs_journal_stop_transaction (diskfs_transaction_t *txn);
 
-void diskfs_journal_commit_transaction (struct diskfs_transaction *tx);
+void diskfs_journal_commit_transaction (diskfs_transaction_t *txn);
 
 /* The user must define this function.  Sync the info in NP->dn_stat
    and any associated format-specific information to disk.  If WAIT is true,

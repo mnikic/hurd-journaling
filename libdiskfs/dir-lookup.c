@@ -59,7 +59,7 @@ diskfs_S_dir_lookup (struct protid *dircred,
   int type;
   struct protid *newpi = 0;
   struct peropen *newpo = 0;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   int orig_flags = flags;
 
   if (!dircred)

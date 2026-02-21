@@ -33,7 +33,7 @@ diskfs_S_io_write (struct protid *cred,
   off_t off = offset;
   mach_msg_type_number_t nwritten;
   int should_sync; 
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
 
   if (!cred)
     return EOPNOTSUPP;

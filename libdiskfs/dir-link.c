@@ -31,7 +31,7 @@ diskfs_S_dir_link (struct protid *dircred,
   struct node *dnp;		/* directory of new entry */
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
-  struct diskfs_transaction *txn; 
+  diskfs_transaction_t *txn;
 
   if (!dircred)
     return EOPNOTSUPP;

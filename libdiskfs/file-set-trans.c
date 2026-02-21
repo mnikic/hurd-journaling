@@ -36,7 +36,7 @@ diskfs_S_file_set_translator (struct protid *cred,
   struct node *np;
   error_t err;
   error_t ret_val;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   mach_port_t control = MACH_PORT_NULL;
 
   if (!cred)

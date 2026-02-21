@@ -30,7 +30,7 @@ diskfs_S_io_prenotify (struct protid *cred,
 {
   struct node *np;
   int err = 0;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   if (!cred)
     return EOPNOTSUPP;
 

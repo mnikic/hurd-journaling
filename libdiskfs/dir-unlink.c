@@ -29,7 +29,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
   struct node *np;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   mach_port_t control = MACH_PORT_NULL;
 
   if (!dircred)

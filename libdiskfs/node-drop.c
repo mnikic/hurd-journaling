@@ -38,7 +38,7 @@ void
 diskfs_drop_node (struct node *np)
 {
   mode_t savemode;
-  struct diskfs_transaction *txn = diskfs_journal_start_transaction ();
+  diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
 
   /* XXX: if the filesystem is readonly, we cannot remove the files with no link
      but e.g. memory mapping still in memory.  This notably happens when

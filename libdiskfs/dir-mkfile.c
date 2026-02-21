@@ -36,7 +36,7 @@ diskfs_S_dir_mkfile (struct protid *cred,
   error_t err;
   struct protid *newpi;
   struct peropen *newpo;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
 
   if (!cred)
     return EOPNOTSUPP;

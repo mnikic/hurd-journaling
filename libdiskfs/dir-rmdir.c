@@ -28,7 +28,7 @@ diskfs_S_dir_rmdir (struct protid *dircred,
   struct node *dnp;
   struct node *np = NULL;
   struct dirstat *ds = alloca (diskfs_dirstat_size);
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   error_t error;
 
   /* This routine cleans up the state we have after calling diskfs_lookup.

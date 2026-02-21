@@ -26,7 +26,7 @@
 kern_return_t
 diskfs_S_io_sigio (struct protid *cred)
 {
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
   if (!cred)
     return EOPNOTSUPP;
 

@@ -78,7 +78,7 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   void *buf = alloca (diskfs_dirstat_size);
   struct dirstat *ds;
   struct dirstat *tmpds;
-  struct diskfs_transaction *txn;
+  diskfs_transaction_t *txn;
 
   pthread_mutex_lock (&tdp->lock);
   diskfs_nref (tdp);		/* reference and lock will get consumed by

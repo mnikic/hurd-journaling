@@ -32,6 +32,7 @@
 
 #include <hurd/ihash.h>
 
+#include <libdiskfs/diskfs.h>
 #include "ext2fs.h"
 #include "jbd2_format.h"
 #include "journal.h"
@@ -1285,7 +1286,7 @@ tid_gt (uint32_t t1, uint32_t t2)
   return (int32_t) (t1 - t2) > 0;
 }
 
-struct diskfs_transaction *
+diskfs_transaction_t *
 diskfs_journal_start_transaction (void)
 {
   if (ext2_journal)
@@ -1294,13 +1295,13 @@ diskfs_journal_start_transaction (void)
       error_t err = journal_start_transaction (&real_txn);
       if (err)
 	return NULL;
-      return (struct diskfs_transaction *) real_txn;
+      return (diskfs_transaction_t *) real_txn;
     }
   return NULL;
 }
 
 void
-diskfs_journal_stop_transaction (struct diskfs_transaction *txn)
+diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
 {
   if (ext2_journal)
     {
@@ -1325,7 +1326,7 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
  * Ensures the transaction is on disk before returning.
  */
 void
-diskfs_journal_commit_transaction (struct diskfs_transaction *opaque_txn)
+diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 {
   if (!ext2_journal || !opaque_txn)
     return;
