@@ -32,7 +32,6 @@ diskfs_S_io_write (struct protid *cred,
   error_t err;
   off_t off = offset;
   mach_msg_type_number_t nwritten;
-  int sync_pass;
   int should_sync; 
   struct diskfs_transaction *txn;
 
@@ -46,7 +45,6 @@ diskfs_S_io_write (struct protid *cred,
   if (!(cred->po->openstat & O_WRITE))
     return EBADF;
   should_sync = (cred->po->openstat & O_FSYNC) || diskfs_synchronous;
-  sync_pass = should_sync && !diskfs_journal_is_running();
   txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&np->lock);
 
@@ -69,7 +67,7 @@ diskfs_S_io_write (struct protid *cred,
   while (off + (off_t) datalen > np->allocsize)
     {
       err = diskfs_grow (np, off + datalen, cred);
-      diskfs_node_update (np, sync_pass);
+      diskfs_node_update (np, should_sync);
       if (err)
 	goto out;
       if (np->filemod_reqs)
@@ -80,7 +78,7 @@ diskfs_S_io_write (struct protid *cred,
     {
       np->dn_stat.st_size = off + datalen;
       np->dn_set_ctime = 1;
-      diskfs_node_update (np, sync_pass);
+      diskfs_node_update (np, should_sync);
     }
 
   nwritten = datalen;
@@ -92,7 +90,7 @@ diskfs_S_io_write (struct protid *cred,
     cred->po->filepointer += nwritten;
 
   if (!err && should_sync)
-    diskfs_file_update (np, sync_pass);
+    diskfs_file_update (np, should_sync);
 
   if (!err && np->filemod_reqs)
     diskfs_notice_filechange (np, FILE_CHANGED_WRITE, off, off + nwritten);

@@ -38,7 +38,6 @@ diskfs_S_file_set_translator (struct protid *cred,
   error_t ret_val;
   struct diskfs_transaction *txn;
   mach_port_t control = MACH_PORT_NULL;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!cred)
     return EOPNOTSUPP;
@@ -231,7 +230,7 @@ diskfs_S_file_set_translator (struct protid *cred,
 	      if (!err)
 		{
 		  np->dn_stat.st_mode = newmode;
-		  diskfs_node_update (np, sync_pass);
+		  diskfs_node_update (np, diskfs_synchronous);
 		}
 	      pthread_mutex_unlock (&np->lock);
 	      ret_val = err;

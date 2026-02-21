@@ -37,7 +37,6 @@ diskfs_S_dir_mkfile (struct protid *cred,
   struct protid *newpi;
   struct peropen *newpo;
   struct diskfs_transaction *txn;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
   if (!cred)
     return EOPNOTSUPP;
@@ -63,14 +62,15 @@ diskfs_S_dir_mkfile (struct protid *cred,
   mode &= ~(S_IFMT | S_ISPARE | S_ISVTX | S_ITRANS);
   mode |= S_IFREG;
   err = diskfs_create_node (dnp, 0, mode, &np, cred, 0);
-  diskfs_file_update (dnp, sync_pass);
+  if (!err)
+    diskfs_file_update (dnp, diskfs_synchronous);
   pthread_mutex_unlock (&dnp->lock);
   if (err)
     {
       diskfs_journal_stop_transaction (txn);
       return err;
     }
-  diskfs_file_update (np, sync_pass);
+  diskfs_file_update (np, diskfs_synchronous);
 
   flags &= ~OPENONLY_STATE_MODES; /* These bits are all meaningless here.  */
 

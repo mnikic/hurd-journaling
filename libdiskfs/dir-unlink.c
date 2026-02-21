@@ -31,7 +31,6 @@ diskfs_S_dir_unlink (struct protid *dircred,
   error_t err;
   struct diskfs_transaction *txn;
   mach_port_t control = MACH_PORT_NULL;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!dircred)
     return EOPNOTSUPP;
@@ -69,7 +68,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
     }
 
   err = diskfs_dirremove (dnp, np, name, ds);
-  diskfs_node_update (dnp, sync_pass);
+  diskfs_node_update (dnp, diskfs_synchronous);
   if (err)
     {
       diskfs_nput (np);
@@ -80,7 +79,7 @@ diskfs_S_dir_unlink (struct protid *dircred,
 
   np->dn_stat.st_nlink--;
   np->dn_set_ctime = 1;
-  diskfs_node_update (np, sync_pass);
+  diskfs_node_update (np,  diskfs_synchronous);
 
   if (np->dn_stat.st_nlink == 0)
     fshelp_fetch_control (&np->transbox, &control);
