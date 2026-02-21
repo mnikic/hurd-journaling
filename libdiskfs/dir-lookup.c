@@ -205,8 +205,11 @@ diskfs_S_dir_lookup (struct protid *dircred,
 	      mode &= ~(S_IFMT | S_ISPARE | S_ISVTX | S_ITRANS);
 	      mode |= S_IFREG;
 	      err = diskfs_create_node (dnp, filename, mode, &np, dircred, ds);
-	      diskfs_file_update (dnp, diskfs_synchronous);
-	      diskfs_file_update (np, diskfs_synchronous);
+	      if (diskfs_synchronous)
+		{
+		  diskfs_file_update (dnp, 1);
+		  diskfs_file_update (np, 1);
+		}
 	      newnode = 1;
 	    }
 	  else
