@@ -126,7 +126,7 @@ typedef enum
 } transaction_state_t;
 
 /* The Transaction Object */
-typedef struct journal_transaction
+struct diskfs_transaction
 {
   uint32_t t_tid;		/* Transaction ID (Sequence Number) */
   transaction_state_t t_state;
@@ -141,12 +141,12 @@ typedef struct journal_transaction
   int t_buffer_count;
   struct hurd_ihash t_buffer_map;	/* The Map (for O(1) lookups) */
 
-  struct journal_transaction *t_checkpoint_next;	/* Next in global checkpoint list */
+  struct diskfs_transaction *t_checkpoint_next;	/* Next in global checkpoint list */
   int t_outstanding_io;
 
   /* Timing/Debug */
   long t_start_time;
-} journal_transaction_t;
+};
 
 /* The Simple Mapper (Virtual -> Physical) */
 typedef struct journal_map
@@ -176,10 +176,10 @@ typedef struct journal
   pthread_mutex_t j_state_lock;	/* Protects the pointers below */
   pthread_cond_t j_commit_wait;	/* Cond. var. while waiting for the tx to be ready. */
   /* The Transactions */
-  journal_transaction_t *j_running_transaction;	/* Currently filling */
+  diskfs_transaction_t *j_running_transaction;	/* Currently filling */
 
-  journal_transaction_t *j_checkpoint_list;	/* Head (Oldest, defines j_tail) */
-  journal_transaction_t *j_checkpoint_last;
+  diskfs_transaction_t *j_checkpoint_list;	/* Head (Oldest, defines j_tail) */
+  diskfs_transaction_t *j_checkpoint_last;
 
   uint32_t j_max_transaction_buffers;	/* Max size of a single transaction */
   uint32_t j_min_free;
@@ -238,7 +238,7 @@ destroy_map (journal_t *journal)
 void
 journal_debug_dump_head (journal_t *journal)
 {
-  journal_transaction_t *txn = journal->j_checkpoint_list;
+  diskfs_transaction_t *txn = journal->j_checkpoint_list;
   if (!txn) 
     {
       JRNL_LOG_DEBUG("=== CHECKPOINT LIST EMPTY ===");
@@ -511,7 +511,7 @@ journal_update_superblock (journal_t *journal, uint32_t sequence,
  * transaction struct and metadata alive for tracking.
  */
 static void
-journal_strip_transaction (journal_transaction_t *txn)
+journal_strip_transaction (diskfs_transaction_t *txn)
 {
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
@@ -531,7 +531,7 @@ journal_strip_transaction (journal_transaction_t *txn)
  * Called only when checkpointing is 100% complete.
  */
 static void
-journal_free_transaction (journal_transaction_t *txn)
+journal_free_transaction (diskfs_transaction_t *txn)
 {
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
@@ -555,7 +555,7 @@ static int
 journal_try_advance_tail_locked (journal_t *journal)
 {
   int advanced = 0;
-  journal_transaction_t *txn = journal->j_checkpoint_list;
+  diskfs_transaction_t *txn = journal->j_checkpoint_list;
 
   JRNL_LOG_DEBUG("Attempting to advance tail...");
 
@@ -591,7 +591,6 @@ journal_try_advance_tail_locked (journal_t *journal)
       /* RELOAD the new head to check in the next iteration */
       txn = journal->j_checkpoint_list;
     }
-  
   /* Recalculate Free Space ONCE at the end */
   if (advanced)
     {
@@ -623,7 +622,7 @@ journal_notify_block_written (block_t blocknr)
   JRNL_LOG_DEBUG("Got notification about block %u", blocknr);
   JOURNAL_LOCK (ext2_journal);
 
-  journal_transaction_t *run = ext2_journal->j_running_transaction;
+  diskfs_transaction_t *run = ext2_journal->j_running_transaction;
   if (run)
     {
        if (hurd_ihash_remove (&run->t_buffer_map, (hurd_ihash_key_t) blocknr))
@@ -638,7 +637,7 @@ journal_notify_block_written (block_t blocknr)
          }
     }
   /* Iterate over checkpoint list to find who owns this block */
-  journal_transaction_t *txn = ext2_journal->j_checkpoint_list;
+  diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
 
   while (txn)
     {
@@ -714,9 +713,7 @@ journal_create (struct node *journal_inode)
   j->j_min_free = j->j_max_transaction_buffers + JRNL_METADATA_OVERHEAD;
 
   if (journal_load_superblock (j) != 0)
-    {
-      ext2_panic ("[JOURNAL] Failed to load superblock!");
-    }
+    ext2_panic ("[JOURNAL] Failed to load superblock!");
   j->j_last_committed_tid = j->j_transaction_sequence - 1;
   pthread_cond_init (&j->j_commit_done, NULL);
   pthread_mutex_init (&j->j_state_lock, NULL);
@@ -724,13 +721,9 @@ journal_create (struct node *journal_inode)
   pthread_cond_init (&j->j_space_available, NULL);
   j->j_must_exit = 0;
   if (pthread_create (&kjournald_tid, NULL, kjournald_thread, j) != 0)
-    {
-      JRNL_LOG_DEBUG ("Failed to create a flusher thread.");
-    }
+    JRNL_LOG_DEBUG ("Failed to create a flusher thread.");
   else
-    {
-      JRNL_LOG_DEBUG ("Created flusher thread.");
-    }
+    JRNL_LOG_DEBUG ("Created flusher thread.");
   return j;
 }
 
@@ -764,11 +757,11 @@ journal_destroy (journal_t *journal)
 static void
 journal_clear_checkpoint_list_locked (journal_t *journal)
 {
-  journal_transaction_t *txn = journal->j_checkpoint_list;
+  diskfs_transaction_t *txn = journal->j_checkpoint_list;
   /* Destroy all checkpoint transactions */
   while (txn)
     {
-       journal_transaction_t *next = txn->t_checkpoint_next;
+       diskfs_transaction_t *next = txn->t_checkpoint_next;
        journal_free_transaction (txn);
        txn = next;
     }
@@ -818,9 +811,7 @@ journal_next_log_block (journal_t *journal)
 {
   journal->j_head++;
   if (journal->j_head > journal->j_last)
-    {
-      journal->j_head = journal->j_first;
-    }
+    journal->j_head = journal->j_first;
   journal->j_free--;
   return journal->j_head;
 }
@@ -837,19 +828,18 @@ journal_next_log_block_safe (journal_t *journal)
 
 /* Helper to reset the header for a new block */
 static void
-setup_header (void *buf, const journal_transaction_t *txn,
+setup_header (void *buf, const diskfs_transaction_t *txn,
 	      uint32_t block_type)
 {
   journal_header_t *h = (journal_header_t *) buf;
   h->h_magic = htobe32 (JBD2_MAGIC_NUMBER);
   h->h_blocktype = htobe32 (block_type);
-  //h->h_blocktype = htobe32 (JBD2_DESCRIPTOR_BLOCK);
   h->h_sequence = htobe32 (txn->t_tid);
 }
 
 /* Writes the Descriptor Block + All Data Blocks (Escaped) */
 static error_t
-journal_write_payload (journal_t *journal, const journal_transaction_t *txn)
+journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
 {
   if (txn->t_buffers == NULL)
     return 0;
@@ -945,7 +935,7 @@ err_out:
 /* Writes the Commit Block */
 static error_t
 journal_write_commit_record (journal_t *journal,
-			     journal_transaction_t *txn, uint32_t commit_loc)
+			     diskfs_transaction_t *txn, uint32_t commit_loc)
 {
   void *commit_buf = calloc (1, block_size);
   if (!commit_buf)
@@ -959,7 +949,7 @@ journal_write_commit_record (journal_t *journal,
 
 /* Cleans up the transaction. */
 static error_t
-journal_cleanup_transaction (journal_transaction_t *txn, error_t err)
+journal_cleanup_transaction (diskfs_transaction_t *txn, error_t err)
 {
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
@@ -979,7 +969,7 @@ journal_cleanup_transaction (journal_transaction_t *txn, error_t err)
  * journal lock to be held, and returns journal lock unlocked. */
 static error_t
 journal_commit_transaction_locked (journal_t *journal,
-				   journal_transaction_t *txn)
+				   diskfs_transaction_t *txn)
 {
   error_t err = 0;
   uint32_t commit_loc;
@@ -1059,7 +1049,7 @@ journal_commit_transaction_locked (journal_t *journal,
 error_t
 journal_commit_transaction (void)
 {
-  journal_transaction_t *txn;
+  diskfs_transaction_t *txn;
 
   JOURNAL_LOCK (ext2_journal);
   txn = ext2_journal->j_running_transaction;
@@ -1086,9 +1076,9 @@ journal_commit_transaction (void)
  * Returns 0 on success, or error code.
  */
 error_t
-journal_start_transaction (journal_transaction_t **out_txn)
+journal_start_transaction (diskfs_transaction_t **out_txn)
 {
-  journal_transaction_t *txn;
+  diskfs_transaction_t *txn;
 
   if (!ext2_journal)
     return EINVAL;
@@ -1118,7 +1108,7 @@ journal_start_transaction (journal_transaction_t **out_txn)
     }
   else
     {
-      txn = calloc (1, sizeof (journal_transaction_t));
+      txn = calloc (1, sizeof (diskfs_transaction_t));
       if (!txn)
 	{
 	  JOURNAL_UNLOCK (ext2_journal);
@@ -1141,23 +1131,19 @@ journal_start_transaction (journal_transaction_t **out_txn)
 
 static void
 journal_stop_transaction_locked (journal_t *journal,
-				 journal_transaction_t *txn)
+				 diskfs_transaction_t *txn)
 {
   if (txn->t_updates == 0)
-    {
       /* This implies a double-stop or corruption */
       ext2_panic ("[TRX] Logic Error: Transaction stopped too many times!");
-    }
   txn->t_updates--;
   if (txn->t_updates == 0)
-    {
       /* If anyone is sleeping in the commit loop waiting for this, wake them */
       pthread_cond_broadcast (&journal->j_commit_wait);
-    }
 }
 
 void
-journal_stop_transaction (journal_transaction_t *txn)
+journal_stop_transaction (diskfs_transaction_t *txn)
 {
   if (!ext2_journal || !txn)
     return;
@@ -1172,7 +1158,7 @@ journal_stop_transaction (journal_transaction_t *txn)
  * Performs a "Shadow Copy" of the data immediately.
  */
 error_t
-journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
+journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
 		     const void *data)
 {
   journal_buffer_t *jb;
@@ -1258,7 +1244,7 @@ journal_dirty_block (journal_transaction_t *txn, block_t fs_blocknr,
 int
 journal_block_is_active (block_t blocknr)
 {
-  journal_transaction_t *txn;
+  diskfs_transaction_t *txn;
   int is_active = 0;
 
   if (!ext2_journal)
@@ -1270,9 +1256,7 @@ journal_block_is_active (block_t blocknr)
   if (txn && txn->t_state == T_RUNNING)
     {
       if (hurd_ihash_find (&txn->t_buffer_map, (hurd_ihash_key_t) blocknr))
-	{
 	  is_active = 1;
-	}
     }
 
   JOURNAL_UNLOCK (ext2_journal);
@@ -1291,11 +1275,11 @@ diskfs_journal_start_transaction (void)
 {
   if (ext2_journal)
     {
-      journal_transaction_t *real_txn;
+      diskfs_transaction_t *real_txn;
       error_t err = journal_start_transaction (&real_txn);
       if (err)
 	return NULL;
-      return (diskfs_transaction_t *) real_txn;
+      return real_txn;
     }
   return NULL;
 }
@@ -1303,11 +1287,12 @@ diskfs_journal_start_transaction (void)
 void
 diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
 {
-  if (ext2_journal)
-    {
-      journal_transaction_t *real_txn = (journal_transaction_t *) txn;
-      journal_stop_transaction (real_txn);
-    }
+  if (!ext2_journal || !txn)
+    return;
+
+  JOURNAL_LOCK (ext2_journal);
+  journal_stop_transaction_locked (ext2_journal, txn);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 static void
@@ -1331,7 +1316,7 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
   if (!ext2_journal || !opaque_txn)
     return;
 
-  journal_transaction_t *txn = (journal_transaction_t *) opaque_txn;
+  diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
   uint32_t tid = txn->t_tid;
 
   JRNL_LOG_DEBUG ("Commiting tx id: %u.", txn->t_tid);

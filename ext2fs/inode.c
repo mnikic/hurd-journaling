@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <libdiskfs/diskfs.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
@@ -564,10 +565,9 @@ static struct ext2_inode *
 write_disknode_journaled (struct node *np, int wait)
 {
   error_t err;
-  journal_transaction_t *txn;
-  journal_start_transaction (&txn);
-  struct ext2_inode *di = write_node (np);
+  diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
 
+  struct ext2_inode *di = write_node (np);
   if (di)
    {
       unsigned long ino = np->dn_stat.st_ino;
@@ -576,14 +576,12 @@ write_disknode_journaled (struct node *np, int wait)
       JRNL_LOG_DEBUG ("Writing node %lu block num: %u.", ino, block_num);
       err = journal_dirty_block (txn, block_num, block_ptr);
       if (err)
-        {
            /* We modified the buffer, but failed to log it.
               The filesystem is now in a fragile state. */
            ext2_panic ("Journal write failed (Err: %d). FS is inconsistent.", err);
-        }
    }
-  journal_stop_transaction(txn);
-  // Commit happens at the top level, not here. And commit flushes to disk.
+  diskfs_journal_stop_transaction (txn);
+  // We only stop here. Commit happens at the top level.
   return di;
 }
 

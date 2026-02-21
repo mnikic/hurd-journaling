@@ -29,6 +29,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <libdiskfs/diskfs.h>
 
 #include "ext2fs.h"
 
@@ -48,7 +49,6 @@
 
 /* Opaque handle for the journal object */
 typedef struct journal journal_t;
-typedef struct journal_transaction journal_transaction_t;
 
 /* Initialize the journal subsystem using the inode provided (usually Inode 8). */
 journal_t *journal_create (struct node *journal_inode);
@@ -63,7 +63,7 @@ void journal_destroy (journal_t * journal);
  * Increments the transaction update count.
  */
 error_t
-journal_start_transaction (journal_transaction_t **out_txn);
+journal_start_transaction (diskfs_transaction_t **out_txn);
 
 
 /**
@@ -71,7 +71,7 @@ journal_start_transaction (journal_transaction_t **out_txn);
  * Performs a shadow copy of 'data' into the journal memory.
  */
 error_t
-journal_dirty_block (journal_transaction_t *txn, 
+journal_dirty_block (diskfs_transaction_t *txn, 
                      block_t fs_blocknr, 
                      const void *data);
 
@@ -80,7 +80,7 @@ journal_dirty_block (journal_transaction_t *txn,
  * When the count reaches zero, the transaction is eligible for commit.
  */
 void
-journal_stop_transaction (journal_transaction_t *txn);
+journal_stop_transaction (diskfs_transaction_t *txn);
 
 /**
  * Commit: Force the current running transaction to the log.
