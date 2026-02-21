@@ -184,7 +184,7 @@ inode_getblk (struct node *node, int nr, int create, int zero,
   node->dn_stat_dirty = 1;
 
   sync_pass = (diskfs_synchronous || 
-    diskfs_node_disknode (node)->info.i_osync) && !ext2_journal;
+    diskfs_node_disknode (node)->info.i_osync);
   diskfs_node_update (node, sync_pass);
 
   return 0;

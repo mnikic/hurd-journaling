@@ -1356,9 +1356,3 @@ diskfs_journal_commit_transaction (struct diskfs_transaction *opaque_txn)
   journal_wait_on_tid_locked (ext2_journal, tid);
   JOURNAL_UNLOCK (ext2_journal);
 }
-
-int
-diskfs_journal_is_running (void)
-{
-  return ext2_journal != NULL;
-}

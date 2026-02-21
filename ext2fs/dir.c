@@ -241,7 +241,7 @@ diskfs_lookup_hard (struct node *dp, const char *name, enum lookup_type type,
     }
 
   diskfs_set_node_atime (dp);
-  diskfs_node_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_node_update (dp, diskfs_synchronous);
 
   /* If err is set here, it's ENOENT, and we don't want to
      think about that as an error yet. */
@@ -704,7 +704,7 @@ diskfs_direnter_hard (struct node *dp, const char *name, struct node *np,
 	}
     }
 
-  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;
 }
@@ -742,7 +742,7 @@ diskfs_dirremove_hard (struct node *dp, struct dirstat *ds)
       && diskfs_node_disknode (dp)->dirents[ds->idx] != -1)
     diskfs_node_disknode (dp)->dirents[ds->idx]--;
 
-  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;
 }
@@ -768,7 +768,7 @@ diskfs_dirrewrite_hard (struct node *dp, struct node *np, struct dirstat *ds)
 
   munmap ((caddr_t) ds->mapbuf, ds->mapextent);
 
-  diskfs_file_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_file_update (dp, diskfs_synchronous);
 
   return 0;
 }
@@ -809,7 +809,7 @@ diskfs_dirempty (struct node *dp, struct protid *cred)
 	hit = 1;
     }
 
-  diskfs_node_update (dp, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_node_update (dp, diskfs_synchronous);
 
   munmap ((caddr_t) buf, dp->dn_stat.st_size);
 

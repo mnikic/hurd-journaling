@@ -523,8 +523,6 @@ void diskfs_journal_stop_transaction (struct diskfs_transaction *tx);
 
 void diskfs_journal_commit_transaction (struct diskfs_transaction *tx);
 
-int diskfs_journal_is_running (void);
-
 /* The user must define this function.  Sync the info in NP->dn_stat
    and any associated format-specific information to disk.  If WAIT is true,
    then return only after the physicial media has been completely updated. */

@@ -32,7 +32,6 @@ diskfs_S_dir_link (struct protid *dircred,
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   error_t err;
   struct diskfs_transaction *txn; 
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   if (!dircred)
     return EOPNOTSUPP;
@@ -111,7 +110,7 @@ diskfs_S_dir_link (struct protid *dircred,
     }
   np->dn_stat.st_nlink++;
   np->dn_set_ctime = 1;
-  diskfs_node_update (np, sync_pass);
+  diskfs_node_update (np, diskfs_synchronous);
 
   /* Attach it */
   if (tnp)
@@ -123,7 +122,7 @@ diskfs_S_dir_link (struct protid *dircred,
 	  /* Deallocate link on TNP */
 	  tnp->dn_stat.st_nlink--;
 	  tnp->dn_set_ctime = 1;
-	  diskfs_node_update (tnp, sync_pass);
+	  diskfs_node_update (tnp, diskfs_synchronous);
 	}
       diskfs_nput (tnp);
     }
@@ -132,14 +131,11 @@ diskfs_S_dir_link (struct protid *dircred,
 
   if (err)
     {
-      if (tnp->dn_stat.st_nlink > 0)
-      {
-	np->dn_stat.st_nlink--;
-	np->dn_set_ctime = 1;
-	diskfs_node_update (np, sync_pass);
-      }
+      np->dn_stat.st_nlink--;
+      np->dn_set_ctime = 1;
+      diskfs_node_update (np, diskfs_synchronous);
     }
-  diskfs_node_update (dnp, sync_pass);
+  diskfs_node_update (dnp, diskfs_synchronous);
 
   pthread_mutex_unlock (&dnp->lock);
   pthread_mutex_unlock (&np->lock);
@@ -147,7 +143,7 @@ diskfs_S_dir_link (struct protid *dircred,
     /* MiG won't do this for us, which it ought to. */
     mach_port_deallocate (mach_task_self (), filecred->pi.port_right);
 
-  if (diskfs_synchronous)
+  if (!err && diskfs_synchronous)
     diskfs_journal_commit_transaction (txn);
   else
     diskfs_journal_stop_transaction (txn);

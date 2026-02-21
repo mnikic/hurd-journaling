@@ -571,17 +571,12 @@ sync_global (int wait)
 EXT2FS_EI void
 alloc_sync (struct node *np)
 {
-  int wait;
-  if (diskfs_synchronous)
+  if (np)
     {
-      wait = !diskfs_journal_is_running ();
-      if (np)
-	{
-	  diskfs_node_update (np, wait);
-	  pokel_sync (&diskfs_node_disknode (np)->indir_pokel, wait);
-	}
-      diskfs_set_hypermetadata (wait, 0);
+      diskfs_node_update (np, diskfs_synchronous);
+      pokel_sync (&diskfs_node_disknode (np)->indir_pokel, diskfs_synchronous);
     }
+  diskfs_set_hypermetadata (diskfs_synchronous, 0);
 }
 #endif /* Use extern inlines.  */
 

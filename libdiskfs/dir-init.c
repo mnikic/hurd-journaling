@@ -30,7 +30,6 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   struct dirstat *ds = alloca (diskfs_dirstat_size);
   struct node *foo;
   error_t err;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();
 
   /* Fabricate a protid that represents root credentials. */
   static uid_t zero = 0;
@@ -46,14 +45,14 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   dp->dn_stat.st_nlink++;	/* for `.' */
   dp->dn_set_ctime = 1;
   err = diskfs_lookup (dp, ".", CREATE, &foo, ds, &lookupcred);
-  diskfs_node_update (dp, sync_pass);
+  diskfs_node_update (dp, diskfs_synchronous);
   assert_backtrace (err == ENOENT);
   err = diskfs_direnter (dp, ".", dp, ds, cred);
   if (err)
     {
       dp->dn_stat.st_nlink--;
       dp->dn_set_ctime = 1;
-      diskfs_node_update (dp, sync_pass);
+      diskfs_node_update (dp, diskfs_synchronous);
 
       return err;
     }
@@ -61,7 +60,7 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
   pdp->dn_stat.st_nlink++;	/* for `..' */
   pdp->dn_set_ctime = 1;
   err = diskfs_lookup (dp, "..", CREATE, &foo, ds, &lookupcred);
-  diskfs_node_update (pdp, sync_pass);
+  diskfs_node_update (pdp, diskfs_synchronous);
   assert_backtrace (err == ENOENT);
   err = diskfs_direnter (dp, "..", pdp, ds, cred);
   if (err)
@@ -69,14 +68,14 @@ diskfs_init_dir (struct node *dp, struct node *pdp, struct protid *cred)
       /* ROLLBACK '.' on Parent */
       pdp->dn_stat.st_nlink--;
       pdp->dn_set_ctime = 1;
-      diskfs_node_update (pdp, sync_pass);
+      diskfs_node_update (pdp, diskfs_synchronous);
       /* CLEANUP '.' on Child */
       dp->dn_stat.st_nlink--;
       dp->dn_set_ctime = 1;
-      diskfs_node_update (dp, sync_pass);
+      diskfs_node_update (dp, diskfs_synchronous);
       return err;
     }
 
-  diskfs_node_update (dp, sync_pass);
+  diskfs_node_update (dp, diskfs_synchronous);
   return 0;
 }

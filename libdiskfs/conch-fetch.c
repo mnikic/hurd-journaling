@@ -68,6 +68,5 @@ iohelp_fetch_shared_data (void *arg)
   cred->mapped->written = 0;
   cred->mapped->accessed = 0;
   if (mod)
-    diskfs_node_update (cred->po->np, 
-			diskfs_synchronous && !diskfs_journal_is_running ());
+    diskfs_node_update (cred->po->np, diskfs_synchronous);
 }
