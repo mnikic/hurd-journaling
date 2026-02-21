@@ -141,9 +141,8 @@ extern fshelp_fetch_root_callback2_t _diskfs_translator_callback2;
   txn = diskfs_journal_start_transaction ();				    \
   pthread_mutex_lock (&np->lock);					    \
   									    \
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running();       \
   (OPERATION);								    \
-  diskfs_node_update (np, sync_pass);					    \
+  diskfs_node_update (np, diskfs_synchronous);				    \
   									    \
   pthread_mutex_unlock (&np->lock);					    \
   if (diskfs_synchronous)						    \
