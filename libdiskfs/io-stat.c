@@ -34,7 +34,7 @@ diskfs_S_io_stat (struct protid *cred,
   pthread_mutex_lock (&np->lock);
 
   iohelp_get_conch (&np->conch);
-  diskfs_node_update (np, diskfs_synchronous && !diskfs_journal_is_running ());
+  diskfs_node_update (np, diskfs_synchronous);
 
   memcpy (statbuf, &np->dn_stat, sizeof (struct stat));
   statbuf->st_mode &= ~(S_IATRANS | S_IROOT);
