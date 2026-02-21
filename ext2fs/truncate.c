@@ -285,14 +285,12 @@ diskfs_truncate (struct node *node, off_t length)
 {
   error_t err;
   off_t offset;
-  int sync_pass;
 
   diskfs_check_readonly ();
   assert_backtrace (!diskfs_readonly);
 
   if (length >= node->dn_stat.st_size)
     return 0;
-  sync_pass = diskfs_synchronous && !ext2_journal;
 
   if (! node->dn_stat.st_blocks
       && !S_ISREG (node->dn_stat.st_mode)
@@ -317,7 +315,7 @@ diskfs_truncate (struct node *node, off_t length)
       node->dn_stat.st_size = length;
       node->dn_set_mtime = 1;
       node->dn_set_ctime = 1;
-      diskfs_node_update (node, sync_pass);
+      diskfs_node_update (node, diskfs_synchronous);
       return 0;
     }
 
@@ -333,7 +331,7 @@ diskfs_truncate (struct node *node, off_t length)
       diskfs_node_rdwr (node, (void *)zeroblock, length, block_size - offset,
 			1, 0, 0);
       /* Make sure that really happens to avoid leaks.  */
-      diskfs_file_update (node, sync_pass);
+      diskfs_file_update (node, diskfs_synchronous);
     }
 
   ext2_discard_prealloc (node);
@@ -347,7 +345,7 @@ diskfs_truncate (struct node *node, off_t length)
   node->dn_stat.st_size = length;
   node->dn_set_mtime = 1;
   node->dn_set_ctime = 1;
-  diskfs_node_update (node, sync_pass);
+  diskfs_node_update (node, diskfs_synchronous);
 
   err = diskfs_catch_exception ();
   if (!err)
@@ -388,6 +386,6 @@ diskfs_truncate (struct node *node, off_t length)
 
   pthread_rwlock_unlock (&diskfs_node_disknode (node)->alloc_lock);
 
-  diskfs_node_update (node, sync_pass);
+  diskfs_node_update (node, diskfs_synchronous);
   return err;
 }

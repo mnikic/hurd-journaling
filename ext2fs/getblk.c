@@ -37,7 +37,6 @@
 
 #include <string.h>
 #include "ext2fs.h"
-#include "journal.h"
 
 /*
  * ext2_discard_prealloc and ext2_alloc_block are atomic wrt. the
