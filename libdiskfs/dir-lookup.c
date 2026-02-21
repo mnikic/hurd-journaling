@@ -205,11 +205,8 @@ diskfs_S_dir_lookup (struct protid *dircred,
 	      mode &= ~(S_IFMT | S_ISPARE | S_ISVTX | S_ITRANS);
 	      mode |= S_IFREG;
 	      err = diskfs_create_node (dnp, filename, mode, &np, dircred, ds);
-	      if (diskfs_synchronous && !diskfs_journal_is_running ())
-		{
-		  diskfs_file_update (dnp, 1);
-		  diskfs_file_update (np, 1);
-		}
+	      diskfs_file_update (dnp, diskfs_synchronous);
+	      diskfs_file_update (np, diskfs_synchronous);
 	      newnode = 1;
 	    }
 	  else
@@ -574,7 +571,7 @@ diskfs_S_dir_lookup (struct protid *dircred,
     ports_port_deref (newpi);
   if (newpo)
     diskfs_release_peropen (newpo);
-  if (!err && diskfs_synchronous)
+  if (newnode && !err && diskfs_synchronous)
     diskfs_journal_commit_transaction (txn);
   else
     diskfs_journal_stop_transaction (txn);
