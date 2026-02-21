@@ -38,7 +38,7 @@ void
 diskfs_drop_node (struct node *np)
 {
   mode_t savemode;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
+  struct diskfs_transaction *txn = diskfs_journal_start_transaction ();
 
   /* XXX: if the filesystem is readonly, we cannot remove the files with no link
      but e.g. memory mapping still in memory.  This notably happens when
@@ -65,6 +65,8 @@ diskfs_drop_node (struct node *np)
 	     will notice that the size is zero, and not have to
 	     do anything. */
 	  refcounts_unsafe_ref (&np->refcounts, NULL);
+	  /* Stop the transaction before we return! */
+	  diskfs_journal_stop_transaction (txn);
 	  diskfs_truncate (np, 0);
 	  
 	  /* Force allocsize to zero; if truncate consistently fails this
@@ -81,11 +83,11 @@ diskfs_drop_node (struct node *np)
       np->dn_stat.st_mode = 0;
       np->dn_stat.st_rdev = 0;
       np->dn_set_ctime = np->dn_set_atime = 1;
-      diskfs_node_update (np, sync_pass);
+      diskfs_node_update (np, diskfs_synchronous);
       diskfs_free_node (np, savemode);
     }
   else
-    diskfs_node_update (np, sync_pass);
+    diskfs_node_update (np,  diskfs_synchronous);
 
   fshelp_drop_transbox (&np->transbox);
 
@@ -97,6 +99,10 @@ diskfs_drop_node (struct node *np)
   assert_backtrace (!np->sockaddr);
 
   pthread_mutex_unlock(&np->lock);
+  if (diskfs_synchronous)
+    diskfs_journal_commit_transaction (txn);
+  else
+    diskfs_journal_stop_transaction (txn);
   pthread_mutex_destroy(&np->lock);
   diskfs_node_norefs (np);
 }

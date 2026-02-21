@@ -37,7 +37,6 @@ diskfs_node_rdwr (struct node *np,
                   mach_msg_type_number_t *amtread)
 {
   error_t err;
-  int sync_pass = diskfs_synchronous && !diskfs_journal_is_running ();
 
   iohelp_get_conch (&np->conch);
 
@@ -70,9 +69,9 @@ diskfs_node_rdwr (struct node *np,
   if (*amtread)
     {
       if (dir)
-	diskfs_file_update (np, sync_pass);
+	diskfs_file_update (np, diskfs_synchronous);
       else
-	diskfs_node_update (np, sync_pass);
+	diskfs_node_update (np, diskfs_synchronous);
     }
 
   return err;
