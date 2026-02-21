@@ -58,15 +58,6 @@ void journal_destroy (journal_t * journal);
 
 
 /**
- * Start tx: Ensure a valid running transaction exists.
- * Must be called before modifying any metadata.
- * Increments the transaction update count.
- */
-error_t
-journal_start_transaction (diskfs_transaction_t **out_txn);
-
-
-/**
  * Mark dirty: Add a modified filesystem block to the given transaction.
  * Performs a shadow copy of 'data' into the journal memory.
  */
@@ -74,13 +65,6 @@ error_t
 journal_dirty_block (diskfs_transaction_t *txn, 
                      block_t fs_blocknr, 
                      const void *data);
-
-/**
- * Stop tx: Decrement the transaction update count.
- * When the count reaches zero, the transaction is eligible for commit.
- */
-void
-journal_stop_transaction (diskfs_transaction_t *txn);
 
 /**
  * Commit: Force the current running transaction to the log.

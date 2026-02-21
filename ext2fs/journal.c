@@ -1075,7 +1075,7 @@ journal_commit_transaction (void)
  * Ensures there is a VALID running transaction to attach to.
  * Returns 0 on success, or error code.
  */
-error_t
+static error_t
 journal_start_transaction (diskfs_transaction_t **out_txn)
 {
   diskfs_transaction_t *txn;
@@ -1140,17 +1140,6 @@ journal_stop_transaction_locked (journal_t *journal,
   if (txn->t_updates == 0)
       /* If anyone is sleeping in the commit loop waiting for this, wake them */
       pthread_cond_broadcast (&journal->j_commit_wait);
-}
-
-void
-journal_stop_transaction (diskfs_transaction_t *txn)
-{
-  if (!ext2_journal || !txn)
-    return;
-
-  JOURNAL_LOCK (ext2_journal);
-  journal_stop_transaction_locked (ext2_journal, txn);
-  JOURNAL_UNLOCK (ext2_journal);
 }
 
 /**
