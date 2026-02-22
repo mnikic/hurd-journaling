@@ -201,7 +201,9 @@ typedef struct journal
 
   uint32_t j_last_committed_tid;	/* Transaction ID of the last committed txn. */
   pthread_cond_t j_commit_done;	/* Cond. var. while waiting for the tx to be committed. */
+
   int j_must_exit;		/* variable that tells journal thread when to stop. */
+  pthread_cond_t j_flusher_wakeup;   /* Cond. var for the kjournald sleep cycle */
 
   /* Pre-allocated buffers for zero-allocation commits */
   void *j_descriptor_buf;
@@ -289,11 +291,21 @@ static void *
 kjournald_thread (void *arg)
 {
   journal_t *journal = (journal_t *) arg;
+  struct timespec ts;
+  /* Initial sleep to give FS chance to boot up without extra
+   * pressure from committing. */
   sleep (120);
-  while (1)
-    {
-      sleep (5);
 
+  JOURNAL_LOCK (journal);
+  while (!journal->j_must_exit)
+    {
+      clock_gettime (CLOCK_REALTIME, &ts);
+      ts.tv_sec += 5;
+
+      pthread_cond_timedwait (&journal->j_flusher_wakeup, &journal->j_state_lock, &ts);
+
+      if (journal->j_must_exit)
+        break;
       if (diskfs_readonly)
 	continue;
 
@@ -307,9 +319,12 @@ kjournald_thread (void *arg)
 			  journal->j_transaction_sequence, journal->j_head,
 			  journal->j_first, journal->j_last);
 
+	  JOURNAL_UNLOCK (journal);
 	  journal_commit_running_transaction ();
+	  JOURNAL_LOCK (journal);
 	}
     }
+  JOURNAL_UNLOCK (journal);
   return NULL;
 }
 
@@ -857,6 +872,7 @@ journal_create (struct node *journal_inode)
   pthread_cond_init (&j->j_commit_done, NULL);
   pthread_mutex_init (&j->j_state_lock, NULL);
   pthread_cond_init (&j->j_commit_wait, NULL);
+  pthread_cond_init (&j->j_flusher_wakeup, NULL);
   j->j_must_exit = 0;
   if (pthread_create (&kjournald_tid, NULL, kjournald_thread, j) != 0)
     JRNL_LOG_DEBUG ("Failed to create a flusher thread.");
@@ -870,6 +886,7 @@ journal_destroy (journal_t *journal)
 {
   JOURNAL_LOCK (journal);
   journal->j_must_exit = 1;
+  pthread_cond_broadcast (&journal->j_flusher_wakeup);
   pthread_cond_broadcast (&journal->j_commit_wait);
   JOURNAL_UNLOCK (journal);
 
