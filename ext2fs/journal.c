@@ -258,7 +258,8 @@ destroy_map (journal_t *journal)
     diskfs_nput (journal->map.inode);
 }
 
-void
+#if JOURNAL_DEBUG
+static void
 journal_debug_dump_head (journal_t *journal)
 {
   diskfs_transaction_t *txn = journal->j_checkpoint_list;
@@ -281,9 +282,13 @@ journal_debug_dump_head (journal_t *journal)
     JRNL_LOG_DEBUG ("   [STUCK] Waiting for Block %u", jb->jb_blocknr);
   }
 
-
   JRNL_LOG_DEBUG ("===============================");
 }
+#else
+static void
+journal_debug_dump_head (journal_t *journal)
+{}
+#endif
 
 static void *
 kjournald_thread (void *arg)
@@ -1039,7 +1044,6 @@ journal_clear_checkpoint_list_locked (journal_t *journal)
 
   journal_update_superblock (journal, journal->j_transaction_sequence,
 			     journal->j_tail);
-  flush_to_disk ();
 }
 
 /**
@@ -1057,6 +1061,9 @@ journal_force_checkpoint_locked (journal_t *journal)
   JOURNAL_LOCK (journal);
 
   journal_clear_checkpoint_list_locked (journal);
+  JOURNAL_UNLOCK (journal);
+  flush_to_disk ();
+  JOURNAL_LOCK (journal);
   pthread_cond_broadcast (&journal->j_space_available);
 
   JRNL_LOG_DEBUG ("[CHECKPOINT] Space reclaimed. Free: %u. Tail: %u",
@@ -1274,6 +1281,7 @@ journal_commit_transaction_locked (journal_t *journal,
   /* Ensure Commit is persistent */
   flush_to_disk ();
 
+  int need_sb_flush = 0;
   JRNL_LOG_DEBUG("About to acquire lock for the second time for tx %u", txn->t_tid);
   /* Finalize Metadata */
   JOURNAL_LOCK (journal);
@@ -1283,7 +1291,7 @@ journal_commit_transaction_locked (journal_t *journal,
     {
       journal->j_tail = txn->t_log_start;
       journal_update_superblock (journal, txn->t_tid, journal->j_tail);
-      flush_to_disk ();
+      need_sb_flush = 1;
     }
   journal->j_last_committed_tid = txn->t_tid;
 
@@ -1311,6 +1319,8 @@ journal_commit_transaction_locked (journal_t *journal,
   /* Wake up everyone waiting in journal_wait_on_tid */
   pthread_cond_broadcast (&journal->j_commit_done);
   JOURNAL_UNLOCK (journal);
+  if (need_sb_flush)
+    flush_to_disk ();
 
   JRNL_LOG_DEBUG ("Done done with tx id: %u", txn->t_tid);
   journal_forget_freed_blocks (txn);
