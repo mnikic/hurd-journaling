@@ -207,6 +207,10 @@ typedef struct journal
   pthread_cond_t j_commit_done;	/* Cond. var. while waiting for the tx to be committed. */
   pthread_cond_t j_space_available;	/* Cond. var when a new space has been created. */
   int j_must_exit;		/* variable that tells journal thread when to stop. */
+
+  /* Pre-allocated buffers for zero-allocation commits */
+  void *j_descriptor_buf;
+  void *j_commit_buf;
 } journal_t;
 
 static void
@@ -285,6 +289,7 @@ static void *
 kjournald_thread (void *arg)
 {
   journal_t *journal = (journal_t *) arg;
+  sleep (120);
   while (1)
     {
       sleep (5);
@@ -303,6 +308,7 @@ kjournald_thread (void *arg)
 			  journal->j_first, journal->j_last);
 
 	  journal_commit_running_transaction ();
+	  JRNL_LOG_DEBUG("Going back to sleep");
 	}
     }
   return NULL;
@@ -804,9 +810,9 @@ journal_notify_block_written (block_t blocknr)
       JOURNAL_UNLOCK (ext2_journal);
       flush_to_disk ();
       pthread_cond_broadcast (&ext2_journal->j_space_available);
+      return;
     }
-  else
-    JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 /**
@@ -824,12 +830,39 @@ journal_notify_blocks_written (block_t start_block, size_t n_blocks)
 		  n_blocks, start_block);
   JOURNAL_LOCK (ext2_journal);
 
-  /* NOTE: We strictly DO NOT check j_running_transaction or 
-   * j_committing_transaction here! Because of the ensure barrier, any block
-   * in those states was re-dirtied asynchronously during the physical disk I/O.
-   * We must leave them pinned to guarantee the newer data is eventually logged.
-   */
+  /* Check Running Transaction (To catch blocks dirtied during physical I/O) */
+  diskfs_transaction_t *run = ext2_journal->j_running_transaction;
+  if (run)
+    {
+      for (size_t i = 0; i < n_blocks; i++)
+        {
+          block_t b = start_block + i;
+          if (hurd_ihash_remove (&run->t_buffer_map, (hurd_ihash_key_t) b))
+            {
+              if (run->t_outstanding_io > 0)
+                run->t_outstanding_io--;
+              JRNL_LOG_DEBUG ("[NOTIFY] Early flush caught block %u in RUNNING Txn %u!",
+                              b, run->t_tid);
+            }
+        }
+    }
 
+  /* Check Committing Transaction */
+  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+  if (commit)
+    {
+      for (size_t i = 0; i < n_blocks; i++)
+        {
+          block_t b = start_block + i;
+          if (hurd_ihash_remove (&commit->t_buffer_map, (hurd_ihash_key_t) b))
+            {
+              if (commit->t_outstanding_io > 0)
+                commit->t_outstanding_io--;
+              JRNL_LOG_DEBUG ("[NOTIFY] Caught block %u in COMMITTING Txn %u!",
+                              b, commit->t_tid);
+            }
+        }
+    }
   /* Iterate over checkpoint list to find who owns these blocks */
   diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
 
@@ -889,11 +922,11 @@ journal_notify_blocks_written (block_t start_block, size_t n_blocks)
       JOURNAL_UNLOCK (ext2_journal);
       flush_to_disk ();
       pthread_cond_broadcast (&ext2_journal->j_space_available);
+      return;
     }
-  else
-    {
-      JOURNAL_UNLOCK (ext2_journal);
-    }
+  JRNL_LOG_DEBUG ("Done with notification for %zu blocks starting at %u",
+		  n_blocks, start_block);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 journal_t *
@@ -918,6 +951,10 @@ journal_create (struct node *journal_inode)
   if (j->j_max_transaction_buffers < JRNL_MIN_BATCH_BLOCKS)
     j->j_max_transaction_buffers = JRNL_MIN_BATCH_BLOCKS;
   j->j_min_free = j->j_max_transaction_buffers + JRNL_METADATA_OVERHEAD;
+  j->j_descriptor_buf = malloc (block_size);
+  j->j_commit_buf = malloc (block_size);
+  if (!j->j_descriptor_buf || !j->j_commit_buf)
+    ext2_panic ("[JOURNAL] No RAM for commit buffers!");
 
   if (journal_load_superblock (j) != 0)
     ext2_panic ("[JOURNAL] Failed to load superblock!");
@@ -953,6 +990,10 @@ journal_destroy (journal_t *journal)
 
   if (journal->j_sb_buffer)
     free (journal->j_sb_buffer);
+  if (journal->j_descriptor_buf)
+    free (journal->j_descriptor_buf);
+  if (journal->j_commit_buf)
+    free (journal->j_commit_buf);
 
   free (journal);
 }
@@ -1058,9 +1099,8 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
 {
   if (txn->t_buffers == NULL)
     return 0;
-  void *descriptor_buf = calloc (1, block_size);
-  if (!descriptor_buf)
-    return ENOMEM;
+  void *descriptor_buf = journal->j_descriptor_buf;
+  memset (descriptor_buf, 0, block_size);
 
   setup_header (descriptor_buf, txn, JBD2_DESCRIPTOR_BLOCK);
 
@@ -1126,7 +1166,7 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
     }
 
   /* Write Descriptor */
-  JRNL_LOG_DEBUG ("[COMMIT] Writing final Descriptor to %u", descriptor_loc);
+  JRNL_LOG_DEBUG ("[COMMIT] Writing final Descriptor for tx %u to %u", txn->t_tid, descriptor_loc);
   err = journal_write_block (journal, descriptor_loc, descriptor_buf);
   if (err)
     goto err_out;
@@ -1142,8 +1182,8 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
       p = p->jb_next;
     }
 
+  JRNL_LOG_DEBUG ("[COMMIT] Done with final Descriptor for tx %u to %u", txn->t_tid, descriptor_loc);
 err_out:
-  free (descriptor_buf);
   return err;
 }
 
@@ -1152,13 +1192,10 @@ static error_t
 journal_write_commit_record (journal_t *journal,
 			     diskfs_transaction_t *txn, uint32_t commit_loc)
 {
-  void *commit_buf = calloc (1, block_size);
-  if (!commit_buf)
-    return ENOMEM;
-
+  void *commit_buf = journal->j_commit_buf;
+  memset (commit_buf, 0, block_size);
   setup_header (commit_buf, txn, JBD2_COMMIT_BLOCK);
   error_t err = journal_write_block (journal, commit_loc, commit_buf);
-  free (commit_buf);
   return err;
 }
 
@@ -1221,23 +1258,27 @@ journal_commit_transaction_locked (journal_t *journal,
   /* Write Data (I/O) */
   err = journal_write_payload (journal, txn);
   if (err)
-    return journal_cleanup_transaction (txn, err);
+    goto abort_commit;
 
   /* Ensure Data is on disk */
   flush_to_disk ();
 
   commit_loc = journal_next_log_block_safe (journal);
+  JRNL_LOG_DEBUG("About to write commit record for tx %u", txn->t_tid);
   /* Write Commit Record */
   err = journal_write_commit_record (journal, txn, commit_loc);
   if (err)
-    return journal_cleanup_transaction (txn, err);
+    goto abort_commit;
 
+  JRNL_LOG_DEBUG("DOne with the commit record for tc %u", txn->t_tid);
   /* Ensure Commit is persistent */
   flush_to_disk ();
 
+  JRNL_LOG_DEBUG("About to acquire lock for the second time for tx %u", txn->t_tid);
   /* Finalize Metadata */
   JOURNAL_LOCK (journal);
 
+  JRNL_LOG_DEBUG("Acqired lock for the second time for tx %u", txn->t_tid);
   if (journal->j_tail == 0)
     {
       journal->j_tail = txn->t_log_start;
@@ -1274,6 +1315,15 @@ journal_commit_transaction_locked (journal_t *journal,
   JRNL_LOG_DEBUG ("Done done with tx id: %u", txn->t_tid);
   journal_forget_freed_blocks (txn);
   return 0;
+abort_commit:
+  /* We hit a physical I/O error. We must clear the pipeline slot and wake 
+     up any sleeping threads so they don't deadlock, before we free the txn. */
+  JOURNAL_LOCK (journal);
+  journal->j_committing_transaction = NULL;
+  pthread_cond_broadcast (&journal->j_commit_done);
+  JOURNAL_UNLOCK (journal);
+
+  return journal_cleanup_transaction (txn, err);
 }
 
 error_t
@@ -1283,7 +1333,9 @@ journal_commit_running_transaction (void)
     return 0;
   diskfs_transaction_t *txn;
 
+  JRNL_LOG_DEBUG ("Getting the lock. committing tx is null: %i", ext2_journal->j_committing_transaction == NULL);
   JOURNAL_LOCK (ext2_journal);
+  JRNL_LOG_DEBUG ("Got the lock.");
   txn = ext2_journal->j_running_transaction;
 
   if (!txn || txn->t_state != T_RUNNING)
@@ -1297,6 +1349,10 @@ journal_commit_running_transaction (void)
       JOURNAL_UNLOCK (ext2_journal);
       return 0;
     }
+  while (ext2_journal->j_committing_transaction != NULL)
+    JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
+
+  JRNL_LOG_DEBUG ("After journal_wait");
   ext2_journal->j_running_transaction = NULL;
   ext2_journal->j_committing_transaction = txn;
   txn->t_state = T_LOCKED;
@@ -1390,13 +1446,6 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   if (!ext2_journal || !txn || !data)
     return EINVAL;
 
-  if (modified_global_blocks)
-    {
-      JRNL_LOG_DEBUG ("About to set bit for block %u", fs_blocknr);
-      pthread_spin_lock (&modified_global_blocks_lock);
-      set_bit (fs_blocknr, modified_global_blocks);
-      pthread_spin_unlock (&modified_global_blocks_lock);
-    }
   JOURNAL_LOCK (ext2_journal);
 
   if (txn->t_state != T_RUNNING)
@@ -1479,11 +1528,11 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
  * Called by the pager BEFORE writing blocks to their permanent home.
  * Enforces WAL ordering for a range of blocks.
  */
-error_t
+void
 journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
 {
   if (!ext2_journal || n_blocks == 0)
-    return 0;
+    return;
 
   JOURNAL_LOCK (ext2_journal);
 
@@ -1491,59 +1540,63 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
   diskfs_transaction_t *run = ext2_journal->j_running_transaction;
   uint32_t wait_tid = 0;
   int force_commit = 0;
+  int in_committing = 0;
 
   for (size_t i = 0; i < n_blocks; i++)
     {
       block_t b = start_block + i;
 
-      /* If ANY block is in the running transaction, we must force a commit.
-         This is the strictest requirement, so we can stop searching immediately! */
+      /* If ANY block is in the running transaction, we must force a commit. */
       if (run && hurd_ihash_find (&run->t_buffer_map, (hurd_ihash_key_t) b))
-	{
-	  force_commit = 1;
-	  wait_tid = run->t_tid;
-	  break;		/* No need to check the rest of the blocks */
-	}
-      /* If it's committing, we need to wait, but keep checking in case 
-         a later block in this cluster is actually in the RUNNING state. */
-      else if (commit
-	       && hurd_ihash_find (&commit->t_buffer_map,
-				   (hurd_ihash_key_t) b))
-	{
-	  if (wait_tid == 0)
-	    wait_tid = commit->t_tid;
-	}
+        {
+          force_commit = 1;
+          wait_tid = run->t_tid;
+          break;        /* No need to check the rest of the blocks */
+        }
+      /* Keep checking in case a later block is in the RUNNING state. */
+      else if (commit && hurd_ihash_find (&commit->t_buffer_map, (hurd_ihash_key_t) b))
+        {
+          if (wait_tid == 0) wait_tid = commit->t_tid;
+          in_committing = 1;
+        }
     }
+
+  /* === THE MICROKERNEL PAGER RULE === */
+  /* The Mach VM Pager CANNOT sleep waiting for a VFS thread or a journal thread.
+     If it does, and that thread attempts to allocate memory, the OS will permanently deadlock. 
+     Therefore, if the journal is not instantly ready to commit, we MUST bypass the WAL 
+     barrier and write directly to the main disk. */
 
   if (force_commit)
     {
-      if (run->t_updates > 0)
+      /* If VFS is mutating the transaction, or the disk pipeline is already full, 
+         we cannot commit right now. Bail out and bypass! */
+      if (run->t_updates > 0 || commit != NULL)
         {
-          /* PAGER DEADLOCK AVOIDANCE!
-           * VFS threads are actively mutating this transaction. If we block the 
-           * pager waiting for them, and they are waiting for the pager to free RAM,
-           * the system will hang. Tell the VM to back off and try again later. */
+          JRNL_LOG_DEBUG ("[WARN] VM Deadlock Hazard! Bypassing WAL for RUNNING TID %u", wait_tid);
           JOURNAL_UNLOCK (ext2_journal);
-          return EAGAIN; 
+          return; /* Returns immediately! No sleeping! */
         }
-      JRNL_LOG_DEBUG
-	("Pager hit RUNNING block in cluster [%u-%u]. Forcing commit TID %u",
-	 start_block, (uint32_t) (start_block + n_blocks - 1), wait_tid);
 
+      /* It is perfectly safe. The Pager will drive the commit synchronously right now. */
+      JRNL_LOG_DEBUG ("Pager forcing synchronous commit for TID %u", wait_tid);
       ext2_journal->j_running_transaction = NULL;
       ext2_journal->j_committing_transaction = run;
       run->t_state = T_LOCKED;
-      return journal_commit_transaction_locked (ext2_journal, run);
+      
+      journal_commit_transaction_locked (ext2_journal, run);
+      return;
     }
-  else if (wait_tid > 0)
+  else if (in_committing)
     {
-      JRNL_LOG_DEBUG
-	("Pager hit COMMITTING block in cluster [%u-%u]. Sleeping on TID %u",
-	 start_block, (uint32_t) (start_block + n_blocks - 1), wait_tid);
-      journal_wait_on_tid_locked (ext2_journal, wait_tid);
+      /* The block is actively being written to the log by another thread. 
+         We cannot wait for it. Bail out and bypass! */
+      JRNL_LOG_DEBUG ("[WARN] VM Deadlock Hazard! Bypassing WAL for COMMITTING TID %u", wait_tid);
+      JOURNAL_UNLOCK (ext2_journal);
+      return; /* Returns immediately! No sleeping! */
     }
+
   JOURNAL_UNLOCK (ext2_journal);
-  return 0;
 }
 
 diskfs_transaction_t *
@@ -1598,6 +1651,8 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
      If it is, We "steal" it and become the committer. */
   if (ext2_journal->j_running_transaction == txn)
     {
+      while (ext2_journal->j_committing_transaction != NULL)
+        JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
       ext2_journal->j_running_transaction = NULL;
       ext2_journal->j_committing_transaction = txn;
       txn->t_state = T_LOCKED;

@@ -328,9 +328,7 @@ pending_blocks_write (struct pending_blocks *pb)
       ext2_debug ("writing block %u[%ld]", pb->block, pb->num);
 
       /* Lets make sure these are all already committed. */
-      err = journal_ensure_blocks_journaled (pb->block, pb->num);
-      if (err) 
-	return err;
+      journal_ensure_blocks_journaled (pb->block, pb->num);
 
       if (pb->offs > 0)
 	/* Put what we're going to write into a page-aligned buffer.  */
@@ -489,13 +487,12 @@ file_pager_write_pages (struct node *node,
 	  blk_peek = 0;
 	}
 
+      pthread_rwlock_unlock (lock);
       /* Flush exactly one coalesced run; even if the loop broke early,
          we may have a valid prefix to push.  */
       error_t werr = pending_blocks_write (&pb);
       if (!err)
 	err = werr;
-
-      pthread_rwlock_unlock (lock);
 
       /* Advance only by what we actually enumerated and flushed.  */
       done += built;
@@ -578,10 +575,10 @@ file_pager_write_page (struct node *node, vm_offset_t offset, void *buf)
       left -= block_size;
     }
 
+  if (lock)
+    pthread_rwlock_unlock (lock);
   if (!err)
     pending_blocks_write (&pb);
-
-  pthread_rwlock_unlock (&diskfs_node_disknode (node)->alloc_lock);
 
   return err;
 }

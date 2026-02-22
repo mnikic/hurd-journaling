@@ -76,7 +76,7 @@ journal_record_freed_blocks (block_t start, unsigned long count);
  * Called by the pager BEFORE writing blocks to their permanent home.
  * Enforces WAL ordering for a range of blocks.
  */
-error_t journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks);
+void journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks);
 
 /**
  * Force the current running transaction to the log if journaling
