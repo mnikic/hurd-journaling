@@ -113,13 +113,7 @@ ext2_free_blocks (block_t block, unsigned long count)
 		    "block = %u, count = %lu",
 		    block, count);
 
-      if (ext2_journal)
-        {
-          for (i = 0; i < gcount; i++)
-            {
-              journal_notify_block_written (block + i);
-            }
-        }
+      journal_record_freed_blocks (block, gcount);
       for (i = 0; i < gcount; i++)
 	{
 	  if (!clear_bit (bit + i, bh))

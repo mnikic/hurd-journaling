@@ -125,6 +125,13 @@ typedef enum
   T_FINISHED			/* Done, waiting to be checkpointed */
 } transaction_state_t;
 
+typedef struct journal_freed_extent
+{
+  block_t fe_start;
+  unsigned long fe_count;
+  struct journal_freed_extent *fe_next;
+} journal_freed_extent_t;
+
 /* The Transaction Object */
 struct diskfs_transaction
 {
@@ -153,6 +160,8 @@ struct diskfs_transaction
 
   struct diskfs_transaction *t_checkpoint_next;	/* Next in global checkpoint list */
   int t_outstanding_io;
+
+  journal_freed_extent_t *t_freed_blocks;          /* Blocks deleted in this txn */
 
   /* Timing/Debug */
   long t_start_time;
@@ -293,7 +302,7 @@ kjournald_thread (void *arg)
 			  journal->j_transaction_sequence, journal->j_head,
 			  journal->j_first, journal->j_last);
 
-	  journal_commit_transaction ();
+	  journal_commit_running_transaction ();
 	}
     }
   return NULL;
@@ -532,6 +541,57 @@ journal_get_oldest_transaction_locked (journal_t *journal)
 }
 
 /**
+ * Records a range of deleted blocks so they can be unpinned from older 
+ * checkpoint lists AFTER this transaction safely commits.
+ */
+void
+journal_record_freed_blocks (block_t start, unsigned long count)
+{
+  if (!ext2_journal)
+    return;
+
+  journal_freed_extent_t *ext = malloc (sizeof (journal_freed_extent_t));
+  if (!ext)
+    ext2_panic ("[JOURNAL] No RAM for freed blocks extent");
+
+  ext->fe_start = start;
+  ext->fe_count = count;
+
+  JOURNAL_LOCK (ext2_journal);
+  diskfs_transaction_t *txn = ext2_journal->j_running_transaction;
+  if (!txn || txn->t_state != T_RUNNING)
+    {
+      /* The transaction was committed by another thread before we locked! 
+         We just drop the recording, since the block is already forgotten. */
+      JOURNAL_UNLOCK (ext2_journal);
+      free (ext);
+      return;
+    }
+  ext->fe_next = txn->t_freed_blocks;
+  txn->t_freed_blocks = ext;
+  JOURNAL_UNLOCK (ext2_journal);
+}
+
+/**
+ * Consumes the freed blocks list and unpins them from older transactions.
+ * Called immediately after the commit block hits the disk.
+ */
+static void
+journal_forget_freed_blocks (diskfs_transaction_t *txn)
+{
+  journal_freed_extent_t *ext = txn->t_freed_blocks;
+  txn->t_freed_blocks = NULL; 
+
+  while (ext)
+    {
+      journal_freed_extent_t *next = ext->fe_next;
+      journal_notify_blocks_written (ext->fe_start, ext->fe_count);
+      free (ext);
+      ext = next;
+    }
+}
+
+/**
  * Frees the SHADOW copies of data to save RAM, but keeps the
  * transaction struct and metadata alive for tracking.
  */
@@ -552,12 +612,23 @@ journal_strip_transaction (diskfs_transaction_t *txn)
   /* NOTE: We do NOT destroy t_buffer_map yet! */
 }
 
-/* * Fully destroys the transaction structure.
+/**
+ * Fully destroys the transaction structure.
  * Called only when checkpointing is 100% complete.
  */
 static void
 journal_free_transaction (diskfs_transaction_t *txn)
 {
+  if (!txn)
+    return;
+  journal_freed_extent_t *ext = txn->t_freed_blocks;
+  while (ext)
+    {
+      journal_freed_extent_t *next = ext->fe_next;
+      free (ext);
+      ext = next;
+    }
+  txn->t_freed_blocks = NULL;
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
     {
@@ -736,6 +807,93 @@ journal_notify_block_written (block_t blocknr)
     }
   else
     JOURNAL_UNLOCK (ext2_journal);
+}
+
+/**
+ * Called by the Pager (store_write hook) after writing blocks to the main disk.
+ * Bulk version to handle clustered pageouts efficiently.
+ */
+void
+journal_notify_blocks_written (block_t start_block, size_t n_blocks)
+{
+  int sb_changed = 0;
+  if (!ext2_journal || n_blocks == 0)
+    return;
+
+  JRNL_LOG_DEBUG ("Got notification for %zu blocks starting at %u",
+		  n_blocks, start_block);
+  JOURNAL_LOCK (ext2_journal);
+
+  /* NOTE: We strictly DO NOT check j_running_transaction or 
+   * j_committing_transaction here! Because of the ensure barrier, any block
+   * in those states was re-dirtied asynchronously during the physical disk I/O.
+   * We must leave them pinned to guarantee the newer data is eventually logged.
+   */
+
+  /* Iterate over checkpoint list to find who owns these blocks */
+  diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
+
+  while (txn)
+    {
+      /* Fast-path cleanup for empty transactions lingering at the head */
+      if (txn->t_outstanding_io == 0
+	  && txn == ext2_journal->j_checkpoint_list)
+	{
+	  if (journal_try_advance_tail_locked (ext2_journal))
+	    sb_changed = 1;
+	  txn = ext2_journal->j_checkpoint_list;
+	  continue;
+	}
+
+      /* Check all blocks in this notification against this transaction */
+      for (size_t i = 0; i < n_blocks && txn->t_outstanding_io > 0; i++)
+	{
+	  block_t b = start_block + i;
+	  if (hurd_ihash_remove (&txn->t_buffer_map, (hurd_ihash_key_t) b))
+	    {
+	      txn->t_outstanding_io--;
+	      JRNL_LOG_DEBUG
+		("For tx %u block %u the outstanding count is %u", txn->t_tid,
+		 b, txn->t_outstanding_io);
+	    }
+	}
+
+      /* Did this cluster of writes finish off the transaction? */
+      if (txn->t_outstanding_io == 0
+	  && txn == ext2_journal->j_checkpoint_list)
+	{
+	  if (journal_try_advance_tail_locked (ext2_journal))
+	    sb_changed = 1;
+	  /* The head shifted, so reload it for the next iteration */
+	  txn = ext2_journal->j_checkpoint_list;
+	  continue;
+	}
+
+      txn = txn->t_checkpoint_next;
+    }
+
+  if (sb_changed)
+    {
+      uint32_t tail_seq;
+      diskfs_transaction_t *oldest =
+	journal_get_oldest_transaction_locked (ext2_journal);
+
+      if (oldest)
+	tail_seq = oldest->t_tid;
+      else
+	tail_seq = ext2_journal->j_transaction_sequence;
+
+      /* Update Superblock Persistently */
+      journal_update_superblock (ext2_journal, tail_seq,
+				 ext2_journal->j_tail);
+      JOURNAL_UNLOCK (ext2_journal);
+      flush_to_disk ();
+      pthread_cond_broadcast (&ext2_journal->j_space_available);
+    }
+  else
+    {
+      JOURNAL_UNLOCK (ext2_journal);
+    }
 }
 
 journal_t *
@@ -1008,6 +1166,16 @@ journal_write_commit_record (journal_t *journal,
 static error_t
 journal_cleanup_transaction (diskfs_transaction_t *txn, error_t err)
 {
+  if (!txn)
+    return 0;
+  journal_freed_extent_t *ext = txn->t_freed_blocks;
+  while (ext)
+    {
+      journal_freed_extent_t *next = ext->fe_next;
+      free (ext);
+      ext = next;
+    }
+  txn->t_freed_blocks = NULL;
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
     {
@@ -1104,12 +1272,15 @@ journal_commit_transaction_locked (journal_t *journal,
   JOURNAL_UNLOCK (journal);
 
   JRNL_LOG_DEBUG ("Done done with tx id: %u", txn->t_tid);
+  journal_forget_freed_blocks (txn);
   return 0;
 }
 
 error_t
-journal_commit_transaction (void)
+journal_commit_running_transaction (void)
 {
+  if (!ext2_journal)
+    return 0;
   diskfs_transaction_t *txn;
 
   JOURNAL_LOCK (ext2_journal);
@@ -1286,39 +1457,93 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   return 0;
 }
 
-/**
- * Check if a specific filesystem block is currently part of the Running
- * Transaction.
- * Returns: 1 if the block is "pinned" (must not be written to disk yet),
- * 0 if it is safe to write.
- */
-int
-journal_block_is_active (block_t blocknr)
-{
-  diskfs_transaction_t *txn;
-  int is_active = 0;
-
-  if (!ext2_journal)
-    return 0;
-
-  JOURNAL_LOCK (ext2_journal);
-  txn = ext2_journal->j_running_transaction;
-
-  if (txn && txn->t_state == T_RUNNING)
-    {
-      if (hurd_ihash_find (&txn->t_buffer_map, (hurd_ihash_key_t) blocknr))
-	is_active = 1;
-    }
-
-  JOURNAL_UNLOCK (ext2_journal);
-  return is_active;
-}
-
 /* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
 static inline int
 tid_gt (uint32_t t1, uint32_t t2)
 {
   return (int32_t) (t1 - t2) > 0;
+}
+
+static void
+journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
+{
+  /* WAIT LOOP
+     We sleep as long as the target TID is "greater than" the 
+     last committed TID. */
+  while (tid_gt (target_tid, journal->j_last_committed_tid))
+    /* Sleep until a commit finishes */
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
+}
+
+/**
+ * Called by the pager BEFORE writing blocks to their permanent home.
+ * Enforces WAL ordering for a range of blocks.
+ */
+error_t
+journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
+{
+  if (!ext2_journal || n_blocks == 0)
+    return 0;
+
+  JOURNAL_LOCK (ext2_journal);
+
+  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+  diskfs_transaction_t *run = ext2_journal->j_running_transaction;
+  uint32_t wait_tid = 0;
+  int force_commit = 0;
+
+  for (size_t i = 0; i < n_blocks; i++)
+    {
+      block_t b = start_block + i;
+
+      /* If ANY block is in the running transaction, we must force a commit.
+         This is the strictest requirement, so we can stop searching immediately! */
+      if (run && hurd_ihash_find (&run->t_buffer_map, (hurd_ihash_key_t) b))
+	{
+	  force_commit = 1;
+	  wait_tid = run->t_tid;
+	  break;		/* No need to check the rest of the blocks */
+	}
+      /* If it's committing, we need to wait, but keep checking in case 
+         a later block in this cluster is actually in the RUNNING state. */
+      else if (commit
+	       && hurd_ihash_find (&commit->t_buffer_map,
+				   (hurd_ihash_key_t) b))
+	{
+	  if (wait_tid == 0)
+	    wait_tid = commit->t_tid;
+	}
+    }
+
+  if (force_commit)
+    {
+      if (run->t_updates > 0)
+        {
+          /* PAGER DEADLOCK AVOIDANCE!
+           * VFS threads are actively mutating this transaction. If we block the 
+           * pager waiting for them, and they are waiting for the pager to free RAM,
+           * the system will hang. Tell the VM to back off and try again later. */
+          JOURNAL_UNLOCK (ext2_journal);
+          return EAGAIN; 
+        }
+      JRNL_LOG_DEBUG
+	("Pager hit RUNNING block in cluster [%u-%u]. Forcing commit TID %u",
+	 start_block, (uint32_t) (start_block + n_blocks - 1), wait_tid);
+
+      ext2_journal->j_running_transaction = NULL;
+      ext2_journal->j_committing_transaction = run;
+      run->t_state = T_LOCKED;
+      return journal_commit_transaction_locked (ext2_journal, run);
+    }
+  else if (wait_tid > 0)
+    {
+      JRNL_LOG_DEBUG
+	("Pager hit COMMITTING block in cluster [%u-%u]. Sleeping on TID %u",
+	 start_block, (uint32_t) (start_block + n_blocks - 1), wait_tid);
+      journal_wait_on_tid_locked (ext2_journal, wait_tid);
+    }
+  JOURNAL_UNLOCK (ext2_journal);
+  return 0;
 }
 
 diskfs_transaction_t *
@@ -1344,17 +1569,6 @@ diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
   JOURNAL_LOCK (ext2_journal);
   journal_stop_transaction_locked (ext2_journal, txn);
   JOURNAL_UNLOCK (ext2_journal);
-}
-
-static void
-journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
-{
-  /* WAIT LOOP
-     We sleep as long as the target TID is "greater than" the 
-     last committed TID. */
-  while (tid_gt (target_tid, journal->j_last_committed_tid))
-    /* Sleep until a commit finishes */
-    JOURNAL_WAIT (&journal->j_commit_done, journal);
 }
 
 /**

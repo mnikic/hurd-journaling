@@ -62,19 +62,40 @@ void journal_destroy (journal_t * journal);
  * Performs a shadow copy of 'data' into the journal memory.
  */
 error_t
-journal_dirty_block (diskfs_transaction_t *txn, 
-                     block_t fs_blocknr, 
-                     const void *data);
+journal_dirty_block (diskfs_transaction_t * txn,
+		     block_t fs_blocknr, const void *data);
 
 /**
- * Commit: Force the current running transaction to the log.
- * This contains the write barriers (flush_to_disk) that guarantee durability.
+ * Records a range of deleted blocks so they can be unpinned from older 
+ * checkpoint lists AFTER this transaction safely commits.
  */
-error_t journal_commit_transaction (void);
+void
+journal_record_freed_blocks (block_t start, unsigned long count);
 
-void journal_notify_block_written (block_t blocknr);
+/**
+ * Called by the pager BEFORE writing blocks to their permanent home.
+ * Enforces WAL ordering for a range of blocks.
+ */
+error_t journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks);
 
-/* Check if a block is currently pinned in a running transaction. */
-int journal_block_is_active (block_t blocknr);
+/**
+ * Force the current running transaction to the log if journaling
+ * is enabled. This contains the write barriers (flush_to_disk) that
+ * guarantee durability. This function will behave almost identical 
+ * to the diskfs_journal_commit_transaction except that doesn't take
+ * a transaction argument so that it always works on the currently
+ * running transaction, if there is one.
+ */
+error_t journal_commit_running_transaction (void);
+
+/**
+ * Called by the Pager (store_write hook) after writing blocks to the main disk.
+ * This notifies the journal that these blocks are now safely written so that
+ * the journal can properly account for it.
+ * Bulk version to handle clustered pageouts efficiently.
+ * This function won't be looking into the running or committing transaction
+ * at all and is therefore best to call it after ensure has happened already.
+ */
+void journal_notify_blocks_written (block_t start_block, size_t n_blocks);
 
 #endif //_JOURNAL_H

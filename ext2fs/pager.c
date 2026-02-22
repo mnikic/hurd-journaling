@@ -327,6 +327,11 @@ pending_blocks_write (struct pending_blocks *pb)
 
       ext2_debug ("writing block %u[%ld]", pb->block, pb->num);
 
+      /* Lets make sure these are all already committed. */
+      err = journal_ensure_blocks_journaled (pb->block, pb->num);
+      if (err) 
+	return err;
+
       if (pb->offs > 0)
 	/* Put what we're going to write into a page-aligned buffer.  */
 	{
@@ -337,22 +342,16 @@ pending_blocks_write (struct pending_blocks *pb)
 	}
       else
 	err = store_write (store, dev_block, pb->buf, length, &amount);
+
+      /* Now tell the journal about the partial/full success. */
+      size_t written_blocks = amount >> log2_block_size;
+      journal_notify_blocks_written (pb->block, written_blocks);
+
+
       if (err)
 	return err;
       else if (amount != length)
 	return EIO;
-
-      if (ext2_journal)
-	{
-	  block_t b = pb->block;
-	  off_t n = pb->num;
-	  while (n > 0)
-	    {
-	      journal_notify_block_written (b);
-	      b++;
-	      n--;
-	    }
-	}
 
       pb->offs += length;
       pb->num = 0;
@@ -662,20 +661,6 @@ disk_pager_write_page (vm_offset_t page, void *buf)
 	{
 	  block_t block = boffs_block (offset);
 
-	  if (block ==  622595 || block == 65538 || block == 262151 || block == 393236 || block == 622678 || block == 65661 ||  block ==  2883586 || block == 262147 || block == 262148 || block == 98506)
-        {
-           int bit_set = test_bit (block, modified_global_blocks);
-           ext2_debug ("PAGER PROBE: Visiting Block %u. Bit is %d. Action: %s", 
-                       block, bit_set, bit_set ? "WRITE (Add)" : "SKIP");
-	       JRNL_LOG_DEBUG ("PAGER PROBE: Visiting Block %u. Bit is %d. Action: %s", 
-                       block, bit_set, bit_set ? "WRITE (Add)" : "SKIP");
-        }
-	  if (ext2_journal && journal_block_is_active(block))
-	    {
-	       JRNL_LOG_DEBUG ("Pageout conflict on Block %u -> Forcing Commit", block);
-	       journal_commit_transaction ();
-	    }
-
 	  /* We don't clear the block modified bit here because this paging
 	     write request may not be the same one that actually set the bit,
 	     and our copy of the page may be out of date; we have to leave
@@ -701,18 +686,19 @@ disk_pager_write_page (vm_offset_t page, void *buf)
     }
   else
     {
+      block_t start_block = offset >> log2_block_size;
+      size_t n_blocks = length >> log2_block_size;
+      /* Ensure that we don't have these blocks in the currently
+       * running or committing transaction. This functiono will block
+       * if it needs to ensure this holds true. */
+      journal_ensure_blocks_journaled (start_block, n_blocks);
+
       err = store_write (store, offset >> store->log2_block_size,
 			 buf, length, &amount);
+      size_t written_blocks = amount >> log2_block_size;
+      journal_notify_blocks_written (start_block, written_blocks);
       if (!err && length != amount)
 	err = EIO;
-      if (!err && ext2_journal)
-        {
-          block_t start_block = offset >> log2_block_size;
-          /* Calculate how many FS blocks fit in this write (usually 1 page = 1 block) */
-          size_t n_blocks = length >> log2_block_size;
-          for (size_t i = 0; i < n_blocks; i++)
-	    journal_notify_block_written (start_block + i);
-        }
     }
 
   return err;
@@ -1653,11 +1639,9 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
-  if (ext2_journal)
-    {
-      /* We only commit if we have a running transaction */
-      journal_commit_transaction ();
-    }
+  /* We only commit if there is a journal and we have a running transaction */
+  journal_commit_running_transaction ();
+
   write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
 
