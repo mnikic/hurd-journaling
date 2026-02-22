@@ -507,21 +507,43 @@ error_t diskfs_validate_flags_change (struct node *np, int flags);
    changed to RDEV; otherwise return an error code. */
 error_t diskfs_validate_rdev_change (struct node *np, dev_t rdev);
 
+/* An opaque handle representing a journaling transaction.
+   Filesystems implementing a journal must define the internals of this struct.
+   It represents a logical grouping of filesystem modifications that should
+   be recorded atomically. */
 struct diskfs_transaction;
 typedef struct diskfs_transaction diskfs_transaction_t;
 
 /* The user may define the following functions to implement a journaling
    system (like JBD2). If defined, libdiskfs will call them to wrap
-   complex directory operations (rename, link, unlink, mkdir, rmdir)
-   in atomic transactions.
+   file system operations (rename, link, unlink, mkdir, rmdir...) in
+   atomic transactions.
 
    The default definitions in libdiskfs do nothing. If you choose to
    implement journaling, you should define ALL of these to ensure
    consistency and prevent deadlocks. */
+
+/* Starts or joins a journaling transaction.
+   Returns a handle to the transaction, or NULL if journaling is disabled
+   or an error occurs. The returned handle must eventually be consumed by
+   calling exactly ONE of: diskfs_journal_stop_transaction or
+   diskfs_journal_commit_transaction. */
 diskfs_transaction_t *diskfs_journal_start_transaction (void);
 
+/* Ends the caller's participation in the given transaction TXN.
+   This informs the journal that the logical operation is complete, but
+   it does not require the data to be physically flushed to disk immediately.
+   The underlying journal implementation may batch it for performance.
+
+   This function consumes TXN. The caller must not use TXN after this call. */
 void diskfs_journal_stop_transaction (diskfs_transaction_t *txn);
 
+/* Ends the caller's participation in the transaction TXN and synchronously
+   commits it to disk. This is used when the VFS requests a synchronous
+   operation (e.g., the directory has the O_SYNC flag).
+
+   This function consumes TXN. The caller must not use TXN after this call,
+   and it MUST NOT call diskfs_journal_stop_transaction on it. */
 void diskfs_journal_commit_transaction (diskfs_transaction_t *txn);
 
 /* The user must define this function.  Sync the info in NP->dn_stat

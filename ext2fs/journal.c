@@ -112,7 +112,6 @@ typedef struct journal_buffer
   block_t jb_blocknr;		/* The physical block number on the filesystem */
   void *jb_shadow_data;		/* 4KB Copy of the data to be logged */
   struct journal_buffer *jb_next;	/* Linked list next pointer */
-  uint32_t jb_log_spot;
 } journal_buffer_t;
 
 /* The state of a transaction in memory */
@@ -162,9 +161,6 @@ struct diskfs_transaction
   int t_outstanding_io;
 
   journal_freed_extent_t *t_freed_blocks;          /* Blocks deleted in this txn */
-
-  /* Timing/Debug */
-  long t_start_time;
 };
 
 /* The Simple Mapper (Virtual -> Physical) */
@@ -205,7 +201,6 @@ typedef struct journal
 
   uint32_t j_last_committed_tid;	/* Transaction ID of the last committed txn. */
   pthread_cond_t j_commit_done;	/* Cond. var. while waiting for the tx to be committed. */
-  pthread_cond_t j_space_available;	/* Cond. var when a new space has been created. */
   int j_must_exit;		/* variable that tells journal thread when to stop. */
 
   /* Pre-allocated buffers for zero-allocation commits */
@@ -313,7 +308,6 @@ kjournald_thread (void *arg)
 			  journal->j_first, journal->j_last);
 
 	  journal_commit_running_transaction ();
-	  JRNL_LOG_DEBUG("Going back to sleep");
 	}
     }
   return NULL;
@@ -672,7 +666,6 @@ journal_try_advance_tail_locked (journal_t *journal)
       if (txn->t_outstanding_io > 0)
 	break;
 
-      /* This transaction is done! */
       JRNL_LOG_DEBUG ("[CHECKPOINT] Cascade Reclaim TID %u (0 pending).",
 		      txn->t_tid);
 
@@ -768,7 +761,6 @@ journal_notify_block_written (block_t blocknr)
       if (txn->t_outstanding_io == 0
 	  && txn == ext2_journal->j_checkpoint_list)
 	{
-	  JRNL_LOG_DEBUG ("Found one without buffers.");
 	  if (journal_try_advance_tail_locked (ext2_journal))
 	    sb_changed = 1;
 	  txn = ext2_journal->j_checkpoint_list;
@@ -814,7 +806,6 @@ journal_notify_block_written (block_t blocknr)
 				 tail_seq, ext2_journal->j_tail);
       JOURNAL_UNLOCK (ext2_journal);
       flush_to_disk ();
-      pthread_cond_broadcast (&ext2_journal->j_space_available);
       return;
     }
   JOURNAL_UNLOCK (ext2_journal);
@@ -926,11 +917,8 @@ journal_notify_blocks_written (block_t start_block, size_t n_blocks)
 				 ext2_journal->j_tail);
       JOURNAL_UNLOCK (ext2_journal);
       flush_to_disk ();
-      pthread_cond_broadcast (&ext2_journal->j_space_available);
       return;
     }
-  JRNL_LOG_DEBUG ("Done with notification for %zu blocks starting at %u",
-		  n_blocks, start_block);
   JOURNAL_UNLOCK (ext2_journal);
 }
 
@@ -967,7 +955,6 @@ journal_create (struct node *journal_inode)
   pthread_cond_init (&j->j_commit_done, NULL);
   pthread_mutex_init (&j->j_state_lock, NULL);
   pthread_cond_init (&j->j_commit_wait, NULL);
-  pthread_cond_init (&j->j_space_available, NULL);
   j->j_must_exit = 0;
   if (pthread_create (&kjournald_tid, NULL, kjournald_thread, j) != 0)
     JRNL_LOG_DEBUG ("Failed to create a flusher thread.");
@@ -991,7 +978,6 @@ journal_destroy (journal_t *journal)
   pthread_mutex_destroy (&journal->j_state_lock);
   pthread_cond_destroy (&journal->j_commit_wait);
   pthread_cond_destroy (&journal->j_commit_done);
-  pthread_cond_destroy (&journal->j_space_available);
 
   if (journal->j_sb_buffer)
     free (journal->j_sb_buffer);
@@ -1064,7 +1050,6 @@ journal_force_checkpoint_locked (journal_t *journal)
   JOURNAL_UNLOCK (journal);
   flush_to_disk ();
   JOURNAL_LOCK (journal);
-  pthread_cond_broadcast (&journal->j_space_available);
 
   JRNL_LOG_DEBUG ("[CHECKPOINT] Space reclaimed. Free: %u. Tail: %u",
 		  journal->j_free, journal->j_tail);
@@ -1188,8 +1173,6 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
 	goto err_out;
       p = p->jb_next;
     }
-
-  JRNL_LOG_DEBUG ("[COMMIT] Done with final Descriptor for tx %u to %u", txn->t_tid, descriptor_loc);
 err_out:
   return err;
 }
@@ -1271,22 +1254,18 @@ journal_commit_transaction_locked (journal_t *journal,
   flush_to_disk ();
 
   commit_loc = journal_next_log_block_safe (journal);
-  JRNL_LOG_DEBUG("About to write commit record for tx %u", txn->t_tid);
   /* Write Commit Record */
   err = journal_write_commit_record (journal, txn, commit_loc);
   if (err)
     goto abort_commit;
 
-  JRNL_LOG_DEBUG("DOne with the commit record for tc %u", txn->t_tid);
   /* Ensure Commit is persistent */
   flush_to_disk ();
 
   int need_sb_flush = 0;
-  JRNL_LOG_DEBUG("About to acquire lock for the second time for tx %u", txn->t_tid);
   /* Finalize Metadata */
   JOURNAL_LOCK (journal);
 
-  JRNL_LOG_DEBUG("Acqired lock for the second time for tx %u", txn->t_tid);
   if (journal->j_tail == 0)
     {
       journal->j_tail = txn->t_log_start;
@@ -1322,7 +1301,6 @@ journal_commit_transaction_locked (journal_t *journal,
   if (need_sb_flush)
     flush_to_disk ();
 
-  JRNL_LOG_DEBUG ("Done done with tx id: %u", txn->t_tid);
   journal_forget_freed_blocks (txn);
   return 0;
 abort_commit:
@@ -1343,9 +1321,7 @@ journal_commit_running_transaction (void)
     return 0;
   diskfs_transaction_t *txn;
 
-  JRNL_LOG_DEBUG ("Getting the lock. committing tx is null: %i", ext2_journal->j_committing_transaction == NULL);
   JOURNAL_LOCK (ext2_journal);
-  JRNL_LOG_DEBUG ("Got the lock.");
   txn = ext2_journal->j_running_transaction;
 
   if (!txn || txn->t_state != T_RUNNING)
@@ -1362,7 +1338,6 @@ journal_commit_running_transaction (void)
   while (ext2_journal->j_committing_transaction != NULL)
     JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
 
-  JRNL_LOG_DEBUG ("After journal_wait");
   ext2_journal->j_running_transaction = NULL;
   ext2_journal->j_committing_transaction = txn;
   txn->t_state = T_LOCKED;
@@ -1571,12 +1546,12 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
         }
     }
 
-  /* === THE MICROKERNEL PAGER RULE === */
-  /* The Mach VM Pager CANNOT sleep waiting for a VFS thread or a journal thread.
-     If it does, and that thread attempts to allocate memory, the OS will permanently deadlock. 
-     Therefore, if the journal is not instantly ready to commit, we MUST bypass the WAL 
-     barrier and write directly to the main disk. */
-
+  /* The libpager MUST NOT sleep waiting for a VFS thread or a journal thread.
+     If we make it sleep, we risk a system-wide deadlock.
+     On the other hand, if we return EAGAIN or similar, the pager
+     will just drop the request and the block writes will be lost.
+     Therefore, if the journal is not instantly ready to commit, we MUST bypass
+     the WAL barrier and write directly to the main disk. */
   if (force_commit)
     {
       /* If VFS is mutating the transaction, or the disk pipeline is already full, 
@@ -1585,7 +1560,7 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
         {
           JRNL_LOG_DEBUG ("[WARN] VM Deadlock Hazard! Bypassing WAL for RUNNING TID %u", wait_tid);
           JOURNAL_UNLOCK (ext2_journal);
-          return; /* Returns immediately! No sleeping! */
+          return;
         }
 
       /* It is perfectly safe. The Pager will drive the commit synchronously right now. */
@@ -1593,7 +1568,6 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
       ext2_journal->j_running_transaction = NULL;
       ext2_journal->j_committing_transaction = run;
       run->t_state = T_LOCKED;
-      
       journal_commit_transaction_locked (ext2_journal, run);
       return;
     }
@@ -1602,8 +1576,6 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
       /* The block is actively being written to the log by another thread. 
          We cannot wait for it. Bail out and bypass! */
       JRNL_LOG_DEBUG ("[WARN] VM Deadlock Hazard! Bypassing WAL for COMMITTING TID %u", wait_tid);
-      JOURNAL_UNLOCK (ext2_journal);
-      return; /* Returns immediately! No sleeping! */
     }
 
   JOURNAL_UNLOCK (ext2_journal);
