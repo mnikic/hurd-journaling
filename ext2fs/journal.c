@@ -120,7 +120,6 @@ typedef enum
   T_RUNNING,			/* Accepting new handles/buffers */
   T_LOCKED,			/* Locked, no new handles,waiting for updates to finish */
   T_FLUSHING,			/* Writing to the journal ring buffer */
-  T_COMMIT,			/* Writing the commit block */
   T_FINISHED			/* Done, waiting to be checkpointed */
 } transaction_state_t;
 
@@ -354,7 +353,6 @@ journal_write_block (journal_t *journal, uint32_t logical_idx, void *data)
   size_t written_amount = 0;
   error_t err;
 
-  /* Safety Check */
   if (logical_idx >= journal->map.total_blocks)
     {
       ext2_warning ("[JOURNAL] Write out of bounds! Index: %u, Max: %u",
@@ -409,9 +407,7 @@ journal_read_block (journal_t *journal, uint32_t logical_idx, void *out_buf)
   err = store_read (store, offset, block_size, &read_buf, &read_amount);
 
   if (err)
-    {
-      return err;
-    }
+    return err;
 
   if (read_amount != block_size)
     {
@@ -534,7 +530,6 @@ journal_update_superblock (journal_t *journal, uint32_t sequence,
   error_t err;
   journal_superblock_t *jsb = (journal_superblock_t *) journal->j_sb_buffer;
 
-  /* Update Dynamic Fields */
   jsb->s_sequence = htobe32 (sequence);
   jsb->s_start = htobe32 (start);
 
@@ -593,15 +588,11 @@ journal_record_freed_blocks (block_t start, unsigned long count)
 }
 
 /**
- * Consumes the freed blocks list and unpins them from older transactions.
- * Called immediately after the commit block hits the disk.
+ * Consumes the freed blocks list and deallocates them.
  */
 static void
-journal_forget_freed_blocks (diskfs_transaction_t *txn)
+journal_forget_freed_blocks (journal_freed_extent_t *ext)
 {
-  journal_freed_extent_t *ext = txn->t_freed_blocks;
-  txn->t_freed_blocks = NULL; 
-
   while (ext)
     {
       journal_freed_extent_t *next = ext->fe_next;
@@ -621,7 +612,7 @@ journal_strip_transaction (diskfs_transaction_t *txn)
   journal_buffer_t *jb = txn->t_buffers;
   while (jb)
     {
-      /* We don't need the data copy anymore, it's in the log */
+      /* We don't need the data copy anymore, it's in the journal */
       if (jb->jb_shadow_data)
 	{
 	  free (jb->jb_shadow_data);
@@ -629,7 +620,8 @@ journal_strip_transaction (diskfs_transaction_t *txn)
 	}
       jb = jb->jb_next;
     }
-  /* NOTE: We do NOT destroy t_buffer_map yet! */
+  /* We do NOT destroy t_buffer_map yet!
+   * Becase we need it for checkpointing. */
 }
 
 /**
@@ -699,14 +691,12 @@ journal_try_advance_tail_locked (journal_t *journal)
       /* Destroy the object */
       journal_free_transaction (txn);
 
-      /* Mark success */
       advanced = 1;
 
-      /* RELOAD the new head to check in the next iteration */
+      /* Relod the new head to check in the next iteration */
       txn = journal->j_checkpoint_list;
     }
 
-  /* Recalculate Free Space ONCE at the end */
   if (advanced)
     {
       uint32_t capacity = journal->j_last - journal->j_first + 1;
@@ -953,7 +943,7 @@ journal_clear_checkpoint_list_locked (journal_t *journal)
 
 /**
  * Called when we are running out of space.
- * Since we do a version of sync() on every commit, we can safely declare all 
+ * Since we do a version of sync() on every commit, we can safely declare all
  * previous transactions "checkpointed" and reset the log.
  */
 static void
@@ -1037,7 +1027,7 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
 	  if (journal_write_block (journal, descriptor_loc, descriptor_buf))
 	    goto err_out;
 
-	  /* Write the Data Blocks for this batch IMMEDIATELY */
+	  /* Write the Data Blocks for this batch. */
 	  journal_buffer_t *p = batch_start;
 	  while (p != jb)
 	    {
@@ -1104,8 +1094,7 @@ journal_write_commit_record (journal_t *journal,
   void *commit_buf = journal->j_commit_buf;
   memset (commit_buf, 0, block_size);
   setup_header (commit_buf, txn, JBD2_COMMIT_BLOCK);
-  error_t err = journal_write_block (journal, commit_loc, commit_buf);
-  return err;
+  return journal_write_block (journal, commit_loc, commit_buf);
 }
 
 /* Cleans up the transaction. */
@@ -1139,23 +1128,42 @@ journal_cleanup_transaction (diskfs_transaction_t *txn, error_t err)
  * Commits the transaction. This function expects
  * journal lock to be held, and returns journal lock unlocked. */
 static error_t
-journal_commit_transaction_locked (journal_t *journal,
-				   diskfs_transaction_t *txn)
+journal_commit_running_transaction_locked (journal_t *journal)
 {
   error_t err = 0;
   uint32_t commit_loc;
+  diskfs_transaction_t *txn;
+
+  while (journal->j_committing_transaction != NULL)
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
+
+  txn = journal->j_running_transaction;
+  if (!txn)
+  {
+    /* Nothing to do, unlock and go back. We won't
+     * even broadcast commit_done, because we haven't
+     * done anything really. */
+    JOURNAL_UNLOCK (journal);
+    return 0;
+  }
+
+  journal->j_committing_transaction = txn;
+  journal->j_running_transaction = NULL;
+  txn->t_state = T_LOCKED;
 
   while (txn->t_updates > 0)
     JOURNAL_WAIT (&journal->j_commit_wait, journal);
 
   txn->t_state = T_FLUSHING;
 
+  /* Since we have active checkpointing in place it should be
+   * rare that this is needed. Yet it is here as an escape hatch
+   * in those rare cases. */
   uint32_t needed =
     txn->t_buffer_count + (txn->t_buffer_count / JRNL_DESCRIPTOR_RATIO) +
     JRNL_COMMIT_MARGIN;
   uint32_t low_water =
     (journal->j_last - journal->j_first) / JRNL_LOW_WATER_RATIO;
-
   if (journal->j_free < needed || journal->j_free < low_water)
     journal_force_checkpoint_locked (journal);
 
@@ -1163,6 +1171,7 @@ journal_commit_transaction_locked (journal_t *journal,
   if (txn->t_log_start > journal->j_last)
     txn->t_log_start = journal->j_first;
   JOURNAL_UNLOCK (journal);
+  // We unlock for IO!
 
   /* Write Data (I/O) */
   err = journal_write_payload (journal, txn);
@@ -1173,7 +1182,6 @@ journal_commit_transaction_locked (journal_t *journal,
   flush_to_disk ();
 
   commit_loc = journal_next_log_block_safe (journal);
-  /* Write Commit Record */
   err = journal_write_commit_record (journal, txn, commit_loc);
   if (err)
     goto abort_commit;
@@ -1182,7 +1190,7 @@ journal_commit_transaction_locked (journal_t *journal,
   flush_to_disk ();
 
   int need_sb_flush = 0;
-  /* Finalize Metadata */
+  /* IO done, lock again and finalize Metadata */
   JOURNAL_LOCK (journal);
 
   if (journal->j_tail == 0)
@@ -1201,17 +1209,13 @@ journal_commit_transaction_locked (journal_t *journal,
      so pending_blocks_write can find them later. */
   journal_strip_transaction (txn);
   journal->j_committing_transaction = NULL;
+  journal_freed_extent_t *freed_extents = txn->t_freed_blocks;
+  txn->t_freed_blocks = NULL;
 
-  /* Link into the Global Checkpoint Queue */
   if (journal->j_checkpoint_last)
-    {
-      journal->j_checkpoint_last->t_checkpoint_next = txn;
-    }
+    journal->j_checkpoint_last->t_checkpoint_next = txn;
   else
-    {
-      /* Queue was empty, we are the new Head */
-      journal->j_checkpoint_list = txn;
-    }
+    journal->j_checkpoint_list = txn;
   journal->j_checkpoint_last = txn;
 
   /* Wake up everyone waiting in journal_wait_on_tid */
@@ -1220,7 +1224,7 @@ journal_commit_transaction_locked (journal_t *journal,
   if (need_sb_flush)
     flush_to_disk ();
 
-  journal_forget_freed_blocks (txn);
+  journal_forget_freed_blocks (freed_extents);
   return 0;
 abort_commit:
   /* We hit a physical I/O error. We must clear the pipeline slot and wake 
@@ -1254,14 +1258,8 @@ journal_commit_running_transaction (void)
       JOURNAL_UNLOCK (ext2_journal);
       return 0;
     }
-  while (ext2_journal->j_committing_transaction != NULL)
-    JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
-
-  ext2_journal->j_running_transaction = NULL;
-  ext2_journal->j_committing_transaction = txn;
-  txn->t_state = T_LOCKED;
   journal_debug_dump_head (ext2_journal);
-  return journal_commit_transaction_locked (ext2_journal, txn);
+  return journal_commit_running_transaction_locked (ext2_journal);
 }
 
 /**
@@ -1430,7 +1428,8 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
 
 /**
  * Called by the pager BEFORE writing blocks to their permanent home.
- * Enforces WAL ordering for a range of blocks.
+ * Tries its bes to ensure WAL ordering for a range of blocks.
+ * There are cases in which that is not feasible though!
  */
 void
 journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
@@ -1473,7 +1472,7 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
      the WAL barrier and write directly to the main disk. */
   if (force_commit)
     {
-      /* If VFS is mutating the transaction, or the disk pipeline is already full, 
+      /* If VFS is mutating the transaction, or the disk pipeline is already full,
          we cannot commit right now. Bail out and bypass! */
       if (run->t_updates > 0 || commit != NULL)
         {
@@ -1484,10 +1483,7 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
 
       /* It is perfectly safe. The Pager will drive the commit synchronously right now. */
       JRNL_LOG_DEBUG ("Pager forcing synchronous commit for TID %u", wait_tid);
-      ext2_journal->j_running_transaction = NULL;
-      ext2_journal->j_committing_transaction = run;
-      run->t_state = T_LOCKED;
-      journal_commit_transaction_locked (ext2_journal, run);
+      journal_commit_running_transaction_locked (ext2_journal);
       return;
     }
   else if (in_committing)
@@ -1552,12 +1548,7 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
      If it is, We "steal" it and become the committer. */
   if (ext2_journal->j_running_transaction == txn)
     {
-      while (ext2_journal->j_committing_transaction != NULL)
-        JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
-      ext2_journal->j_running_transaction = NULL;
-      ext2_journal->j_committing_transaction = txn;
-      txn->t_state = T_LOCKED;
-      journal_commit_transaction_locked (ext2_journal, txn);
+      journal_commit_running_transaction_locked (ext2_journal);
       return;
     }
   /* We missed it. Someone else (kjournald) stole it. 
