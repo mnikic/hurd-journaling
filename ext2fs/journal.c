@@ -873,67 +873,6 @@ journal_create (struct node *journal_inode)
   return j;
 }
 
-void
-journal_destroy (journal_t *journal)
-{
-  if (!journal)
-    return;
-
-  JOURNAL_LOCK (journal);
-
-  /* Force the final running transaction to commit before we shut down! */
-  if (journal->j_running_transaction)
-    journal_commit_running_transaction_locked (journal);
-
-  /* Wait for the active commit (if any) to physically hit the disk */
-  while (journal->j_committing_transaction != NULL)
-    JOURNAL_WAIT (&journal->j_commit_done, journal);
-
-  /* Safely kill the background thread */
-  journal->j_must_exit = 1;
-  pthread_cond_broadcast (&journal->j_flusher_wakeup);
-  pthread_cond_broadcast (&journal->j_commit_wait);
-  JOURNAL_UNLOCK (journal);
-
-  pthread_join (kjournald_tid, NULL);
-
-  /* We are strictly single-threaded now. Re-acquire to clean up memory. */
-  JOURNAL_LOCK (journal);
-
-  diskfs_transaction_t *txn = journal->j_checkpoint_list;
-  while (txn)
-    {
-      diskfs_transaction_t *next = txn->t_checkpoint_next;
-      journal_free_transaction (txn);
-      txn = next;
-    }
-  journal->j_checkpoint_list = NULL;
-  journal->j_checkpoint_last = NULL;
-
-  /* 5. Formally mark the journal as CLEAN in the superblock */
-  journal->j_tail = 0;
-  journal_update_superblock (journal, journal->j_transaction_sequence, 0);
-
-  JOURNAL_UNLOCK (journal);
-  flush_to_disk ();
-
-  destroy_map (journal);
-
-  pthread_mutex_destroy (&journal->j_state_lock);
-  pthread_cond_destroy (&journal->j_commit_wait);
-  pthread_cond_destroy (&journal->j_commit_done);
-  pthread_cond_destroy (&journal->j_flusher_wakeup);
-
-  if (journal->j_sb_buffer)
-    free (journal->j_sb_buffer);
-  if (journal->j_descriptor_buf)
-    free (journal->j_descriptor_buf);
-  if (journal->j_commit_buf)
-    free (journal->j_commit_buf);
-
-  free (journal);
-}
-
 /**
  * Forcefully clears the checkpoint list. 
  * SAFE ONLY after a full filesystem sync.

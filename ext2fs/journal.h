@@ -53,9 +53,6 @@ typedef struct journal journal_t;
 /* Initialize the journal subsystem using the inode provided (usually Inode 8). */
 journal_t *journal_create (struct node *journal_inode);
 
-/* Clean up and free the journal resources. */
-void journal_destroy (journal_t * journal);
-
 /**
  * Safely marks the journal as clean on disk.
  * MUST only be called after sync_global(1) ensures no pager I/O is in flight,
