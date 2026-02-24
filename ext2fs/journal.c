@@ -1121,6 +1121,194 @@ journal_cleanup_transaction (diskfs_transaction_t *txn, error_t err)
   return err;
 }
 
+/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
+static inline int
+tid_gt (uint32_t t1, uint32_t t2)
+{
+  return (int32_t) (t1 - t2) > 0;
+}
+
+static void
+journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
+{
+  /* WAIT LOOP
+     We sleep as long as the target TID is "greater than" the 
+     last committed TID. */
+  while (tid_gt (target_tid, journal->j_last_committed_tid))
+    /* Sleep until a commit finishes */
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
+}
+
+/**
+ * Ensures there is a VALID running transaction to attach to.
+ * Returns 0 on success, or error code.
+ */
+static error_t
+journal_start_transaction (diskfs_transaction_t **out_txn)
+{
+  diskfs_transaction_t *txn;
+
+  if (!ext2_journal)
+    return EINVAL;
+
+  JOURNAL_LOCK (ext2_journal);
+
+  if (ext2_journal->j_free < ext2_journal->j_min_free)
+    {
+      JRNL_LOG_DEBUG
+	("[TRX] Journal full (Free: %u). Waiting for checkpoint...",
+	 ext2_journal->j_free);
+
+      journal_force_checkpoint_locked (ext2_journal);
+    }
+
+  txn = ext2_journal->j_running_transaction;
+
+  if (txn)
+    {
+      if (txn->t_state != T_RUNNING)
+	{
+	  JOURNAL_UNLOCK (ext2_journal);
+	  ext2_panic
+	    ("[TRX] Logic Error: Running transaction is not T_RUNNING!");
+	}
+      txn->t_updates++;
+    }
+  else
+    {
+      txn = calloc (1, sizeof (diskfs_transaction_t));
+      if (!txn)
+	{
+	  JOURNAL_UNLOCK (ext2_journal);
+	  return ENOMEM;
+	}
+
+      hurd_ihash_init (&txn->t_buffer_map, HURD_IHASH_NO_LOCP);
+      txn->t_tid = ext2_journal->j_transaction_sequence++;
+      txn->t_state = T_RUNNING;
+      txn->t_updates = 1;
+
+      ext2_journal->j_running_transaction = txn;
+      JRNL_LOG_DEBUG ("[TRX] Created NEW TID %u", txn->t_tid);
+    }
+
+  JOURNAL_UNLOCK (ext2_journal);
+  *out_txn = txn;
+  return 0;
+}
+
+diskfs_transaction_t *
+diskfs_journal_start_transaction (void)
+{
+  if (ext2_journal)
+    {
+      diskfs_transaction_t *real_txn;
+      error_t err = journal_start_transaction (&real_txn);
+      if (err)
+	return NULL;
+      return real_txn;
+    }
+  return NULL;
+}
+
+/**
+ * Adds a modified filesystem block to the SPECIFIC transaction handle.
+ * Performs a "Shadow Copy" of the data immediately.
+ */
+error_t
+journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
+		     const void *data)
+{
+  journal_buffer_t *jb;
+  journal_buffer_t *new_jb;
+  error_t err;
+
+  if (!ext2_journal || !txn || !data)
+    return EINVAL;
+
+  JOURNAL_LOCK (ext2_journal);
+
+  if (txn->t_state != T_RUNNING)
+    {
+      /* The transaction was stolen underneath us! */
+      ext2_warning
+	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
+	 txn->t_tid, txn->t_state);
+      JOURNAL_UNLOCK (ext2_journal);
+      return EROFS;		/* or EBUSY, or restart logic needed */
+    }
+
+  jb = (journal_buffer_t *) hurd_ihash_find (&txn->t_buffer_map,
+					     (hurd_ihash_key_t) fs_blocknr);
+  if (jb)
+    {
+      memcpy (jb->jb_shadow_data, data, block_size);
+      JOURNAL_UNLOCK (ext2_journal);
+      return 0;
+    }
+
+  new_jb = malloc (sizeof (journal_buffer_t));
+  if (!new_jb)
+    {
+      JOURNAL_UNLOCK (ext2_journal);
+      return ENOMEM;
+    }
+
+  new_jb->jb_shadow_data = malloc (block_size);
+  if (!new_jb->jb_shadow_data)
+    {
+      free (new_jb);
+      JOURNAL_UNLOCK (ext2_journal);
+      return ENOMEM;
+    }
+
+  new_jb->jb_blocknr = fs_blocknr;
+  memcpy (new_jb->jb_shadow_data, data, block_size);
+
+  err = hurd_ihash_add (&txn->t_buffer_map, (hurd_ihash_key_t) fs_blocknr,
+			(hurd_ihash_value_t) new_jb);
+  if (err)
+    {
+      free (new_jb->jb_shadow_data);
+      free (new_jb);
+      JOURNAL_UNLOCK (ext2_journal);
+      return err;
+    }
+
+  new_jb->jb_next = txn->t_buffers;
+  txn->t_buffers = new_jb;
+
+  txn->t_buffer_count++;
+  txn->t_outstanding_io++;
+
+  JOURNAL_UNLOCK (ext2_journal);
+  return 0;
+}
+
+static void
+journal_stop_transaction_locked (journal_t *journal,
+				 diskfs_transaction_t *txn)
+{
+  if (txn->t_updates == 0)
+    /* This implies a double-stop or corruption */
+    ext2_panic ("[TRX] Logic Error: Transaction stopped too many times!");
+  txn->t_updates--;
+  if (txn->t_updates == 0)
+    /* If anyone is sleeping in the commit loop waiting for this, wake them */
+    pthread_cond_broadcast (&journal->j_commit_wait);
+}
+
+void
+diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
+{
+  if (!ext2_journal || !txn)
+    return;
+
+  JOURNAL_LOCK (ext2_journal);
+  journal_stop_transaction_locked (ext2_journal, txn);
+  JOURNAL_UNLOCK (ext2_journal);
+}
+
 /**
  * Commits the transaction. This function expects
  * journal lock to be held, and returns journal lock unlocked. */
@@ -1259,195 +1447,6 @@ journal_commit_running_transaction (void)
   return journal_commit_running_transaction_locked (ext2_journal);
 }
 
-/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
-static inline int
-tid_gt (uint32_t t1, uint32_t t2)
-{
-  return (int32_t) (t1 - t2) > 0;
-}
-
-static void
-journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
-{
-  /* WAIT LOOP
-     We sleep as long as the target TID is "greater than" the 
-     last committed TID. */
-  while (tid_gt (target_tid, journal->j_last_committed_tid))
-    /* Sleep until a commit finishes */
-    JOURNAL_WAIT (&journal->j_commit_done, journal);
-}
-
-/**
- * Ensures there is a VALID running transaction to attach to.
- * Returns 0 on success, or error code.
- */
-static error_t
-journal_start_transaction (diskfs_transaction_t **out_txn)
-{
-  diskfs_transaction_t *txn;
-
-  if (!ext2_journal)
-    return EINVAL;
-
-  JOURNAL_LOCK (ext2_journal);
-
-  if (ext2_journal->j_free < ext2_journal->j_min_free)
-    {
-      JRNL_LOG_DEBUG
-	("[TRX] Journal full (Free: %u). Waiting for checkpoint...",
-	 ext2_journal->j_free);
-
-      journal_force_checkpoint_locked (ext2_journal);
-    }
-
-  txn = ext2_journal->j_running_transaction;
-
-  if (txn)
-    {
-      if (txn->t_state != T_RUNNING)
-	{
-	  JOURNAL_UNLOCK (ext2_journal);
-	  ext2_panic
-	    ("[TRX] Logic Error: Running transaction is not T_RUNNING!");
-	}
-      txn->t_updates++;
-    }
-  else
-    {
-      txn = calloc (1, sizeof (diskfs_transaction_t));
-      if (!txn)
-	{
-	  JOURNAL_UNLOCK (ext2_journal);
-	  return ENOMEM;
-	}
-
-      hurd_ihash_init (&txn->t_buffer_map, HURD_IHASH_NO_LOCP);
-      txn->t_tid = ext2_journal->j_transaction_sequence++;
-      txn->t_state = T_RUNNING;
-      txn->t_updates = 1;
-
-      ext2_journal->j_running_transaction = txn;
-      JRNL_LOG_DEBUG ("[TRX] Created NEW TID %u", txn->t_tid);
-    }
-
-  JOURNAL_UNLOCK (ext2_journal);
-  *out_txn = txn;
-  return 0;
-}
-
-diskfs_transaction_t *
-diskfs_journal_start_transaction (void)
-{
-  if (ext2_journal)
-    {
-      diskfs_transaction_t *real_txn;
-      error_t err = journal_start_transaction (&real_txn);
-      if (err)
-	return NULL;
-      return real_txn;
-    }
-  return NULL;
-}
-
-/**
- * Adds a modified filesystem block to the SPECIFIC transaction handle.
- * Performs a "Shadow Copy" of the data immediately.
- */
-error_t
-journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
-		     const void *data)
-{
-  journal_buffer_t *jb;
-  journal_buffer_t *new_jb;
-  error_t err;
-
-  if (!ext2_journal || !txn || !data)
-    return EINVAL;
-
-  JOURNAL_LOCK (ext2_journal);
-
-  if (txn->t_state != T_RUNNING)
-    {
-      /* The transaction was stolen underneath us! */
-      ext2_warning
-	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
-	 txn->t_tid, txn->t_state);
-      JOURNAL_UNLOCK (ext2_journal);
-      return EROFS;		/* or EBUSY, or restart logic needed */
-    }
-
-  /* FAST PATH using Hurd's libihash */
-  jb = (journal_buffer_t *) hurd_ihash_find (&txn->t_buffer_map,
-					     (hurd_ihash_key_t) fs_blocknr);
-  if (jb)
-    {
-      memcpy (jb->jb_shadow_data, data, block_size);
-      JOURNAL_UNLOCK (ext2_journal);
-      return 0;
-    }
-
-  new_jb = malloc (sizeof (journal_buffer_t));
-  if (!new_jb)
-    {
-      JOURNAL_UNLOCK (ext2_journal);
-      return ENOMEM;
-    }
-
-  new_jb->jb_shadow_data = malloc (block_size);
-  if (!new_jb->jb_shadow_data)
-    {
-      free (new_jb);
-      JOURNAL_UNLOCK (ext2_journal);
-      return ENOMEM;
-    }
-
-  new_jb->jb_blocknr = fs_blocknr;
-  memcpy (new_jb->jb_shadow_data, data, block_size);
-
-  err = hurd_ihash_add (&txn->t_buffer_map, (hurd_ihash_key_t) fs_blocknr,
-			(hurd_ihash_value_t) new_jb);
-  if (err)
-    {
-      free (new_jb->jb_shadow_data);
-      free (new_jb);
-      JOURNAL_UNLOCK (ext2_journal);
-      return err;
-    }
-
-  new_jb->jb_next = txn->t_buffers;
-  txn->t_buffers = new_jb;
-
-  txn->t_buffer_count++;
-  txn->t_outstanding_io++;
-
-  JOURNAL_UNLOCK (ext2_journal);
-  return 0;
-}
-
-static void
-journal_stop_transaction_locked (journal_t *journal,
-				 diskfs_transaction_t *txn)
-{
-  if (txn->t_updates == 0)
-    /* This implies a double-stop or corruption */
-    ext2_panic ("[TRX] Logic Error: Transaction stopped too many times!");
-  txn->t_updates--;
-  if (txn->t_updates == 0)
-    /* If anyone is sleeping in the commit loop waiting for this, wake them */
-    pthread_cond_broadcast (&journal->j_commit_wait);
-}
-
-void
-diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
-{
-  if (!ext2_journal || !txn)
-    return;
-
-  JOURNAL_LOCK (ext2_journal);
-  journal_stop_transaction_locked (ext2_journal, txn);
-  JOURNAL_UNLOCK (ext2_journal);
-}
-
 /**
  * Consumes the transaction handle (caller must not call stop after this).
  * Ensures the transaction is on disk before returning.
@@ -1486,8 +1485,8 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 
 /**
  * Called by the pager BEFORE writing blocks to their permanent home.
- * Tries its bes to ensure WAL ordering for a range of blocks.
- * There are cases in which that is not feasible though!
+ * Tries its best to ensure WAL ordering for a range of blocks.
+ * There are cases in which that is not feasible though! (see below)
  */
 void
 journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
