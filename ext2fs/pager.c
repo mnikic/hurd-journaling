@@ -1590,12 +1590,14 @@ diskfs_shutdown_pager (void)
       return 0;
     }
 
+  journal_commit_running_transaction ();
   write_all_disknodes ();
 
   ports_bucket_iterate (file_pager_bucket, shutdown_one);
 
   /* Sync everything on the the disk pager.  */
   sync_global (1);
+  journal_quiesce_checkpoints ();
   store_sync (store);
   /* Despite the name of this function, we never actually shutdown the disk
      pager, just make sure it's synced. */

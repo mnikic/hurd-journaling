@@ -34,7 +34,7 @@
 #include "ext2fs.h"
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 1		/* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 0		/* Set to enable (very chatty) debug messages. */
 #endif
 
 #if JOURNAL_DEBUG
@@ -56,6 +56,13 @@ journal_t *journal_create (struct node *journal_inode);
 /* Clean up and free the journal resources. */
 void journal_destroy (journal_t * journal);
 
+/**
+ * Safely marks the journal as clean on disk.
+ * MUST only be called after sync_global(1) ensures no pager I/O is in flight,
+ * otherwise asynchronous pager notifications will cause a Use-After-Free!
+ */
+void
+journal_quiesce_checkpoints (void);
 
 /**
  * Mark dirty: Add a modified filesystem block to the given transaction.

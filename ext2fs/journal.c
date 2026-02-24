@@ -235,9 +235,7 @@ init_map (journal_t *journal, struct node *jnode)
       error_t err = ext2_getblk (jnode, i, 0, &phys);
 
       if (err || phys == 0)
-	{
-	  ext2_panic ("[JOURNAL] Gap in journal file at logical %u!", i);
-	}
+	ext2_panic ("[JOURNAL] Gap in journal file at logical %u!", i);
 
       journal->map.phys_blocks[i] = phys;
     }
@@ -367,7 +365,7 @@ journal_write_block (journal_t *journal, uint32_t logical_idx, void *data)
 
   if (err)
     {
-      JRNL_LOG_DEBUG
+      ext2_warning
 	("[JOURNAL] Write failed at logical %u. Err: %s",
 	 logical_idx, strerror (err));
       return err;
@@ -375,8 +373,8 @@ journal_write_block (journal_t *journal, uint32_t logical_idx, void *data)
 
   if (written_amount != block_size)
     {
-      JRNL_LOG_DEBUG ("[JOURNAL] Short write! Wanted %u, wrote %lu",
-		      block_size, written_amount);
+      ext2_warning ("[JOURNAL] Short write! Wanted %u, wrote %lu",
+		    block_size, written_amount);
       return EIO;
     }
 
@@ -413,8 +411,8 @@ journal_read_block (journal_t *journal, uint32_t logical_idx, void *out_buf)
 
   if (read_amount != block_size)
     {
-      JRNL_LOG_DEBUG ("[JOURNAL] Short read! Wanted %u, got %lu", block_size,
-		      read_amount);
+      ext2_warning ("[JOURNAL] Short read! Wanted %u, got %lu", block_size,
+		    read_amount);
       if (read_buf != out_buf)
 	vm_deallocate (mach_task_self (), (vm_address_t) read_buf,
 		       read_amount);
@@ -449,7 +447,7 @@ journal_load_superblock (journal_t *journal)
 
   if (err)
     {
-      JRNL_LOG_DEBUG ("[JOURNAL] Failed to read SB. Err: %s", strerror (err));
+      ext2_warning ("[JOURNAL] Failed to read SB. Err: %s", strerror (err));
       free (buf);
       return err;
     }
@@ -869,7 +867,7 @@ journal_create (struct node *journal_inode)
   pthread_cond_init (&j->j_flusher_wakeup, NULL);
   j->j_must_exit = 0;
   if (pthread_create (&kjournald_tid, NULL, kjournald_thread, j) != 0)
-    JRNL_LOG_DEBUG ("Failed to create a flusher thread.");
+    ext2_warning ("Failed to create a flusher thread.");
   else
     JRNL_LOG_DEBUG ("Created flusher thread.");
   return j;
@@ -878,7 +876,20 @@ journal_create (struct node *journal_inode)
 void
 journal_destroy (journal_t *journal)
 {
+  if (!journal)
+    return;
+
   JOURNAL_LOCK (journal);
+
+  /* Force the final running transaction to commit before we shut down! */
+  if (journal->j_running_transaction)
+    journal_commit_running_transaction_locked (journal);
+
+  /* Wait for the active commit (if any) to physically hit the disk */
+  while (journal->j_committing_transaction != NULL)
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
+
+  /* Safely kill the background thread */
   journal->j_must_exit = 1;
   pthread_cond_broadcast (&journal->j_flusher_wakeup);
   pthread_cond_broadcast (&journal->j_commit_wait);
@@ -886,11 +897,32 @@ journal_destroy (journal_t *journal)
 
   pthread_join (kjournald_tid, NULL);
 
+  /* We are strictly single-threaded now. Re-acquire to clean up memory. */
+  JOURNAL_LOCK (journal);
+
+  diskfs_transaction_t *txn = journal->j_checkpoint_list;
+  while (txn)
+    {
+      diskfs_transaction_t *next = txn->t_checkpoint_next;
+      journal_free_transaction (txn);
+      txn = next;
+    }
+  journal->j_checkpoint_list = NULL;
+  journal->j_checkpoint_last = NULL;
+
+  /* 5. Formally mark the journal as CLEAN in the superblock */
+  journal->j_tail = 0;
+  journal_update_superblock (journal, journal->j_transaction_sequence, 0);
+
+  JOURNAL_UNLOCK (journal);
+  flush_to_disk ();
+
   destroy_map (journal);
 
   pthread_mutex_destroy (&journal->j_state_lock);
   pthread_cond_destroy (&journal->j_commit_wait);
   pthread_cond_destroy (&journal->j_commit_done);
+  pthread_cond_destroy (&journal->j_flusher_wakeup);
 
   if (journal->j_sb_buffer)
     free (journal->j_sb_buffer);
@@ -943,6 +975,27 @@ journal_clear_checkpoint_list_locked (journal_t *journal)
 
   journal_update_superblock (journal, journal->j_transaction_sequence,
 			     journal->j_tail);
+}
+
+/**
+ * Safely marks the journal as clean on disk.
+ * MUST only be called after sync_global(1) ensures no pager I/O is in flight,
+ * otherwise asynchronous pager notifications will cause a Use-After-Free!
+ */
+void
+journal_quiesce_checkpoints (void)
+{
+  if (!ext2_journal)
+    return;
+
+  JOURNAL_LOCK (ext2_journal);
+  /* Wait for any active commit to finish writing to the log */
+  while (ext2_journal->j_committing_transaction != NULL)
+    JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
+
+  /* Clear the list and write s_start = 0 to the JBD2 superblock */
+  journal_clear_checkpoint_list_locked (ext2_journal);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 /**
@@ -1267,6 +1320,24 @@ journal_commit_running_transaction (void)
   return journal_commit_running_transaction_locked (ext2_journal);
 }
 
+/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
+static inline int
+tid_gt (uint32_t t1, uint32_t t2)
+{
+  return (int32_t) (t1 - t2) > 0;
+}
+
+static void
+journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
+{
+  /* WAIT LOOP
+     We sleep as long as the target TID is "greater than" the 
+     last committed TID. */
+  while (tid_gt (target_tid, journal->j_last_committed_tid))
+    /* Sleep until a commit finishes */
+    JOURNAL_WAIT (&journal->j_commit_done, journal);
+}
+
 /**
  * Ensures there is a VALID running transaction to attach to.
  * Returns 0 on success, or error code.
@@ -1325,17 +1396,18 @@ journal_start_transaction (diskfs_transaction_t **out_txn)
   return 0;
 }
 
-static void
-journal_stop_transaction_locked (journal_t *journal,
-				 diskfs_transaction_t *txn)
+diskfs_transaction_t *
+diskfs_journal_start_transaction (void)
 {
-  if (txn->t_updates == 0)
-    /* This implies a double-stop or corruption */
-    ext2_panic ("[TRX] Logic Error: Transaction stopped too many times!");
-  txn->t_updates--;
-  if (txn->t_updates == 0)
-    /* If anyone is sleeping in the commit loop waiting for this, wake them */
-    pthread_cond_broadcast (&journal->j_commit_wait);
+  if (ext2_journal)
+    {
+      diskfs_transaction_t *real_txn;
+      error_t err = journal_start_transaction (&real_txn);
+      if (err)
+	return NULL;
+      return real_txn;
+    }
+  return NULL;
 }
 
 /**
@@ -1358,7 +1430,7 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   if (txn->t_state != T_RUNNING)
     {
       /* The transaction was stolen underneath us! */
-      JRNL_LOG_DEBUG
+      ext2_warning
 	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
 	 txn->t_tid, txn->t_state);
       JOURNAL_UNLOCK (ext2_journal);
@@ -1413,22 +1485,64 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   return 0;
 }
 
-/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
-static inline int
-tid_gt (uint32_t t1, uint32_t t2)
+static void
+journal_stop_transaction_locked (journal_t *journal,
+				 diskfs_transaction_t *txn)
 {
-  return (int32_t) (t1 - t2) > 0;
+  if (txn->t_updates == 0)
+    /* This implies a double-stop or corruption */
+    ext2_panic ("[TRX] Logic Error: Transaction stopped too many times!");
+  txn->t_updates--;
+  if (txn->t_updates == 0)
+    /* If anyone is sleeping in the commit loop waiting for this, wake them */
+    pthread_cond_broadcast (&journal->j_commit_wait);
 }
 
-static void
-journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
+void
+diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
 {
-  /* WAIT LOOP
-     We sleep as long as the target TID is "greater than" the 
-     last committed TID. */
-  while (tid_gt (target_tid, journal->j_last_committed_tid))
-    /* Sleep until a commit finishes */
-    JOURNAL_WAIT (&journal->j_commit_done, journal);
+  if (!ext2_journal || !txn)
+    return;
+
+  JOURNAL_LOCK (ext2_journal);
+  journal_stop_transaction_locked (ext2_journal, txn);
+  JOURNAL_UNLOCK (ext2_journal);
+}
+
+/**
+ * Consumes the transaction handle (caller must not call stop after this).
+ * Ensures the transaction is on disk before returning.
+ */
+void
+diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
+{
+  if (!ext2_journal || !opaque_txn)
+    return;
+
+  diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
+  uint32_t tid = txn->t_tid;
+
+  JRNL_LOG_DEBUG ("Commiting tx id: %u.", txn->t_tid);
+
+  JOURNAL_LOCK (ext2_journal);
+
+  /* Decrement the refcount while holding the lock. */
+  journal_stop_transaction_locked (ext2_journal, txn);
+
+  if (txn->t_buffer_count == 0)
+    JRNL_LOG_DEBUG ("In diskfs_commit, something with no buffers. txn Id: %u",
+		    tid);
+  /* Check if the transaction is currently RUNNING. 
+     If it is, We "steal" it and become the committer. */
+  if (ext2_journal->j_running_transaction == txn)
+    {
+      journal_commit_running_transaction_locked (ext2_journal);
+      return;
+    }
+  /* We missed it. Someone else (kjournald) stole it. 
+     We will wait for them to finish here. */
+  journal_wait_on_tid_locked (ext2_journal, tid);
+  JOURNAL_UNLOCK (ext2_journal);
 }
 
 /**
@@ -1484,7 +1598,7 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
          we cannot commit right now. Bail out and bypass! */
       if (run->t_updates > 0 || commit != NULL)
 	{
-	  JRNL_LOG_DEBUG
+	  ext2_warning
 	    ("[WARN] VM Deadlock Hazard! Bypassing WAL for RUNNING TID %u",
 	     wait_tid);
 	  JOURNAL_UNLOCK (ext2_journal);
@@ -1501,71 +1615,10 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
     {
       /* The block is actively being written to the log by another thread. 
          We cannot wait for it. Bail out and bypass! */
-      JRNL_LOG_DEBUG
+      ext2_warning
 	("[WARN] VM Deadlock Hazard! Bypassing WAL for COMMITTING TID %u",
 	 wait_tid);
     }
 
-  JOURNAL_UNLOCK (ext2_journal);
-}
-
-diskfs_transaction_t *
-diskfs_journal_start_transaction (void)
-{
-  if (ext2_journal)
-    {
-      diskfs_transaction_t *real_txn;
-      error_t err = journal_start_transaction (&real_txn);
-      if (err)
-	return NULL;
-      return real_txn;
-    }
-  return NULL;
-}
-
-void
-diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
-{
-  if (!ext2_journal || !txn)
-    return;
-
-  JOURNAL_LOCK (ext2_journal);
-  journal_stop_transaction_locked (ext2_journal, txn);
-  JOURNAL_UNLOCK (ext2_journal);
-}
-
-/**
- * Consumes the transaction handle (caller must not call stop after this).
- * Ensures the transaction is on disk before returning.
- */
-void
-diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
-{
-  if (!ext2_journal || !opaque_txn)
-    return;
-
-  diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
-  uint32_t tid = txn->t_tid;
-
-  JRNL_LOG_DEBUG ("Commiting tx id: %u.", txn->t_tid);
-
-  JOURNAL_LOCK (ext2_journal);
-
-  /* Decrement the refcount while holding the lock. */
-  journal_stop_transaction_locked (ext2_journal, txn);
-
-  if (txn->t_buffer_count == 0)
-    JRNL_LOG_DEBUG ("In diskfs_commit, something with no buffers. txn Id: %u",
-		    tid);
-  /* Check if the transaction is currently RUNNING. 
-     If it is, We "steal" it and become the committer. */
-  if (ext2_journal->j_running_transaction == txn)
-    {
-      journal_commit_running_transaction_locked (ext2_journal);
-      return;
-    }
-  /* We missed it. Someone else (kjournald) stole it. 
-     We will wait for them to finish here. */
-  journal_wait_on_tid_locked (ext2_journal, tid);
   JOURNAL_UNLOCK (ext2_journal);
 }
