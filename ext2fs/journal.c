@@ -349,7 +349,8 @@ journal_map_resize (journal_block_map_t *map)
 }
 
 static int
-journal_map_insert (journal_block_map_t *map, block_t blocknr, journal_buffer_t *jb)
+journal_map_insert (journal_block_map_t *map, block_t blocknr,
+		    journal_buffer_t *jb)
 {
   if (map->size * 100 >= map->capacity * 85)
     {
@@ -1215,11 +1216,10 @@ diskfs_journal_start_transaction (void)
 
 /**
  * Adds a modified filesystem block to the SPECIFIC transaction handle.
- * Performs a "Shadow Copy" of the data immediately.
+ * Defers the actual memory copy until the transaction fully closes.
  */
 error_t
-journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
-		     const void *data)
+journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
   journal_buffer_t *jb;
   journal_buffer_t *new_jb;
@@ -1228,23 +1228,24 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   if (!ext2_journal)
     return EINVAL;
   assert_backtrace (txn);
-  assert_backtrace (data);
 
   JOURNAL_LOCK (ext2_journal);
 
-  assert_backtrace(txn->t_state == T_RUNNING || txn->t_state == T_LOCKED);
+  assert_backtrace (txn->t_state == T_RUNNING || txn->t_state == T_LOCKED);
   jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
 
   if (jb)
     {
       if (jb->jb_is_written)
 	{
+	  /* The pager rushed this block previously, but VFS is dirtying it again.
+	     Reset the flag so we know to protect it. */
 	  jb->jb_is_written = 0;
 	  txn->t_outstanding_io++;
 	}
-      memcpy (jb->jb_shadow_data, data, block_size);
       goto out;
     }
+
   new_jb = journal_alloc_buffer (ext2_journal);
   if (!new_jb)
     {
@@ -1253,9 +1254,7 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
     }
 
   new_jb->jb_blocknr = fs_blocknr;
-  memcpy (new_jb->jb_shadow_data, data, block_size);
   err = journal_map_insert (&txn->t_buffer_map, fs_blocknr, new_jb);
-
   if (err)
     {
       journal_free_buffer (ext2_journal, new_jb);
@@ -1294,8 +1293,29 @@ journal_stop_transaction_locked (journal_t *journal,
     }
   txn->t_updates--;
   if (txn->t_updates == 0)
-    /* If anyone is sleeping in the commit loop waiting for this, wake them */
-    pthread_cond_broadcast (&journal->j_commit_wait);
+    {
+      size_t iter = 0;
+      journal_buffer_t *jb_exp;
+      while ((jb_exp = journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
+	{
+	  /**
+	   * Calculate the pointer to the live Mach VM cache for this block.
+           * Because t_updates is 0, we are mathematically guaranteed that
+           * no VFS threads are currently mutating this block.
+           */
+	  void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
+	  /**
+	   * THE V4 MAGIC: We execute exactly ONE memory copy per block,
+           * capturing the fully settled, tear-free state of the RAM.
+           * We do this even if jb_is_written == 1, because if the pager
+           * rushed the block, we MUST capture this settled state into the
+           * WAL so it can overwrite the pager's rushed data during recovery!
+           */
+	  memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
+	}
+      /* If anyone is sleeping in the commit loop waiting for this, wake them */
+      pthread_cond_broadcast (&journal->j_commit_wait);
+    }
 }
 
 void
@@ -1737,7 +1757,8 @@ journal_notify_blocks_written (block_t start_block, size_t n_blocks)
       for (size_t i = 0; i < n_blocks; i++)
 	{
 	  block_t b = start_block + i;
-	  journal_buffer_t *jb = journal_map_lookup (&commit->t_buffer_map, b);
+	  journal_buffer_t *jb =
+	    journal_map_lookup (&commit->t_buffer_map, b);
 	  if (jb && !jb->jb_is_written)
 	    {
 	      jb->jb_is_written = 1;

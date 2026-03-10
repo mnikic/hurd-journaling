@@ -294,8 +294,7 @@ extern struct journal *ext2_journal;
  * Performs a shadow copy of 'data' into the journal memory.
  */
 error_t
-journal_dirty_block (diskfs_transaction_t * txn, block_t fs_blocknr,
-                     const void *data);
+journal_dirty_block (diskfs_transaction_t * txn, block_t fs_blocknr);
 
 /**
  * This function exists to sync all AND avoid a deadlock with commit.
@@ -538,7 +537,7 @@ record_global_poke (void *ptr)
   if (ext2_journal)
     {
       diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block, block_ptr);
+      journal_dirty_block (txn, block);
       diskfs_journal_stop_transaction (txn);
     }
   ext2_debug ("(%p = %p)", ptr, block_ptr);
@@ -558,7 +557,7 @@ sync_global_ptr (void *ptr, int wait)
   if (ext2_journal)
     {
       diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block, block_ptr);
+      journal_dirty_block (txn, block);
       diskfs_journal_stop_transaction (txn);
     }
   ext2_debug ("(%p -> %u)", ptr, block);
@@ -578,7 +577,7 @@ record_indir_poke (struct node *node, void *ptr)
   if (ext2_journal)
     {
       diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block, block_ptr);
+      journal_dirty_block (txn, block);
       diskfs_journal_stop_transaction (txn);
     }
   ext2_debug ("(%llu, %p)", node->cache_id, ptr);
@@ -615,8 +614,7 @@ alloc_sync (struct node *np)
       if (sblock_dirty && ext2_journal)
         {
           block_t sb_blocknr = boffs_block (SBLOCK_OFFS);
-          void *sb_block_ptr = bptr (sb_blocknr);
-          journal_dirty_block (txn, sb_blocknr, sb_block_ptr);
+          journal_dirty_block (txn, sb_blocknr);
         }
 
       diskfs_journal_stop_transaction (txn);
