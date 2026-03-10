@@ -124,6 +124,7 @@ typedef struct journal_buffer
   char jb_shadow_data[4096];	/* 4KB Copy of the data to be logged */
   struct journal_buffer *jb_next;	/* Linked list next pointer */
   uint8_t jb_is_written;
+  uint8_t needs_copy;
 } journal_buffer_t;
 
 /**
@@ -1241,6 +1242,7 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
 	  /* The pager rushed this block previously, but VFS is dirtying it again.
 	     Reset the flag so we know to protect it. */
 	  jb->jb_is_written = 0;
+	  jb->needs_copy = 1;
 	  txn->t_outstanding_io++;
 	}
       goto out;
@@ -1254,6 +1256,7 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
     }
 
   new_jb->jb_blocknr = fs_blocknr;
+  new_jb->needs_copy = 1;
   err = journal_map_insert (&txn->t_buffer_map, fs_blocknr, new_jb);
   if (err)
     {
@@ -1296,22 +1299,27 @@ journal_stop_transaction_locked (journal_t *journal,
     {
       size_t iter = 0;
       journal_buffer_t *jb_exp;
-      while ((jb_exp = journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
+      while ((jb_exp =
+	      journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
 	{
-	  /**
-	   * Calculate the pointer to the live Mach VM cache for this block.
-           * Because t_updates is 0, we are mathematically guaranteed that
-           * no VFS threads are currently mutating this block.
-           */
-	  void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
-	  /**
-	   * THE V4 MAGIC: We execute exactly ONE memory copy per block,
-           * capturing the fully settled, tear-free state of the RAM.
-           * We do this even if jb_is_written == 1, because if the pager
-           * rushed the block, we MUST capture this settled state into the
-           * WAL so it can overwrite the pager's rushed data during recovery!
-           */
-	  memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
+	  if (jb_exp->needs_copy)
+	    {
+	    /**
+	     * Calculate the pointer to the live Mach VM cache for this block.
+	     * Because t_updates is 0, we are mathematically guaranteed that
+	     * no VFS threads are currently mutating this block.
+	     */
+	      void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
+	    /**
+	     * THE V4 MAGIC: We execute exactly ONE memory copy per block,
+	     * capturing the fully settled, tear-free state of the RAM.
+	     * We do this even if jb_is_written == 1, because if the pager
+	     * rushed the block, we MUST capture this settled state into the
+	     * WAL so it can overwrite the pager's rushed data during recovery!
+	     */
+	      memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
+	      jb_exp->needs_copy = 0;
+	    }
 	}
       /* If anyone is sleeping in the commit loop waiting for this, wake them */
       pthread_cond_broadcast (&journal->j_commit_wait);
