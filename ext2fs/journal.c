@@ -123,8 +123,9 @@ typedef struct journal_buffer
   block_t jb_blocknr;		/* The physical block number on the filesystem */
   char jb_shadow_data[4096];	/* 4KB Copy of the data to be logged */
   struct journal_buffer *jb_next;	/* Linked list next pointer */
-  uint8_t jb_is_written;
-  uint8_t needs_copy;
+  uint8_t jb_is_written;	/* Has this buffer been rushed by the VM pager */
+  uint8_t needs_copy;		/* Whether this buffer needs a fresh copy from
+				   the pager. */
 } journal_buffer_t;
 
 /**
@@ -185,6 +186,19 @@ struct diskfs_transaction
   journal_block_map_t t_buffer_map;
 
   struct diskfs_transaction *t_checkpoint_next;	/* Next in global checkpoint list */
+  /*
+   * Checkpoint Sync Counter: Tracks the exact number of unique physical
+   * blocks in this transaction that still need to be permanently written
+   * to the main ext2 filesystem by the Mach VM pager.
+   *
+   * - Incremented: When a block is first added to this transaction's map,
+   * or when a previously flushed block is dirtied again.
+   * - Decremented: Asynchronously, when the pager calls
+   * journal_notify_blocks_written() after a successful physical disk I/O.
+   *
+   * The transaction's space in the journal ring buffer cannot be safely
+   * reclaimed (checkpointed) until this counter drops to exactly 0.
+   */
   int t_outstanding_io;
 
   journal_freed_extent_t *t_freed_blocks;	/* Blocks deleted in this txn */
@@ -1217,7 +1231,7 @@ diskfs_journal_start_transaction (void)
 
 /**
  * Adds a modified filesystem block to the SPECIFIC transaction handle.
- * Defers the actual memory copy until the transaction fully closes.
+ * Defers the actual memory copy until the transaction stops.
  */
 error_t
 journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
@@ -1237,12 +1251,15 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
 
   if (jb)
     {
+      /* Even if it is already contained in the map we have still been
+       * notified about the new change and therefore we must copy it
+       * over once more when the time comes. */
+      jb->needs_copy = 1;
       if (jb->jb_is_written)
 	{
 	  /* The pager rushed this block previously, but VFS is dirtying it again.
 	     Reset the flag so we know to protect it. */
 	  jb->jb_is_written = 0;
-	  jb->needs_copy = 1;
 	  txn->t_outstanding_io++;
 	}
       goto out;
@@ -1256,7 +1273,6 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
     }
 
   new_jb->jb_blocknr = fs_blocknr;
-  new_jb->needs_copy = 1;
   err = journal_map_insert (&txn->t_buffer_map, fs_blocknr, new_jb);
   if (err)
     {
@@ -1264,6 +1280,8 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
       goto out;
     }
 
+  /* Brand new block for us? We will definitively want to copy it over. */
+  new_jb->needs_copy = 1;
   txn->t_outstanding_io++;
 
 out:
@@ -1306,18 +1324,24 @@ journal_stop_transaction_locked (journal_t *journal,
 	    {
 	    /**
 	     * Calculate the pointer to the live Mach VM cache for this block.
-	     * Because t_updates is 0, we are mathematically guaranteed that
-	     * no VFS threads are currently mutating this block.
+	     * Because t_updates is 0 AND we hold a lock, we are mathematically
+	     * guaranteed that no VFS threads are currently mutating this block
+	     * because if they were mutating it they would have to first obtain
+	     * a the journal lock AND also increase the t_updates.
 	     */
 	      void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
 	    /**
-	     * THE V4 MAGIC: We execute exactly ONE memory copy per block,
+	     * We execute exactly ONE memory copy per block,
 	     * capturing the fully settled, tear-free state of the RAM.
 	     * We do this even if jb_is_written == 1, because if the pager
 	     * rushed the block, we MUST capture this settled state into the
 	     * WAL so it can overwrite the pager's rushed data during recovery!
 	     */
 	      memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
+	      /* We are done with this block even if t_updates reach 0 again before
+	       * this transaction is committed. If we get notified that this block
+	       * has been modified again journal_dirty_blocks must set needs_copy
+	       * back to 1. */
 	      jb_exp->needs_copy = 0;
 	    }
 	}
@@ -1373,6 +1397,9 @@ journal_write_payload (journal_t *journal, const diskfs_transaction_t *txn)
 
   while ((jb = journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
     {
+      /* This is a bug if needs_copy is still 1, we didn't write the block
+       * into the buffer. */
+      assert_backtrace (!jb->needs_copy);
       /* If the descriptor block is full, flush it and its data blocks first */
       if (tag_offset + sizeof (journal_block_tag_t) > block_size)
 	{
