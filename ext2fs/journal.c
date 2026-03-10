@@ -1223,22 +1223,16 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
 {
   journal_buffer_t *jb;
   journal_buffer_t *new_jb;
-  error_t err;
+  error_t err = 0;
 
-  if (!ext2_journal || !txn || !data)
+  if (!ext2_journal)
     return EINVAL;
+  assert_backtrace (txn);
+  assert_backtrace (data);
 
   JOURNAL_LOCK (ext2_journal);
 
-  if (txn->t_state != T_RUNNING && txn->t_state != T_LOCKED)
-    {
-      /* The transaction was stolen underneath us! */
-      ext2_warning
-	("[ERROR] journal_dirty_block: Txn %u is %d (Not RUNNING)!",
-	 txn->t_tid, txn->t_state);
-      JOURNAL_UNLOCK (ext2_journal);
-      return EROFS;
-    }
+  assert_backtrace(txn->t_state == T_RUNNING || txn->t_state == T_LOCKED);
   jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
 
   if (jb)
@@ -1249,14 +1243,13 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
 	  txn->t_outstanding_io++;
 	}
       memcpy (jb->jb_shadow_data, data, block_size);
-      JOURNAL_UNLOCK (ext2_journal);
-      return 0;
+      goto out;
     }
   new_jb = journal_alloc_buffer (ext2_journal);
   if (!new_jb)
     {
-      JOURNAL_UNLOCK (ext2_journal);
-      return ENOMEM;
+      err = ENOMEM;
+      goto out;
     }
 
   new_jb->jb_blocknr = fs_blocknr;
@@ -1266,13 +1259,14 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr,
   if (err)
     {
       journal_free_buffer (ext2_journal, new_jb);
-      JOURNAL_UNLOCK (ext2_journal);
-      return err;
+      goto out;
     }
 
   txn->t_outstanding_io++;
+
+out:
   JOURNAL_UNLOCK (ext2_journal);
-  return 0;
+  return err;
 }
 
 void
