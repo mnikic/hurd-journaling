@@ -337,6 +337,19 @@ void get_hypermetadata (void);
 void map_hypermetadata (void);
 
 /* ---------------------------------------------------------------- */
+
+#define ext2_error(fmt, args...) _ext2_error (__FUNCTION__, fmt , ##args)
+extern void _ext2_error (const char *, const char *, ...)
+     __attribute__ ((format (printf, 2, 3)));
+
+#define ext2_panic(fmt, args...) _ext2_panic (__FUNCTION__, fmt , ##args)
+extern void _ext2_panic (const char *, const char *, ...)
+     __attribute__ ((format (printf, 2, 3)));
+
+extern void ext2_warning (const char *, ...)
+     __attribute__ ((format (printf, 1, 2)));
+
+/* ---------------------------------------------------------------- */
 /* Random stuff calculated from the super block.  */
 
 extern unsigned long frag_size;	/* Size of a fragment in bytes */
@@ -528,18 +541,26 @@ global_block_modified (block_t block)
     return 1;
 }
 
+EXT2FS_EI void
+journal_notify_block_changed (block_t block)
+{
+  if (ext2_journal)
+  {
+    diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
+    if (journal_dirty_block (txn, block))
+      ext2_warning (
+        "Didn't manage to add a dirty block %u to the journal.", block);
+    diskfs_journal_stop_transaction (txn);
+  }
+}
+
 /* This records a modification to a non-file block.  */
 EXT2FS_EI void
 record_global_poke (void *ptr)
 {
   block_t block = boffs_block (bptr_offs (ptr));
   void *block_ptr = bptr (block);
-  if (ext2_journal)
-    {
-      diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block);
-      diskfs_journal_stop_transaction (txn);
-    }
+  journal_notify_block_changed (block);
   ext2_debug ("(%p = %p)", ptr, block_ptr);
 #ifdef EXT2FS_DEBUG
   assert_backtrace (disk_cache_block_is_ref (block));
@@ -554,12 +575,7 @@ sync_global_ptr (void *ptr, int wait)
 {
   block_t block = boffs_block (bptr_offs (ptr));
   void *block_ptr = bptr (block);
-  if (ext2_journal)
-    {
-      diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block);
-      diskfs_journal_stop_transaction (txn);
-    }
+  journal_notify_block_changed (block);
   ext2_debug ("(%p -> %u)", ptr, block);
   global_block_modified (block);
   disk_cache_block_deref (block_ptr);
@@ -574,12 +590,7 @@ record_indir_poke (struct node *node, void *ptr)
 {
   block_t block = boffs_block (bptr_offs (ptr));
   void *block_ptr = bptr (block);
-  if (ext2_journal)
-    {
-      diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-      journal_dirty_block (txn, block);
-      diskfs_journal_stop_transaction (txn);
-    }
+  journal_notify_block_changed (block);
   ext2_debug ("(%llu, %p)", node->cache_id, ptr);
 #ifdef EXT2FS_DEBUG
   assert_backtrace (disk_cache_block_is_ref (block));
@@ -661,19 +672,7 @@ error_t dev_write (block_t addr, vm_address_t data, long len);
 error_t dev_read_sync (block_t addr, vm_address_t *data, long len);
 
 /* ---------------------------------------------------------------- */
-
-#define ext2_error(fmt, args...) _ext2_error (__FUNCTION__, fmt , ##args)
-extern void _ext2_error (const char *, const char *, ...)
-     __attribute__ ((format (printf, 2, 3)));
-
-#define ext2_panic(fmt, args...) _ext2_panic (__FUNCTION__, fmt , ##args)
-extern void _ext2_panic (const char *, const char *, ...)
-     __attribute__ ((format (printf, 2, 3)));
-
-extern void ext2_warning (const char *, ...)
-     __attribute__ ((format (printf, 1, 2)));
 
-/* ---------------------------------------------------------------- */
 /* xattr.c */
 
 error_t ext2_list_xattr (struct node *np, char *buffer, size_t *len);

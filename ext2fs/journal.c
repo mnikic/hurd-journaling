@@ -125,7 +125,8 @@ typedef struct journal_buffer
   struct journal_buffer *jb_next;	/* Linked list next pointer */
   uint8_t jb_is_written;	/* Has this buffer been rushed by the VM pager */
   uint8_t needs_copy;		/* Whether this buffer needs a new copy from
-				   the pager. Should be 1 when new.*/
+				   from the live Mach VM cache. Should be 1
+				   when new. */
 } journal_buffer_t;
 
 /**
@@ -150,7 +151,8 @@ typedef struct
 typedef enum
 {
   T_RUNNING,			/* Accepting new handles/buffers */
-  T_LOCKED,			/* Locked, no new handles,waiting for updates to finish */
+  T_LOCKED,			/* Locked, no new handles, waiting for updates
+				   to finish */
   T_FLUSHING,			/* Writing to the journal ring buffer */
   T_FINISHED			/* Done, waiting to be checkpointed */
 } transaction_state_t;
@@ -234,7 +236,8 @@ typedef struct journal
   pthread_cond_t j_commit_wait;	/* Cond. var. while waiting for the tx to be ready. */
   /* The Transactions */
   diskfs_transaction_t *j_running_transaction;	/* Currently filling */
-  diskfs_transaction_t *j_committing_transaction;	/* Transaction that is beeing committed. */
+  diskfs_transaction_t *j_committing_transaction;	/* Transaction that is
+							   being committed. */
   diskfs_transaction_t *j_checkpoint_list;	/* Head (Oldest, defines j_tail) */
   diskfs_transaction_t *j_checkpoint_last;
 
@@ -985,7 +988,7 @@ journal_try_advance_tail_locked (journal_t *journal)
 
       advanced = 1;
 
-      /* Relod the new head to check in the next iteration */
+      /* Reload the new head to check in the next iteration */
       txn = journal->j_checkpoint_list;
     }
 
@@ -1650,7 +1653,7 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
   diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
   uint32_t tid = txn->t_tid;
 
-  JRNL_LOG_DEBUG ("Commiting tx id: %u.", txn->t_tid);
+  JRNL_LOG_DEBUG ("Committing tx id: %u.", txn->t_tid);
 
   JOURNAL_LOCK (ext2_journal);
 
@@ -1732,10 +1735,13 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
 	  return;
 	}
 
-      /* It is perfectly safe. The Pager will drive the commit synchronously right now. */
+      /* It is perfectly safe. Because t_updates == 0 and we hold the lock,
+         we are guaranteed that the last VFS thread has already completed
+         the deferred memory copies for this transaction. The Pager will
+         now drive the commit synchronously. */
       JRNL_LOG_DEBUG ("Pager forcing synchronous commit for TID %u",
 		      wait_tid);
-      diskfs_journal_commit_transaction (run);
+      journal_commit_running_transaction_locked (ext2_journal);
       return;
     }
   else if (in_committing)
