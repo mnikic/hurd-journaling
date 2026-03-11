@@ -116,7 +116,7 @@
 static pthread_t kjournald_tid;
 
 /**
- * Represents one modified block (4KB) that needs to be written to the journal.
+ * Holds one modified block (4KB) that needs to be written to the journal.
  */
 typedef struct journal_buffer
 {
@@ -124,8 +124,8 @@ typedef struct journal_buffer
   char jb_shadow_data[4096];	/* 4KB Copy of the data to be logged */
   struct journal_buffer *jb_next;	/* Linked list next pointer */
   uint8_t jb_is_written;	/* Has this buffer been rushed by the VM pager */
-  uint8_t needs_copy;		/* Whether this buffer needs a fresh copy from
-				   the pager. */
+  uint8_t needs_copy;		/* Whether this buffer needs a new copy from
+				   the pager. Should be 1 when new.*/
 } journal_buffer_t;
 
 /**
@@ -1327,7 +1327,7 @@ journal_stop_transaction_locked (journal_t *journal,
 	     * Because t_updates is 0 AND we hold a lock, we are mathematically
 	     * guaranteed that no VFS threads are currently mutating this block
 	     * because if they were mutating it they would have to first obtain
-	     * a the journal lock AND also increase the t_updates.
+	     * the journal lock AND also increase the t_updates.
 	     */
 	      void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
 	    /**
