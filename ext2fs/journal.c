@@ -1735,7 +1735,7 @@ journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks)
       /* It is perfectly safe. The Pager will drive the commit synchronously right now. */
       JRNL_LOG_DEBUG ("Pager forcing synchronous commit for TID %u",
 		      wait_tid);
-      journal_commit_running_transaction_locked (ext2_journal);
+      diskfs_journal_commit_transaction (run);
       return;
     }
   else if (in_committing)
