@@ -531,9 +531,13 @@ typedef struct diskfs_transaction diskfs_transaction_t;
 diskfs_transaction_t *diskfs_journal_start_transaction (void);
 
 /* Ends the caller's participation in the given transaction TXN.
-   This informs the journal that the logical operation is complete, but
-   it does not require the data to be physically flushed to disk immediately.
-   The underlying journal implementation may batch it for performance.
+   This informs the journal that the logical operation is complete. Normally,
+   this does not force an immediate physical disk flush, allowing the
+   underlying journal to batch operations for performance.
+
+   However, if any participant flagged the transaction for a synchronous commit
+   (e.g., via diskfs_journal_set_sync), the journal will automatically commit
+   and flush the transaction to disk once the final participant stops.
 
    This function consumes TXN. The caller must not use TXN after this call. */
 void diskfs_journal_stop_transaction (diskfs_transaction_t *txn);

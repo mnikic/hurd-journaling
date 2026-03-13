@@ -100,10 +100,9 @@ diskfs_drop_node (struct node *np)
   assert_backtrace (!np->sockaddr);
 
   pthread_mutex_unlock(&np->lock);
-  if (diskfs_synchronous || diskfs_journal_needs_sync (txn))
-    diskfs_journal_commit_transaction (txn);
-  else
-    diskfs_journal_stop_transaction (txn);
+  if (diskfs_synchronous)
+    diskfs_journal_set_sync (txn);
+  diskfs_journal_stop_transaction (txn);
   pthread_mutex_destroy(&np->lock);
   diskfs_node_norefs (np);
 }

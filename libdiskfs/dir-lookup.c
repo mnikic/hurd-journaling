@@ -21,7 +21,6 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/file.h>
-#include "diskfs.h"
 #include <hurd/fshelp.h>
 #include <hurd/fsys.h>
 #include <hurd/paths.h>

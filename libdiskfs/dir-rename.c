@@ -61,7 +61,7 @@ diskfs_S_dir_rename (struct protid *fromcred,
   fdp = fromcred->po->np;
   tdp = tocred->po->np;
 
- txn = diskfs_journal_start_transaction ();
+  txn = diskfs_journal_start_transaction ();
  try_again:
   /* Acquire the source; hold a reference to it.  This
      will prevent anyone from deleting it before we create

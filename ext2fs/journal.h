@@ -54,12 +54,38 @@ typedef struct journal journal_t;
 journal_t *journal_create (struct node *journal_inode);
 
 /**
+ * A block device filter layer for the VFS pager's write path.
+ * Replaces raw store_write calls to safely intercept deadlock hazards.
+ * When the pager attempts to write a block that is actively locked by a
+ * running or committing transaction (rushing the transaction commit cycle),
+ * this function redirects the payload into temporary storage (the Lifeboat
+ * cache). This preserves the Write-Ahead Log (WAL) ordering and prevents
+ * the VM pager from deadlocking the filesystem. Safe blocks are coalesced
+ * and written normally to disk.
+ */
+error_t
+journal_store_write (block_t start_block, size_t length, void *buf,
+		     size_t *amount);
+
+/**
+ * A block device filter layer for the VFS pager's read path.
+ * Passes the read through to the underlying physical disk, and then
+ * transparently overlays any fresh data from the temporary Lifeboat cache.
+ * This ensures that reads of blocks which were recently intercepted and
+ * redirected to temporary storage (due to rushing the transaction cycle)
+ * return the most up-to-date data, maintaining strict cache coherence
+ * without blocking the pager.
+ */
+error_t
+journal_store_read (block_t start_block, size_t length, void **buf,
+		    size_t *read_amount);
+
+/**
  * Safely marks the journal as clean on disk.
  * MUST only be called after sync_global(1) ensures no pager I/O is in flight,
  * otherwise asynchronous pager notifications will cause a Use-After-Free!
  */
 void journal_quiesce_checkpoints (void);
-
 
 /**
  * Records a range of deleted blocks so they can be unpinned from older
@@ -67,33 +93,16 @@ void journal_quiesce_checkpoints (void);
  */
 void journal_record_freed_blocks (block_t start, unsigned long count);
 
-/**
- * Called by the pager BEFORE writing blocks to their permanent home.
- * Enforces WAL ordering for a range of blocks. If the Mach is under
- * extreme memory pressure and the journal is locked, this acts as a
- * pressure-relief valve and safely bypasses WAL to prevent OS deadlocks.
- */
-void journal_ensure_blocks_journaled (block_t start_block, size_t n_blocks);
-
-/**
- * Force the current running transaction to the log if journaling
- * is enabled. This contains the write barriers (flush_to_disk) that
- * guarantee durability. This function will behave almost identical
- * to the diskfs_journal_commit_transaction except that doesn't take
- * a transaction argument so that it always works on the currently
- * running transaction, if there is one.
- */
+/* Forces the currently running transaction (if any) to safely commit to the
+ * physical journal log.
+ *
+ * This function unconditionally blocks the calling thread until all VFS
+ * participants currently in the running transaction finish their updates
+ * (t_updates reaches 0) and the Write-Ahead Log barrier is physically crossed.
+ * Unlike diskfs_journal_commit_transaction, this function does not take a
+ * transaction handle as an argument. It is a global barrier used by background
+ * flushers (kjournald), pager sync operations, and unmount routines to ensure
+ * strict durability of all recently dirtied metadata. */
 error_t journal_commit_running_transaction (void);
-
-/**
- * Called by the Pager (store_write hook) after writing blocks to the main disk.
- * This notifies the journal that these blocks are now safely written so that
- * the journal can properly unpin them and advance the tail.
- * Bulk version to handle clustered pageouts efficiently.
- * This checks the checkpoint lists, but also checks the RUNNING and COMMITTING
- * transactions to catch blocks that were asynchronously dirtied by the VFS
- * while the Pager was busy performing the physical disk write.
- */
-void journal_notify_blocks_written (block_t start_block, size_t n_blocks);
 
 #endif //_JOURNAL_H

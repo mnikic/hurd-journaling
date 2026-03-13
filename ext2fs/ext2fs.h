@@ -285,24 +285,6 @@ extern int sblock_dirty;
 /* Size of one inode. */
 extern uint16_t global_inode_size;
 
-/* Forward declaration prevents circular dependency with journal.h */
-struct journal;
-extern struct journal *ext2_journal;
-
-/**
- * Mark dirty: Add a modified filesystem block to the given transaction.
- * Performs a shadow copy of 'data' into the journal memory.
- */
-error_t
-journal_dirty_block (diskfs_transaction_t * txn, block_t fs_blocknr);
-
-/**
- * This function exists to sync all AND avoid a deadlock with commit.
- * It doesn't call journal_commit back yet it syncs everything.
- **/
-void
-journal_sync_everything (void);
-
 /* Where the super-block is located on disk (at min-block 1).  */
 #define SBLOCK_BLOCK	1	/* Default location, second 1k block.  */
 #define SBLOCK_SIZE	(sizeof (struct ext2_super_block))
@@ -348,6 +330,28 @@ extern void _ext2_panic (const char *, const char *, ...)
 
 extern void ext2_warning (const char *, ...)
      __attribute__ ((format (printf, 1, 2)));
+
+/* ---------------------------------------------------------------- */
+
+/* Forward declaration prevents circular dependency with journal.h */
+struct journal;
+extern struct journal *ext2_journal;
+
+#define JRNL_LOG_WARN(fmt, ...) ext2_warning ("[JOURNAL] " fmt, ##__VA_ARGS__)
+
+/**
+ * Mark dirty: Add a modified filesystem block to the given transaction.
+ * Performs a shadow copy of 'data' into the journal memory.
+ */
+error_t
+journal_dirty_block (diskfs_transaction_t * txn, block_t fs_blocknr);
+
+/**
+ * This function exists to sync all AND avoid a deadlock with commit.
+ * It doesn't call journal_commit back yet it syncs everything.
+ **/
+void
+journal_sync_everything (void);
 
 /* ---------------------------------------------------------------- */
 /* Random stuff calculated from the super block.  */
@@ -549,7 +553,7 @@ journal_notify_block_changed (block_t block)
   {
     diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
     if (journal_dirty_block (txn, block))
-      ext2_warning (
+       JRNL_LOG_WARN (
         "Didn't manage to add a dirty block %u to the journal.", block);
     diskfs_journal_stop_transaction (txn);
   }

@@ -196,8 +196,6 @@ file_pager_read_page (struct node *node, vm_offset_t page,
     {
       if (num_pending_blocks > 0)
 	{
-	  store_offset_t dev_block = (store_offset_t) pending_blocks
-	    << log2_dev_blocks_per_fs_block;
 	  size_t amount = num_pending_blocks << log2_block_size;
 	  /* The buffer we try to read into; on the first read, we pass in a
 	     size of zero, so that the read is guaranteed to allocate a new
@@ -208,12 +206,11 @@ file_pager_read_page (struct node *node, vm_offset_t page,
 
 	  STAT_INC (file_pagein_reads);
 
-	  err = store_read (store, dev_block, amount, &new_buf, &new_len);
+	  err = journal_store_read (pending_blocks, amount, &new_buf, &new_len);
 	  if (err)
 	    return err;
 	  else if (amount != new_len)
 	    return EIO;
-
 	  if (new_buf != *buf + offs)
 	    {
 	      /* The read went into a different buffer than the one we
@@ -321,30 +318,20 @@ pending_blocks_write (struct pending_blocks *pb)
   if (pb->num > 0)
     {
       error_t err;
-      store_offset_t dev_block = (store_offset_t) pb->block
-	<< log2_dev_blocks_per_fs_block;
       size_t length = pb->num << log2_block_size, amount;
 
       ext2_debug ("writing block %u[%ld]", pb->block, pb->num);
-
-      /* Lets make sure these are all already committed. */
-      journal_ensure_blocks_journaled (pb->block, pb->num);
 
       if (pb->offs > 0)
 	/* Put what we're going to write into a page-aligned buffer.  */
 	{
 	  void *page_buf = get_page_buf ();
 	  memcpy ((void *)page_buf, pb->buf + pb->offs, length);
-	  err = store_write (store, dev_block, page_buf, length, &amount);
+	  err = journal_store_write (pb->block, length, page_buf, &amount);
 	  free_page_buf (page_buf);
 	}
       else
-	err = store_write (store, dev_block, pb->buf, length, &amount);
-
-      /* Now tell the journal about the partial/full success. */
-      size_t written_blocks = amount >> log2_block_size;
-      journal_notify_blocks_written (pb->block, written_blocks);
-
+	err = journal_store_write (pb->block, length, pb->buf, &amount);
 
       if (err)
 	return err;
@@ -608,10 +595,10 @@ disk_pager_read_page (vm_offset_t page, void **buf, int *writelock)
   if (offset + vm_page_size > dev_end)
     length = dev_end - offset;
 
-  err = store_read (store, offset >> store->log2_block_size, length,
-		    buf, &read);
+  err = journal_store_read (offset >> log2_block_size, length, buf, &read);
   if (read != length)
     return EIO;
+
   if (!err && length != vm_page_size)
     memset ((void *)(*buf + length), 0, vm_page_size - length);
 
@@ -684,16 +671,7 @@ disk_pager_write_page (vm_offset_t page, void *buf)
   else
     {
       block_t start_block = offset >> log2_block_size;
-      size_t n_blocks = length >> log2_block_size;
-      /* Ensure that we don't have these blocks in the currently
-       * running or committing transaction. This functiono will block
-       * if it needs to ensure this holds true. */
-      journal_ensure_blocks_journaled (start_block, n_blocks);
-
-      err = store_write (store, offset >> store->log2_block_size,
-			 buf, length, &amount);
-      size_t written_blocks = amount >> log2_block_size;
-      journal_notify_blocks_written (start_block, written_blocks);
+      err = journal_store_write (start_block, length, buf, &amount);
       if (!err && length != amount)
 	err = EIO;
     }
@@ -1590,8 +1568,8 @@ diskfs_shutdown_pager (void)
       return 0;
     }
 
-  journal_commit_running_transaction ();
   write_all_disknodes ();
+  journal_commit_running_transaction ();
 
   ports_bucket_iterate (file_pager_bucket, shutdown_one);
 
@@ -1638,10 +1616,9 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
+  write_all_disknodes ();
   /* We only commit if there is a journal and we have a running transaction */
   journal_commit_running_transaction ();
-
-  write_all_disknodes ();
   ports_bucket_iterate (file_pager_bucket, sync_one);
 
   /* Do things on the the disk pager.  */

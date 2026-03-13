@@ -257,12 +257,12 @@ main (int argc, char **argv)
   if (sblock->s_feature_compat & EXT3_FEATURE_COMPAT_HAS_JOURNAL)
     {
       JRNL_LOG_DEBUG ("\n[JOURNAL CHECK] >>> Inode 8 DETECTED! <<<");
-      JRNL_LOG_DEBUG ("[JOURNAL CHECK] s_journal_inum: %u (Expected: 8)",
+      JRNL_LOG_DEBUG ("[JOURNAL CHECK] s_journal_inum: %u",
 		      sblock->s_journal_inum);
       JRNL_LOG_DEBUG ("[JOURNAL CHECK] s_journal_dev:  %u",
 		      sblock->s_journal_dev);
       struct node *jnode = NULL;
-      error_t err = diskfs_cached_lookup (8, &jnode);
+      error_t err = diskfs_cached_lookup (sblock->s_journal_inum, &jnode);
 
       if (!err && jnode)
       {
