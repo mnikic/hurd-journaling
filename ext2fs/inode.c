@@ -20,7 +20,6 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
 #include "ext2fs.h"
-#include "journal.h"
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
