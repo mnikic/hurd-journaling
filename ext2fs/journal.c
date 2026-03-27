@@ -24,13 +24,17 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <error.h>
 #include <time.h>
+#include <assert-backtrace.h>
+#include <pthread.h>
 
+#include <hurd/store.h>
 #include <libdiskfs/diskfs.h>
 #include "ext2fs.h"
 #include "jbd2_format.h"
@@ -153,7 +157,7 @@ struct journal_lifeboat
   char payloads[JRNL_LIFEBOAT_CAPACITY][4096];
 };
 
-struct journal_lifeboat ext2_lifeboat;
+static struct journal_lifeboat ext2_lifeboat;
 static pthread_t kjournald_tid;
 
 /**
@@ -309,9 +313,9 @@ lifeboat_alloc_slot (void)
       if (free_bits != 0)
 	{
 	  /* __builtin_ffsll returns 1-64, so we subtract 1 for 0-based index */
-	  int bit = __builtin_ffsll (free_bits) - 1;
+	  int bit = __builtin_ffsll ((long long) free_bits) - 1;
 	  ext2_lifeboat.alloc_mask[i] |= (1ULL << bit);
-	  return (i * sizeof (ext2_lifeboat.alloc_mask[0]) * 8) + bit;
+	  return (int) (i * sizeof (ext2_lifeboat.alloc_mask[0]) * 8) + bit;
 	}
     }
   return -1;
@@ -540,7 +544,7 @@ journal_map_lookup (journal_block_map_t *map, block_t blocknr)
  * Iterates over the block map.
  * Must be initialized to 0 before the first call.
  */
-journal_buffer_t *
+static journal_buffer_t *
 journal_map_iterate (const journal_block_map_t *map, size_t *iter)
 {
   if (!map->buckets)
@@ -1095,6 +1099,64 @@ journal_try_advance_tail_locked (journal_t *journal)
   return advanced;
 }
 
+static void
+journal_stop_transaction_locked (journal_t *journal,
+				 diskfs_transaction_t *txn)
+{
+  if (txn->t_updates == 0)
+    {
+      /* This implies a double-stop or corruption */
+      JRNL_LOG_WARN ("Logic Error: Transaction stopped too many times!");
+      return;
+    }
+  txn->t_updates--;
+  if (txn->t_updates == 0)
+    {
+      size_t iter = 0;
+      journal_buffer_t *jb_exp;
+      while ((jb_exp =
+	      journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
+	{
+	  /* Buffer hydration (memory copying) time. */
+	  if (jb_exp->needs_copy)
+	    {
+	      if (jb_exp->lifeboat_index >= 0)
+		{
+		  memcpy (jb_exp->jb_shadow_data,
+			  ext2_lifeboat.payloads[jb_exp->lifeboat_index],
+			  block_size);
+		}
+	      else
+		{
+		  /**
+		   * Calculate the pointer to the live Mach VM cache for this block.
+		   * Because t_updates is 0 AND we hold a lock, we are mathematically
+		   * guaranteed that no VFS threads are currently mutating this block
+		   * because if they were mutating it they would have to first obtain
+		   * the journal lock AND also increase the t_updates.
+		   */
+		  void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
+		  /**
+		   * We execute exactly ONE memory copy per block,
+		   * capturing the fully settled, tear-free state of the RAM.
+		   * We do this even if jb_is_written == 1, because if the pager
+		   * rushed the block, we MUST capture this settled state into the
+		   * WAL so it can overwrite the pager's rushed data during recovery!
+		   */
+		  memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
+		}
+	      /* We are done with this block even if t_updates reach 0 again before
+	       * this transaction is committed. If we get notified that this block
+	       * has been modified again journal_dirty_blocks must set needs_copy
+	       * back to 1. */
+	      jb_exp->needs_copy = 0;
+	    }
+	}
+      /* If anyone is sleeping in the commit loop waiting for this, wake them */
+      pthread_cond_broadcast (&journal->j_commit_wait);
+    }
+}
+
 /* Must strictly be called OUTSIDE the journal lock */
 static void
 journal_drain_deferred_blocks (void)
@@ -1103,7 +1165,11 @@ journal_drain_deferred_blocks (void)
     {
       diskfs_transaction_t *drain_txn = diskfs_journal_start_transaction ();
       if (drain_txn)
-	diskfs_journal_stop_transaction (drain_txn);
+	{
+	  JOURNAL_LOCK (ext2_journal);
+	  journal_stop_transaction_locked (ext2_journal, drain_txn);
+	  JOURNAL_UNLOCK (ext2_journal);
+	}
     }
 }
 
@@ -1438,8 +1504,7 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
  * Defers the actual memory copy until the transaction stops.
  */
 static error_t
-journal_dirty_block_locked (journal_t *journal, diskfs_transaction_t *txn,
-			    block_t fs_blocknr)
+journal_dirty_block_locked (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
   journal_buffer_t *jb;
   journal_buffer_t *new_jb;
@@ -1542,7 +1607,7 @@ diskfs_journal_start_transaction_locked (journal_t *journal)
       deferred_count = 0;
 
       for (int i = 0; i < count; i++)
-	journal_dirty_block_locked (journal, txn, deferred_blocks[i]);
+	journal_dirty_block_locked (txn, deferred_blocks[i]);
     }
 
   return txn;
@@ -1572,7 +1637,7 @@ journal_dirty_block (diskfs_transaction_t *txn, block_t fs_blocknr)
   if (!ext2_journal)
     return EINVAL;
   JOURNAL_LOCK (ext2_journal);
-  err = journal_dirty_block_locked (ext2_journal, txn, fs_blocknr);
+  err = journal_dirty_block_locked (txn, fs_blocknr);
   JOURNAL_UNLOCK (ext2_journal);
   return err;
 }
@@ -1608,9 +1673,8 @@ journal_write_batch (journal_t *journal, const diskfs_transaction_t *txn,
 		     void *descriptor_buf, uint32_t descriptor_loc,
 		     size_t batch_start_iter, uint32_t batch_count)
 {
-  error_t err;
-
-  if ((err = journal_write_block (journal, descriptor_loc, descriptor_buf)))
+  error_t err = journal_write_block (journal, descriptor_loc, descriptor_buf);
+  if (err)
     return err;
 
   size_t data_iter = batch_start_iter;
@@ -1619,7 +1683,8 @@ journal_write_batch (journal_t *journal, const diskfs_transaction_t *txn,
       journal_buffer_t *p =
 	journal_map_iterate (&txn->t_buffer_map, &data_iter);
       uint32_t data_loc = journal_next_log_block_safe (journal);
-      if ((err = journal_write_block (journal, data_loc, p->jb_shadow_data)))
+      err = journal_write_block (journal, data_loc, p->jb_shadow_data);
+      if (err)
 	return err;
     }
 
@@ -1926,64 +1991,6 @@ out:
 }
 
 static void
-journal_stop_transaction_locked (journal_t *journal,
-				 diskfs_transaction_t *txn)
-{
-  if (txn->t_updates == 0)
-    {
-      /* This implies a double-stop or corruption */
-      JRNL_LOG_WARN ("Logic Error: Transaction stopped too many times!");
-      return;
-    }
-  txn->t_updates--;
-  if (txn->t_updates == 0)
-    {
-      size_t iter = 0;
-      journal_buffer_t *jb_exp;
-      while ((jb_exp =
-	      journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
-	{
-	  /* Buffer hydration (memory copying) time. */
-	  if (jb_exp->needs_copy)
-	    {
-	      if (jb_exp->lifeboat_index >= 0)
-		{
-		  memcpy (jb_exp->jb_shadow_data,
-			  ext2_lifeboat.payloads[jb_exp->lifeboat_index],
-			  block_size);
-		}
-	      else
-		{
-		  /**
-		   * Calculate the pointer to the live Mach VM cache for this block.
-		   * Because t_updates is 0 AND we hold a lock, we are mathematically
-		   * guaranteed that no VFS threads are currently mutating this block
-		   * because if they were mutating it they would have to first obtain
-		   * the journal lock AND also increase the t_updates.
-		   */
-		  void *live_cache_ptr = bptr (jb_exp->jb_blocknr);
-		  /**
-		   * We execute exactly ONE memory copy per block,
-		   * capturing the fully settled, tear-free state of the RAM.
-		   * We do this even if jb_is_written == 1, because if the pager
-		   * rushed the block, we MUST capture this settled state into the
-		   * WAL so it can overwrite the pager's rushed data during recovery!
-		   */
-		  memcpy (jb_exp->jb_shadow_data, live_cache_ptr, block_size);
-		}
-	      /* We are done with this block even if t_updates reach 0 again before
-	       * this transaction is committed. If we get notified that this block
-	       * has been modified again journal_dirty_blocks must set needs_copy
-	       * back to 1. */
-	      jb_exp->needs_copy = 0;
-	    }
-	}
-      /* If anyone is sleeping in the commit loop waiting for this, wake them */
-      pthread_cond_broadcast (&journal->j_commit_wait);
-    }
-}
-
-static void
 diskfs_journal_stop_transaction_locked (journal_t *journal,
 					diskfs_transaction_t *txn)
 {
@@ -2177,7 +2184,7 @@ journal_handle_write_hazard_locked (block_t b, char *b_data)
 	      memcpy (ext2_lifeboat.payloads[lb_idx_run], b_data, block_size);
 	      if (jb_run->lifeboat_index >= 0)
 		lifeboat_free_slot (jb_run->lifeboat_index);
-	      jb_run->lifeboat_index = lb_idx_run;
+	      jb_run->lifeboat_index = (int16_t) lb_idx_run;
 	    }
 	  if (jb_commit)
 	    {
@@ -2188,7 +2195,7 @@ journal_handle_write_hazard_locked (block_t b, char *b_data)
 	      if (jb_commit->lifeboat_index >= 0
 		  && !jb_commit->jb_is_flushing)
 		lifeboat_free_slot (jb_commit->lifeboat_index);
-	      jb_commit->lifeboat_index = lb_idx_commit;
+	      jb_commit->lifeboat_index = (int16_t) lb_idx_commit;
 	    }
 
 	  intercepted = 1;
@@ -2431,7 +2438,7 @@ journal_notify_block_changed (block_t block)
   JOURNAL_LOCK (ext2_journal);
   diskfs_transaction_t *txn =
     diskfs_journal_start_transaction_locked (ext2_journal);
-  if (journal_dirty_block_locked (ext2_journal, txn, block))
+  if (journal_dirty_block_locked (txn, block))
     JRNL_LOG_WARN ("Didn't manage to add a dirty block %u to the journal.",
 		   block);
   diskfs_journal_stop_transaction_locked (ext2_journal, txn);
