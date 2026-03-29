@@ -80,7 +80,7 @@ CPPFLAGS += $(INCLUDES) \
 	    $($*-CPPFLAGS)
 CFLAGS += -std=gnu99 $(gnu89-inline-CFLAGS) -Wall -Werror=old-style-definition \
 					-Werror=implicit-function-declaration -Werror=strict-prototypes \
-					-g -O3 -fno-strict-aliasing $($*-CFLAGS)
+					-g -O0 -fno-strict-aliasing $($*-CFLAGS)
 
 # Include the configure-generated file of parameters.
 # This sets up variables for build tools and installation directories.

@@ -18,6 +18,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include <mcheck.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <device/device.h>
@@ -227,7 +228,7 @@ main (int argc, char **argv)
 {
   error_t err;
   mach_port_t bootstrap;
-
+  mtrace();
   /* Initialize the diskfs library, parse arguments, and open the store.
      This starts the first diskfs thread for us.  */
   store = diskfs_init_main (&startup_argp, argc, argv,
