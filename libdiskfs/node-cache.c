@@ -19,7 +19,6 @@
 
 #include <hurd/ihash.h>
 
-#include "priv.h"
 #include "diskfs.h"
 
 /* The node cache is implemented using a hash table.  Access to the
