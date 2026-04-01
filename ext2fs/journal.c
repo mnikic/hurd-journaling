@@ -29,9 +29,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <error.h>
 #include <time.h>
 #include <assert-backtrace.h>
+#include <endian.h>
 #include <pthread.h>
 
 #include <hurd/store.h>
@@ -648,37 +648,6 @@ init_map (journal_t *journal, struct node *jnode)
 
   journal->map.inode = jnode;
 }
-
-#if JOURNAL_DEBUG
-static void
-journal_debug_dump_head (journal_t *journal)
-{
-  diskfs_transaction_t *txn = journal->j_checkpoint_list;
-  if (!txn)
-    {
-      JRNL_LOG_DEBUG ("=== CHECKPOINT LIST EMPTY ===");
-      return;
-    }
-
-  JRNL_LOG_DEBUG ("=== DEBUG DUMP HEAD TID %u ===", txn->t_tid);
-  JRNL_LOG_DEBUG (" State: %d", txn->t_state);
-  JRNL_LOG_DEBUG (" Outstanding IO Counter: %d", txn->t_outstanding_io);
-  JRNL_LOG_DEBUG (" Map Entries (Iterating...):");
-
-  /* Iterate the custom hash map to see what is ACTUALLY inside */
-  size_t iter = 0;
-  journal_buffer_t *jb;
-  while ((jb = journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
-    JRNL_LOG_DEBUG ("   [STUCK] Waiting for Block %u", jb->jb_blocknr);
-
-  JRNL_LOG_DEBUG ("===============================");
-}
-#else
-static void
-journal_debug_dump_head (journal_t *journal)
-{
-}
-#endif
 
 /**
  * The background journal thread (kjournald).
@@ -2072,7 +2041,6 @@ journal_commit_running_transaction (void)
       JRNL_LOG_DEBUG ("Txn %u is empty. Keeping it open.", txn->t_tid);
       goto out;
     }
-  journal_debug_dump_head (ext2_journal);
   /**
    * Note on buffer hydration (memory copying):
    * We do not explicitly copy Mach VM memory into the journal shadow buffers
