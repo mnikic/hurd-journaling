@@ -33,6 +33,7 @@
 #include <assert-backtrace.h>
 #include <endian.h>
 #include <pthread.h>
+#include <mach.h>
 
 #include <hurd/store.h>
 #include <libdiskfs/diskfs.h>
