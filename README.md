@@ -15,14 +15,15 @@ This time around, the journaling happens way down at the block level. The journa
 
 Hurd's Ext2 is heavily asynchronous. Disk writes normally only happen on explicit `fsync`s or when a predetermined interval passes (30 seconds by default). This required carefully re-architecting what transactions mean and exactly when they get committed.
 
-But even this JBD2-style implementation went through phases. At first, I would just eagerly `memcpy` the contents of the whole block to the journal's buffer every time a block was altered. But blocks are often mutated multiple times a second (for instance, if multiple Hurd nodes live in the same physical block). Eager copying worked, but it was incredibly inefficient. I needed a faster way: deferred journaling. Instead of eagerly copying memory, we just record which blocks are dirty, wait, and do the actual memory copy later.
+But even this JBD2-style implementation went through phases. At first, I would just eagerly `memcpy` the contents of the whole block to the journal's buffer every time a block was altered. But blocks are often mutated multiple times a transaction (for instance, if multiple Hurd nodes live in the same physical block). Eager copying worked, but it was incredibly inefficient (we would end up copying the same block over and over again). I needed a faster way: deferred journaling. Instead of eagerly copying memory, we just record which blocks are dirty, wait, and do the actual memory copy later when its safe.
 
 ## The Concurrency Challenge: Torn Writes
 Here is where it got really interesting.
 
-Unlike Linux, which tightly couples the VFS to the block layer using physical block-level spinlocks, the Hurd architecture relies heavily on its highly concurrent Mach VM pager. Locking in Hurd is done at the *logical node* level, not the physical block level.
+Finding when is it safe to do this copy is nuanced.
+Unlike Linux, which tightly couples the VFS to the block layer using physical block-level spinlocks, the Hurd architecture relies heavily on its concurrent Mach VM pager. Locking in Hurd is done at the *logical node* level, not the physical block level.
 
-Because multiple logical nodes often share the exact same 4KB physical block, one has to be very careful with deferred journaling. If the journal simply records a dirty block ID and attempts a background memory copy later, an unrelated thread might be halfway through mutating a neighboring node in that exact same block. The result? A torn write and a permanently corrupted WAL.
+Because multiple logical nodes often share the exact same 4KB physical block, one has to be very careful with deferred journaling. If the journal simply records a dirty block ID and attempts a background memory copy later, an unrelated thread might be halfway through mutating a neighboring node in that exact same block. The result? A torn write and a corrupted WAL.
 
 ## The Solution: Using VFS Refcounts for Safe Copies
 To get fast, deferred logging without torn writes, I ended up piggybacking on the natural transaction reference counting (`t_updates`) of the VFS threads.
@@ -31,6 +32,6 @@ When `t_updates == 0`, we have a strict guarantee:
 1. No VFS threads are currently mutating *any* blocks in the transaction.
 2. The memory for all involved blocks has fully settled into a safe, untorn state.
 
-This became the safe spot to copy the memory. By deferring all block copying until the exact millisecond `t_updates` hits 0, and maintaining a lightweight O(1) `needs_copy` hash map during the hot-path to prevent quadratic copying loops, the overhead vanished. 
+This became the safe spot to copy the memory. By deferring all block copying until the exact millisecond `t_updates` hits 0, (and maintaining a lightweight O(1) `needs_copy` hash map during the hot-path to prevent quadratic copying loops because `t_updates == 0` can happen multiple times during one transaction lifecycle), the overhead vanished.
 
 The journaled `ext2fs` now performs almost on par with the unjournaled version, even under heavy loads, while providing benefits.
