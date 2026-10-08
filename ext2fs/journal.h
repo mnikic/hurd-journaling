@@ -37,6 +37,12 @@
 #define JOURNAL_DEBUG 0		/* Set to enable (very chatty) debug messages. */
 #endif
 
+/* Set to count journal events and print them when a journal stops.
+   Implied by JOURNAL_DEBUG, but can be set alone.  */
+#ifndef JOURNAL_STATS
+#define JOURNAL_STATS JOURNAL_DEBUG
+#endif
+
 #if JOURNAL_DEBUG
 #define JRNL_LOG_DEBUG(fmt, ...)                                             \
     do {                                                                     \

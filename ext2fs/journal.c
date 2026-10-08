@@ -133,6 +133,31 @@
 
 #define JRNL_INTERCEPT_CAPACITY 1024
 
+#if JOURNAL_STATS
+/* Event counts over the life of the translator, printed when a journal
+   stops.  They show whether a workload reaches the paths that guard
+   against rare races: overlays only happen when an intercepted page is
+   read back.
+   Updated with relaxed atomics, so that any thread can count without
+   the journal lock.  */
+static unsigned long journal_stat_commits;
+static unsigned long journal_stat_intercepts;
+static unsigned long journal_stat_pool_full;
+static unsigned long journal_stat_retired;
+static unsigned long journal_stat_reads;
+static unsigned long journal_stat_overlays;
+static unsigned long journal_stat_pager_writes;
+static unsigned long journal_stat_checkpoint_writes;
+static unsigned long journal_stat_forced_checkpoints;
+# define JRNL_STAT_ADD(counter, n) \
+  ((void) __atomic_fetch_add (&(counter), (n), __ATOMIC_RELAXED))
+# define JRNL_STAT_INC(counter) JRNL_STAT_ADD (counter, 1)
+# define JRNL_STAT_GET(counter) __atomic_load_n (&(counter), __ATOMIC_RELAXED)
+#else
+# define JRNL_STAT_INC(counter) ((void) 0)
+# define JRNL_STAT_ADD(counter, n) ((void) 0)
+#endif
+
 
 /* The handle this thread currently holds, and how many starts are open
    on it.  One RPC is one thread, and its metadata updates must all land
@@ -1705,6 +1730,8 @@ journal_flush_intercepted_payloads (journal_t *journal,
 	  if (jb->jb_intercepted_data == flush_data)
 	    jb->jb_intercepted_data = NULL;
 
+	  JRNL_STAT_INC (journal_stat_retired);
+
 	  if (!err)
 	    journal_notify_blocks_written_locked (jb->jb_blocknr, 1);
 
@@ -1797,6 +1824,8 @@ journal_flush_checkpoints_locked (journal_t *journal, uint32_t target_free,
 		  err =
 		    store_write (store, dev_block, data, block_size, &amount);
 		  JOURNAL_LOCK (journal);
+		  if (!err && amount == block_size)
+		    JRNL_STAT_INC (journal_stat_checkpoint_writes);
 		}
 
 	      /* ONLY mark as written if the hardware actually accepted the full block! */
@@ -1891,6 +1920,7 @@ journal_flush_checkpoints_locked (journal_t *journal, uint32_t target_free,
 static void
 journal_force_checkpoint_locked (journal_t *journal)
 {
+  JRNL_STAT_INC (journal_stat_forced_checkpoints);
   JRNL_LOG_DEBUG
     ("[CHECKPOINT] Journal Full (Free: %u). Actively checkpointing...",
      journal->j_free);
@@ -2786,6 +2816,7 @@ journal_commit_running_transaction_locked (journal_t *journal)
   journal->j_last_committed_tid = txn->t_tid;
 
   txn->t_state = T_FINISHED;
+  JRNL_STAT_INC (journal_stat_commits);
   txn->t_checkpoint_next = NULL;
   journal->j_committing_transaction = NULL;
   journal_freed_extent_t *freed_extents = txn->t_freed_blocks;
@@ -3269,10 +3300,12 @@ retry:
         }
 
       intercepted = 1;
+      JRNL_STAT_INC (journal_stat_intercepts);
       JRNL_LOG_DEBUG ("Intercepted rushed pager write for block %u", b);
       return intercepted;
 
 pool_full:
+      JRNL_STAT_INC (journal_stat_pool_full);
       JRNL_LOG_WARN
         ("VM Deadlock & Intercept Pool Full! Bypassing WAL for block %u.", b);
 
@@ -3486,6 +3519,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 
 	  /* Convert bytes actually written back into full blocks */
 	  size_t actual_blocks = chunk_amount >> log2_block_size;
+	  JRNL_STAT_ADD (journal_stat_pager_writes, actual_blocks);
 
 	  if (actual_blocks > 0)
 	    flush_needed =
@@ -3560,6 +3594,7 @@ journal_overlay_intercepted (block_t start_block, size_t length, void *buf)
 
 	  /* Overlay the fresh RAM data safely! */
 	  memcpy (out_ptr + offset, jb->jb_intercepted_data, copy_len);
+	  JRNL_STAT_INC (journal_stat_overlays);
 	  JRNL_LOG_DEBUG
            ("Intercept Overlay successful for block %u (copied %zu bytes)", b,
             copy_len);
@@ -3584,6 +3619,8 @@ journal_store_read (block_t start_block, size_t length, void **buf,
   store_offset_t dev_block =
     (store_offset_t) start_block << log2_dev_blocks_per_fs_block;
 
+  JRNL_STAT_INC (journal_stat_reads);
+
   error_t err = store_read (store, dev_block, length, buf, read_amount);
   if (!err && ext2_journal && *read_amount > 0)
     /* Pass the actual amount read, just in case it was a short read */
@@ -3591,6 +3628,35 @@ journal_store_read (block_t start_block, size_t length, void **buf,
 
   return err;
 }
+
+#if JOURNAL_STATS
+/* Print the event counts when JOURNAL stops.  */
+static void
+journal_print_stats (journal_t *journal)
+{
+  (void) journal;
+  fprintf (stderr, "ext2fs: journal statistics: %lu commits, %lu intercepts "
+	   "(%lu with the pool full), %lu intercepted blocks written home, "
+	   "%lu reads, %lu overlays; "
+	   "home writes: %lu by the pagers (data included), "
+	   "%lu by checkpoints, %lu forced checkpoints\n",
+	   JRNL_STAT_GET (journal_stat_commits),
+	   JRNL_STAT_GET (journal_stat_intercepts),
+	   JRNL_STAT_GET (journal_stat_pool_full),
+	   JRNL_STAT_GET (journal_stat_retired),
+	   JRNL_STAT_GET (journal_stat_reads),
+	   JRNL_STAT_GET (journal_stat_overlays),
+	   JRNL_STAT_GET (journal_stat_pager_writes),
+	   JRNL_STAT_GET (journal_stat_checkpoint_writes),
+	   JRNL_STAT_GET (journal_stat_forced_checkpoints));
+}
+#else
+static inline void
+journal_print_stats (journal_t *journal)
+{
+  (void) journal;
+}
+#endif
 
 /* Free what JOURNAL holds, once journal_quiesce_checkpoints has emptied
    it and ext2_journal no longer points to it.  The journal_t itself, with
@@ -3683,6 +3749,8 @@ diskfs_journal_shutdown (void)
   error_t err = store_sync (store);
   if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
     ext2_warning ("device flush failed: %s", strerror (err));
+
+  journal_print_stats (journal);
 
   /* Left set when the log is not empty, so that e2fsck replays it.
      The journal is then kept too, as its transactions are.  */
