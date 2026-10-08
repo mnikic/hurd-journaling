@@ -132,6 +132,13 @@ _pokel_exec (struct pokel *pokel, int sync, int wait)
       if (sync)
 	{
 	  ext2_debug ("syncing 0x%lx[%ul]", pl->offset, pl->length);
+	  if (pokel->image == disk_cache)
+	    journal_stat_sync_request (pokel == &global_pokel
+				       ? EXT2_SYNC_GLOBAL_POKEL
+				       : EXT2_SYNC_NODE_POKEL,
+				       (round_block (pl->offset + pl->length)
+					- trunc_block (pl->offset))
+				       >> log2_block_size);
 	  pager_sync_some (pokel->pager, pl->offset, pl->length, wait);
 	}
 

@@ -563,6 +563,18 @@ extern pthread_spinlock_t modified_global_blocks_lock;
    applicable, or a reference is taken to one of these functions, an
    implementation is provided in 'xinl.c'.  */
 extern int global_block_modified (block_t block);
+/* TESTING ONLY: count the blocks each source asks the disk pager to
+   write, with JOURNAL_STATS.  */
+enum ext2_sync_source
+{
+  EXT2_SYNC_GLOBAL_POKEL,	/* sync_global, and the global pokel */
+  EXT2_SYNC_NODE_POKEL,		/* node pokels: file updates, indirect blocks */
+  EXT2_SYNC_GLOBAL_PTR,		/* sync_global_ptr */
+  EXT2_SYNC_CACHE_RETURN	/* disk_cache_return_unused */
+};
+void journal_stat_sync_request (enum ext2_sync_source source,
+				unsigned long blocks);
+
 extern void record_global_poke (void *ptr);
 extern void sync_global_ptr (void *bptr, int wait);
 extern void flush_global_ptr (void *ptr, int wait);
@@ -621,6 +633,7 @@ sync_global_ptr (void *ptr, int wait)
   ext2_debug ("(%p -> %u)", ptr, block);
   global_block_modified (block);
   _disk_cache_block_deref (block_ptr);
+  journal_stat_sync_request (EXT2_SYNC_GLOBAL_PTR, 1);
   pager_sync_some (diskfs_disk_pager,
 		   block_ptr - disk_cache, block_size, wait);
 }

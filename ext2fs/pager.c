@@ -1164,6 +1164,8 @@ disk_cache_return_unused (void)
 	    if (pending_end >= 0)
 	      {
 		pthread_mutex_unlock (&disk_cache_lock);
+		journal_stat_sync_request (EXT2_SYNC_CACHE_RETURN,
+					   pending_end - pending_begin);
 		pager_return_some (diskfs_disk_pager,
 				   pending_begin * vm_page_size,
 				   (pending_end - pending_begin)
@@ -1180,10 +1182,14 @@ disk_cache_return_unused (void)
 
   /* Return last region, if there is such.   */
   if (pending_end >= 0)
-    pager_return_some (diskfs_disk_pager,
-		       pending_begin * vm_page_size,
-		       (pending_end - pending_begin) * vm_page_size,
-		       1);
+    {
+      journal_stat_sync_request (EXT2_SYNC_CACHE_RETURN,
+				 pending_end - pending_begin);
+      pager_return_some (diskfs_disk_pager,
+			 pending_begin * vm_page_size,
+			 (pending_end - pending_begin) * vm_page_size,
+			 1);
+    }
   else
     {
       ext2_debug ("ext2fs: disk cache is starving\n");

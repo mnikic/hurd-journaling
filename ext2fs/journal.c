@@ -149,6 +149,11 @@ static unsigned long journal_stat_overlays;
 static unsigned long journal_stat_pager_writes;
 static unsigned long journal_stat_checkpoint_writes;
 static unsigned long journal_stat_forced_checkpoints;
+static unsigned long journal_stat_sync_global_pokel;	/* TESTING ONLY */
+static unsigned long journal_stat_sync_node_pokel;	/* TESTING ONLY */
+static unsigned long journal_stat_sync_global_ptr;	/* TESTING ONLY */
+static unsigned long journal_stat_sync_cache_return;	/* TESTING ONLY */
+static unsigned long journal_stat_intercepts_dir;	/* TESTING ONLY */
 # define JRNL_STAT_ADD(counter, n) \
   ((void) __atomic_fetch_add (&(counter), (n), __ATOMIC_RELAXED))
 # define JRNL_STAT_INC(counter) JRNL_STAT_ADD (counter, 1)
@@ -205,6 +210,9 @@ typedef struct journal_buffer
   char *jb_intercepted_data;
   uint8_t jb_is_flushing;	/* 1 if commit thread is actively flushing it. */
   uint8_t jb_escaped;
+  uint8_t jb_external;		/* TESTING ONLY: reserved through
+				   journal_get_write_access_external, a
+				   directory block.  */
   uint8_t jb_awaiting_data;	/* Reserved by
 				   journal_get_write_access_external, and
 				   the shadow has no image of the block's
@@ -704,6 +712,7 @@ journal_alloc_buffer (journal_t *journal)
       jb->jb_is_flushing = 0;
       jb->jb_escaped = 0;
       jb->jb_awaiting_data = 0;
+      jb->jb_external = 0;
       goto out;
     }
   jb = calloc (1, sizeof (journal_buffer_t));
@@ -2107,6 +2116,8 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
       /* Even if it is already contained in the map we have still been
        * notified about the new change and therefore we must copy it
        * over once more when the time comes. */
+      if (!hydrate)
+	jb->jb_external = 1;
       if (hydrate)
 	jb->jb_awaiting_data = 0;
       else if (jb->needs_copy)
@@ -2142,6 +2153,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
   /* Brand new block for us? We will definitively want to copy it over. */
   new_jb->needs_copy = hydrate;
   new_jb->jb_awaiting_data = !hydrate;
+  new_jb->jb_external = !hydrate;
   txn->t_outstanding_io++;
   journal_logged_ref_locked (ext2_journal, fs_blocknr);
 out:
@@ -3301,6 +3313,8 @@ retry:
 
       intercepted = 1;
       JRNL_STAT_INC (journal_stat_intercepts);
+      if ((jb_run ? jb_run : jb_commit)->jb_external)
+	JRNL_STAT_INC (journal_stat_intercepts_dir);
       JRNL_LOG_DEBUG ("Intercepted rushed pager write for block %u", b);
       return intercepted;
 
@@ -3629,6 +3643,31 @@ journal_store_read (block_t start_block, size_t length, void **buf,
   return err;
 }
 
+void
+journal_stat_sync_request (enum ext2_sync_source source, unsigned long blocks)
+{
+#if JOURNAL_STATS
+  switch (source)
+    {
+    case EXT2_SYNC_GLOBAL_POKEL:
+      JRNL_STAT_ADD (journal_stat_sync_global_pokel, blocks);
+      break;
+    case EXT2_SYNC_NODE_POKEL:
+      JRNL_STAT_ADD (journal_stat_sync_node_pokel, blocks);
+      break;
+    case EXT2_SYNC_GLOBAL_PTR:
+      JRNL_STAT_ADD (journal_stat_sync_global_ptr, blocks);
+      break;
+    case EXT2_SYNC_CACHE_RETURN:
+      JRNL_STAT_ADD (journal_stat_sync_cache_return, blocks);
+      break;
+    }
+#else
+  (void) source;
+  (void) blocks;
+#endif
+}
+
 #if JOURNAL_STATS
 /* Print the event counts when JOURNAL stops.  */
 static void
@@ -3639,7 +3678,10 @@ journal_print_stats (journal_t *journal)
 	   "(%lu with the pool full), %lu intercepted blocks written home, "
 	   "%lu reads, %lu overlays; "
 	   "home writes: %lu by the pagers (data included), "
-	   "%lu by checkpoints, %lu forced checkpoints\n",
+	   "%lu by checkpoints, %lu forced checkpoints; "
+	   "disk pager writes requested: %lu global pokel, %lu node pokels, "
+	   "%lu sync_global_ptr, %lu disk cache returns; "
+	   "%lu of the intercepts were directory blocks\n",
 	   JRNL_STAT_GET (journal_stat_commits),
 	   JRNL_STAT_GET (journal_stat_intercepts),
 	   JRNL_STAT_GET (journal_stat_pool_full),
@@ -3648,7 +3690,12 @@ journal_print_stats (journal_t *journal)
 	   JRNL_STAT_GET (journal_stat_overlays),
 	   JRNL_STAT_GET (journal_stat_pager_writes),
 	   JRNL_STAT_GET (journal_stat_checkpoint_writes),
-	   JRNL_STAT_GET (journal_stat_forced_checkpoints));
+	   JRNL_STAT_GET (journal_stat_forced_checkpoints),
+	   JRNL_STAT_GET (journal_stat_sync_global_pokel),
+	   JRNL_STAT_GET (journal_stat_sync_node_pokel),
+	   JRNL_STAT_GET (journal_stat_sync_global_ptr),
+	   JRNL_STAT_GET (journal_stat_sync_cache_return),
+	   JRNL_STAT_GET (journal_stat_intercepts_dir));
 }
 #else
 static inline void
