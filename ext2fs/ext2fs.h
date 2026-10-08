@@ -275,6 +275,9 @@ extern hurd_ihash_t disk_cache_bptr;
 extern struct disk_cache_info *disk_cache_info;
 /* Lock for these mappings */
 extern pthread_mutex_t disk_cache_lock;
+
+/* TESTING ONLY: evict the disk-cache page of BLOCK, without waiting.  */
+void ext2_test_evict_block (block_t block);
 /* Fired when a re-association is done.  */
 extern pthread_cond_t disk_cache_reassociation;
 

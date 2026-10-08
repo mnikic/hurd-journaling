@@ -1449,6 +1449,25 @@ _disk_cache_block_deref (void *ptr)
 }
 
 /* Not used.  */
+/* TESTING ONLY.  Have the kernel write back and evict the disk-cache page
+   of BLOCK, if BLOCK is mapped, without waiting.  The next access reads
+   it back through journal_store_read.  The slot can be remapped before
+   the request arrives; another page is then evicted, which is harmless.  */
+void
+ext2_test_evict_block (block_t block)
+{
+  char *ptr;
+
+  pthread_mutex_lock (&disk_cache_lock);
+  ptr = hurd_ihash_find (disk_cache_bptr, block);
+  pthread_mutex_unlock (&disk_cache_lock);
+
+  if (ptr)
+    pager_return_some (diskfs_disk_pager,
+		       trunc_page (ptr - (char *) disk_cache),
+		       vm_page_size, 0);
+}
+
 int
 disk_cache_block_is_ref (block_t block)
 {

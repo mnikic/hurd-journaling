@@ -163,6 +163,7 @@ static unsigned long journal_stat_intercepts_dir;	/* TESTING ONLY */
    at any time.  Changed under the journal lock.  */
 static unsigned long journal_stat_buffers;
 static unsigned long journal_stat_peak_buffers;
+static unsigned long journal_stat_evictions;	/* TESTING ONLY */
 # define JRNL_STAT_ADD(counter, n) \
   ((void) __atomic_fetch_add (&(counter), (n), __ATOMIC_RELAXED))
 # define JRNL_STAT_INC(counter) JRNL_STAT_ADD (counter, 1)
@@ -185,6 +186,41 @@ static unsigned long journal_stat_peak_buffers;
 # define JRNL_STAT_BUFFER_ALLOC() ((void) 0)
 # define JRNL_STAT_BUFFER_FREE() ((void) 0)
 #endif
+
+/* TESTING ONLY.  Blocks whose pager write was intercepted, for a test
+   thread to evict about every 100 ms, so that the next access reads them
+   back while their home write is still deferred: the overlay path, and
+   the re-read window right after a commit, then run all the time instead
+   of only under memory starvation.  Under journal_test_evict_lock, which
+   may be taken with the journal lock held; overflow is dropped.  */
+#define JRNL_TEST_EVICT_QUEUE 256
+static block_t journal_test_evict[JRNL_TEST_EVICT_QUEUE];
+static unsigned journal_test_evict_head, journal_test_evict_tail;
+static pthread_mutex_t journal_test_evict_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void *
+journal_test_evictor (void *arg)
+{
+  (void) arg;
+  for (;;)
+    {
+      block_t evict[JRNL_TEST_EVICT_QUEUE];
+      unsigned n = 0;
+
+      usleep (100 * 1000);
+
+      pthread_mutex_lock (&journal_test_evict_lock);
+      while (journal_test_evict_tail != journal_test_evict_head)
+	evict[n++] = journal_test_evict[journal_test_evict_tail++
+					% JRNL_TEST_EVICT_QUEUE];
+      JRNL_STAT_ADD (journal_stat_evictions, n);
+      pthread_mutex_unlock (&journal_test_evict_lock);
+
+      for (unsigned i = 0; i < n; i++)
+	ext2_test_evict_block (evict[i]);
+    }
+  return NULL;
+}
 
 
 #if JOURNAL_DEBUG
@@ -3260,6 +3296,18 @@ journal_create (struct node *journal_inode)
   journal_install_dump_handlers ();
 #endif
 
+  /* TESTING ONLY: one evictor for the life of the translator.  */
+  static int evictor_started;
+  if (!evictor_started)
+    {
+      pthread_t t;
+      if (pthread_create (&t, NULL, journal_test_evictor, NULL) == 0)
+	{
+	  pthread_detach (t);
+	  evictor_started = 1;
+	}
+    }
+
   return j;
 }
 
@@ -3576,6 +3624,12 @@ retry:
       JRNL_STAT_INC (journal_stat_intercepts);
       if (jb->jb_external)
 	JRNL_STAT_INC (journal_stat_intercepts_dir);
+      pthread_mutex_lock (&journal_test_evict_lock);
+      if (journal_test_evict_head - journal_test_evict_tail
+	  < JRNL_TEST_EVICT_QUEUE)
+	journal_test_evict[journal_test_evict_head++ % JRNL_TEST_EVICT_QUEUE]
+	  = b;
+      pthread_mutex_unlock (&journal_test_evict_lock);
       JRNL_LOG_DEBUG ("Intercepted rushed pager write for block %u", b);
       return intercepted;
     }
@@ -4002,7 +4056,8 @@ journal_print_stats (journal_t *journal)
 	   "disk pager writes requested: %lu global pokel, %lu node pokels, "
 	   "%lu sync_global_ptr, %lu disk cache returns; "
 	   "%lu of the intercepts were directory blocks; "
-	   "at most %lu journal buffers in use (%lu MB of shadows)\n",
+	   "at most %lu journal buffers in use (%lu MB of shadows); "
+	   "%lu test evictions\n",
 	   JRNL_STAT_GET (journal_stat_commits),
 	   JRNL_STAT_GET (journal_stat_intercepts),
 	   JRNL_STAT_GET (journal_stat_deferred_writes),
@@ -4021,7 +4076,8 @@ journal_print_stats (journal_t *journal)
 	   JRNL_STAT_GET (journal_stat_intercepts_dir),
 	   JRNL_STAT_GET (journal_stat_peak_buffers),
 	   (JRNL_STAT_GET (journal_stat_peak_buffers)
-	    * sizeof (journal_buffer_t)) >> 20);
+	    * sizeof (journal_buffer_t)) >> 20,
+	   JRNL_STAT_GET (journal_stat_evictions));
 }
 #else
 static inline void
