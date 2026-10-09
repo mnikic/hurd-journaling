@@ -88,9 +88,13 @@ ext2_alloc_block (struct node *node, block_t goal, int zero)
       ext2_debug ("preallocation miss (%lu/%lu)",
 		  alloc_hits, ++alloc_attempts);
       ext2_discard_prealloc (node);
+      /* No preallocation with a journal: the preallocated blocks would be
+	 committed as allocated in the bitmap, while only this node's
+	 memory owns them, and a crash would leak them.  */
       result = ext2_new_block
 	(goal,
-	 S_ISREG (node->dn_stat.st_mode)
+	 ext2_journal ? 0
+	 : S_ISREG (node->dn_stat.st_mode)
 	 ? (sblock->s_prealloc_blocks ?: EXT2_DEFAULT_PREALLOC_BLOCKS)
 	 : (S_ISDIR (node->dn_stat.st_mode)
 	    && EXT2_HAS_COMPAT_FEATURE(sblock,
