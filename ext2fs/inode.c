@@ -594,26 +594,27 @@ write_all_disknodes (void)
 
 /* Sync the info in NP->dn_stat and any associated format-specific
    information to disk.  If WAIT is true, then return only after the
-   physicial media has been completely updated.  */
+   physicial media has been completely updated.
+
+   NP is locked, so with a journal the caller must already hold a handle,
+   taken before the lock: a start here could wait for a commit to drain
+   while holding it.  The inode goes into that handle's transaction, and
+   with WAIT the caller's tail commits it.  */
 void
 diskfs_write_disknode (struct node *np, int wait)
 {
   error_t err;
-  diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
+  diskfs_transaction_t *txn = journal_thread_transaction ();
 
   struct ext2_inode *di = write_node (np);
   if (!di)
-    {
-      diskfs_journal_stop_transaction (txn);
-      return;
-    }
+    return;
 
   if (ext2_journal)
     {
       record_global_poke (di);
       if (wait)
         diskfs_journal_set_sync (txn);
-      diskfs_journal_stop_transaction (txn);
       return;
     }
 
