@@ -357,7 +357,7 @@ extern struct journal *ext2_journal;
  *
  * In between the invocation of this function and the commit, journal will be
  * intercepting pager's writes to this block and instead of to disk they will
- * be temporarily stored in journal's caches.
+ * go into the journal's copy of it, to be written home after the commit.
  */
 error_t
 journal_get_write_access (diskfs_transaction_t * txn, block_t fs_blocknr);
