@@ -73,10 +73,10 @@ enum journal_state journal_check (struct node *journal_inode);
  * Replaces raw store_write calls to safely intercept deadlock hazards.
  * When the pager attempts to write a block that is actively locked by a
  * running or committing transaction (rushing the transaction commit cycle),
- * this function redirects the payload into temporary storage (the Lifeboat
- * cache). This preserves the Write-Ahead Log (WAL) ordering and prevents
- * the VM pager from deadlocking the filesystem. Safe blocks are coalesced
- * and written normally to disk.
+ * this function takes the payload into the block's journal shadow and
+ * writes it home after the commit.  This preserves the Write-Ahead Log
+ * (WAL) ordering and prevents the VM pager from deadlocking the
+ * filesystem.  Safe blocks are coalesced and written normally to disk.
  */
 error_t
 journal_store_write (block_t start_block, size_t length, void *buf,
@@ -84,12 +84,10 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 
 /**
  * A block device filter layer for the VFS pager's read path.
- * Passes the read through to the underlying physical disk, and then
- * transparently overlays any fresh data from the temporary Lifeboat cache.
- * This ensures that reads of blocks which were recently intercepted and
- * redirected to temporary storage (due to rushing the transaction cycle)
- * return the most up-to-date data, maintaining strict cache coherence
- * without blocking the pager.
+ * Passes the read through to the underlying physical disk, and returns
+ * the journal shadow instead for blocks whose pager writes were taken in
+ * before their transaction committed, so that such reads get the latest
+ * data without blocking the pager.
  */
 error_t
 journal_store_read (block_t start_block, size_t length, void **buf,
