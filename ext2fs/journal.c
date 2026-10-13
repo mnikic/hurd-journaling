@@ -229,9 +229,12 @@ typedef struct journal_buffer
 				   copy may be older and is dropped.  */
   uint8_t jb_is_flushing;	/* 1 if commit thread is actively flushing it. */
   uint8_t jb_escaped;
-  uint8_t jb_external;		/* TESTING ONLY: reserved through
-				   journal_get_write_access_external, a
-				   directory block.  */
+  uint8_t jb_external;		/* Reserved through
+				   journal_get_write_access_external: a
+				   directory block, whose live bytes are in
+				   the directory's file pager.  The disk
+				   cache's copy is stale and must never
+				   reach the shadow.  */
   uint8_t jb_awaiting_data;	/* Reserved by
 				   journal_get_write_access_external, and
 				   the shadow has no image of the block's
@@ -1310,6 +1313,7 @@ journal_stop_transaction_locked (journal_t *journal,
 	         dirty that lands while we copy unlocked sets it again and
 	         the next sweep recopies.  Clearing after the copy could
 	         overwrite that re-arm and lose the recopy. */
+	      assert_backtrace (!jb_exp->jb_external);
 	      jb_exp->needs_copy = 0;
 	      jb_exp->jb_sweeping = 1;
 	      jb_exp->jb_sweep_raced = 0;
@@ -2071,8 +2075,14 @@ journal_mark_dirty (diskfs_transaction_t *txn, block_t fs_blocknr)
 
   /* The sweep copies the new edit.  needs_flush stays as it is: until the
      flush after the commit, the home copy is stale either way, and a page
-     written out since is read back from the shadow.  */
-  jb->needs_copy = 1;
+     written out since is read back from the shadow.  A directory block's
+     edits come through journal_mark_dirty_external instead: the sweep
+     would copy the disk cache's stale bytes.  */
+  assert_backtrace (!jb->jb_external);
+  if (jb->jb_external)
+    JRNL_LOG_WARN ("mark_dirty called on directory block %u.", fs_blocknr);
+  else
+    jb->needs_copy = 1;
 
   /* Reset the physical write flag so the Checkpoint thread knows to
      overwrite the disk with our pristine shadow buffer later. */
@@ -2117,6 +2127,9 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
       /* Even if it is already contained in the map we have still been
        * notified about the new change and therefore we must copy it
        * over once more when the time comes. */
+      /* A directory block is never reserved again through the disk
+	 cache, whose copy of it is stale.  */
+      assert_backtrace (!(hydrate && jb->jb_external));
       if (!hydrate)
 	jb->jb_external = 1;
       if (hydrate)
@@ -2125,7 +2138,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
 	/* The shadow is due to be copied from the disk cache, which does
 	 * not hold the caller's edit. */
 	jb->jb_awaiting_data = 1;
-      jb->needs_copy = hydrate;
+      jb->needs_copy = hydrate && !jb->jb_external;
       if (jb->jb_is_written)
 	{
 	  /* The pager rushed this block previously, but VFS is dirtying it again.
@@ -3247,7 +3260,7 @@ out:
  * MUST be called with JOURNAL_LOCK held.
  */
 static int
-journal_handle_write_hazard_locked (block_t b, char *b_data)
+journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache)
 {
   int intercepted = 0;
   diskfs_transaction_t *commit;
@@ -3276,6 +3289,18 @@ retry:
   if (jb_run || jb_commit)
     {
       journal_buffer_t *jb = jb_run ? jb_run : jb_commit;
+      int stale = disk_cache && ((jb_run && jb_run->jb_external)
+				 || (jb_commit && jb_commit->jb_external));
+
+      /* The disk cache writing a directory block that a transaction holds
+	 writes its stale copy: the live bytes are in the directory's file
+	 pager.  It must neither replace the shadow nor go home.  */
+      assert_backtrace (!stale);
+      if (stale)
+	{
+	  JRNL_LOG_WARN ("Disk cache wrote directory block %u; dropped.", b);
+	  return 1;
+	}
 
       if (!jb_run && commit->t_state == T_FLUSHING)
 	{
@@ -3484,7 +3509,7 @@ journal_clear_flushing_locked (block_t start_block, size_t n_blocks)
  */
 error_t
 journal_store_write (block_t start_block, size_t length, void *buf,
-		     size_t *amount)
+		     size_t *amount, int disk_cache)
 {
   if (!ext2_journal || length == 0)
     {
@@ -3507,7 +3532,8 @@ journal_store_write (block_t start_block, size_t length, void *buf,
       block_t b = start_block + i;
       char *b_data = in_ptr + (i << log2_block_size);
 
-      int intercepted = journal_handle_write_hazard_locked (b, b_data);
+      int intercepted =
+	journal_handle_write_hazard_locked (b, b_data, disk_cache);
 
       if (intercepted)
 	{

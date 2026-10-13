@@ -310,6 +310,8 @@ struct pending_blocks
   void *buf;
   /* And an offset into BUF.  */
   int offs;
+  /* Whether BUF is a page of the disk cache rather than of a file.  */
+  int disk_cache;
 };
 
 /* Write the any pending blocks in PB.  */
@@ -328,11 +330,13 @@ pending_blocks_write (struct pending_blocks *pb)
 	{
 	  void *page_buf = get_page_buf ();
 	  memcpy ((void *)page_buf, pb->buf + pb->offs, length);
-	  err = journal_store_write (pb->block, length, page_buf, &amount);
+	  err = journal_store_write (pb->block, length, page_buf, &amount,
+				     pb->disk_cache);
 	  free_page_buf (page_buf);
 	}
       else
-	err = journal_store_write (pb->block, length, pb->buf, &amount);
+	err = journal_store_write (pb->block, length, pb->buf, &amount,
+				   pb->disk_cache);
 
       if (err)
 	return err;
@@ -347,9 +351,10 @@ pending_blocks_write (struct pending_blocks *pb)
 }
 
 static void
-pending_blocks_init (struct pending_blocks *pb, void *buf)
+pending_blocks_init (struct pending_blocks *pb, void *buf, int disk_cache)
 {
   pb->buf = buf;
+  pb->disk_cache = disk_cache;
   pb->block = 0;
   pb->num = 0;
   pb->offs = 0;
@@ -430,7 +435,7 @@ file_pager_write_pages (struct node *node,
       block_t prev = 0;
       block_t blk = 0;
 
-      pending_blocks_init (&pb, (void *) (buf + done));
+      pending_blocks_init (&pb, (void *) (buf + done), 0);
 
       while (blocks_built < max_blocks && built < left)
 	{
@@ -535,7 +540,7 @@ file_pager_write_page (struct node *node, vm_offset_t offset, void *buf)
   block_t block;
   int left = vm_page_size;
 
-  pending_blocks_init (&pb, buf);
+  pending_blocks_init (&pb, buf, 0);
 
   /* Holding diskfs_node_disknode (node)->alloc_lock effectively locks NODE->allocsize,
      at least for the cases we care about: pager_unlock_page,
@@ -640,7 +645,7 @@ disk_pager_write_page (vm_offset_t page, void *buf)
     {
       struct pending_blocks pb;
 
-      pending_blocks_init (&pb, buf);
+      pending_blocks_init (&pb, buf, 1);
 
       while (length > 0 && !err)
 	{
@@ -672,7 +677,7 @@ disk_pager_write_page (vm_offset_t page, void *buf)
   else
     {
       block_t start_block = offset >> log2_block_size;
-      err = journal_store_write (start_block, length, buf, &amount);
+      err = journal_store_write (start_block, length, buf, &amount, 1);
       if (!err && length != amount)
 	err = EIO;
     }
