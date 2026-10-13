@@ -944,8 +944,7 @@ diskfs_file_update (struct node *node, int wait)
        data above on disk; waiting here would make the inode update force
        a commit.  */
     wait = 0;
-  else
-    pokel_sync (&diskfs_node_disknode (node)->indir_pokel, wait);
+  pokel_sync_or_release (&diskfs_node_disknode (node)->indir_pokel, wait);
 
   /* Every caller holds a handle except diskfs_S_file_sync, which opens
      none around the writeback above (holding one there would stall every
@@ -1159,7 +1158,7 @@ disk_cache_return_unused (void)
     *(volatile char *)(disk_cache + i);
 
   /* Release some references to cached blocks.  */
-  pokel_sync (&global_pokel, 1);
+  pokel_sync_or_release (&global_pokel, 1);
 
   /* Return unused pages that are in core.  */
   int pending_begin = -1, pending_end = -1;
@@ -1662,7 +1661,9 @@ diskfs_sync_everything (int wait)
   error_t sync_one (void *v_p)
     {
       struct pager *p = v_p;
-      pager_sync (p, wait);
+      /* As in diskfs_file_update, a directory's blocks are journaled.  */
+      if (!ext2_journal || !S_ISDIR (pager_get_upi (p)->node->dn_stat.st_mode))
+	pager_sync (p, wait);
       return 0;
     }
 
@@ -1672,7 +1673,7 @@ diskfs_sync_everything (int wait)
   diskfs_journal_commit_transaction (txn);
 
   /* Do things on the the disk pager.  */
-  sync_global (wait);
+  pokel_sync_or_release (&global_pokel, wait);
   if (wait && !ext2_journal)
     {
       error_t err = store_sync (store);
