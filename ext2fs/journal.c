@@ -150,6 +150,7 @@ static unsigned long journal_stat_reads;
 static unsigned long journal_stat_overlays;
 static unsigned long journal_stat_rereads;
 static unsigned long journal_stat_late_edits;
+static unsigned long journal_stat_old_copies;
 static unsigned long journal_stat_pager_writes;
 static unsigned long journal_stat_checkpoint_writes;
 static unsigned long journal_stat_forced_checkpoints;
@@ -3382,7 +3383,8 @@ out:
  * MUST be called with JOURNAL_LOCK held.
  */
 static int
-journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache)
+journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache,
+				    int resident)
 {
   int intercepted = 0;
   diskfs_transaction_t *commit;
@@ -3407,7 +3409,18 @@ retry:
      write must wait for the commit.  The page goes into the shadow of
      the newest transaction holding the block, which serves reads until
      the flush after that commit writes it home.  No checkpoint is
-     touched.  */
+     touched.
+
+     A sync leaves the page RESIDENT and writes a copy the kernel took
+     when it was asked, which can be older than the shadow: an edit
+     reserved after that is already swept into it.  The page itself is
+     then dirty again, so any newer bytes reach us later.  With every
+     reservation swept, such a copy only defers the home write, so that
+     a read after a clean eviction gets the shadow.  While a sweep is
+     due or running, the copy can hold an edit the shadow lacks, and the
+     page can be evicted clean before the sweep reads it: the copy then
+     goes into the shadow, which the sweep reads back.  An older copy is
+     harmless there, since the page is dirty and the sweep reads it.  */
   if (jb_run || jb_commit)
     {
       journal_buffer_t *jb = jb_run ? jb_run : jb_commit;
@@ -3424,7 +3437,25 @@ retry:
 	  return 1;
 	}
 
-      if (!jb_run && commit->t_state == T_FLUSHING)
+      if (resident && jb->needs_copy)
+	/* The sweep reads the page later, or the shadow if it is gone.  */
+	memcpy (jb->jb_shadow_data, b_data, block_size);
+      else if (resident && jb->jb_sweeping)
+	/* Not raced: no edit is made during a sweep, and if the page is
+	   gone, its read waits for this write and gets these bytes.  */
+	memcpy (jb->jb_shadow_data, b_data, block_size);
+      else if (resident && !jb->jb_awaiting_data)
+	{
+	  /* An unreserved edit cannot be told apart from an old copy
+	     here; it shows up when the page is evicted.  */
+	  if (memcmp (jb->jb_shadow_data, b_data, block_size) != 0)
+	    {
+	      JRNL_STAT_INC (journal_stat_old_copies);
+	      JRNL_LOG_DEBUG ("Sync of block %u wrote a copy that differs "
+			      "from its shadow; kept the shadow.", b);
+	    }
+	}
+      else if (!jb_run && commit->t_state == T_FLUSHING)
 	{
 	  /* The commit is writing this shadow to the log, so it must not
 	     change.  The page differs from it only by an edit made since
@@ -3670,6 +3701,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
   char *in_ptr = (char *) buf;
   size_t i = 0;
   size_t total_written = 0;
+  int resident = pager_write_keeps_page ();
 
   JOURNAL_LOCK (ext2_journal);
   while (i < n_blocks)
@@ -3678,7 +3710,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
       char *b_data = in_ptr + (i << log2_block_size);
 
       int intercepted =
-	journal_handle_write_hazard_locked (b, b_data, disk_cache);
+	journal_handle_write_hazard_locked (b, b_data, disk_cache, resident);
 
       if (intercepted)
 	{
@@ -3923,7 +3955,8 @@ journal_print_stats (journal_t *journal)
   fprintf (stderr, "ext2fs: journal statistics: %lu commits, %lu intercepts, "
 	   "%lu deferred home writes, "
 	   "%lu reads, %lu overlays, %lu rereads, "
-	   "%lu late edits of committing blocks; "
+	   "%lu late edits of committing blocks, "
+	   "%lu old copies from syncs; "
 	   "home writes: %lu by the pagers (data included), "
 	   "%lu by checkpoints, %lu forced checkpoints; "
 	   "disk pager writes requested: %lu global pokel, %lu node pokels, "
@@ -3936,6 +3969,7 @@ journal_print_stats (journal_t *journal)
 	   JRNL_STAT_GET (journal_stat_overlays),
 	   JRNL_STAT_GET (journal_stat_rereads),
 	   JRNL_STAT_GET (journal_stat_late_edits),
+	   JRNL_STAT_GET (journal_stat_old_copies),
 	   JRNL_STAT_GET (journal_stat_pager_writes),
 	   JRNL_STAT_GET (journal_stat_checkpoint_writes),
 	   JRNL_STAT_GET (journal_stat_forced_checkpoints),
