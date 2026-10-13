@@ -1205,6 +1205,34 @@ disk_cache_return_unused (void)
     }
 }
 
+/* If BLOCK is mapped, add a reference to it and return a pointer to
+   it, and otherwise return NULL.  Never maps a block, or waits for one:
+   safe where disk_cache_block_ref's reclaiming is not.  */
+void *
+disk_cache_block_ref_mapped (block_t block)
+{
+  void *ptr;
+
+  pthread_mutex_lock (&disk_cache_lock);
+  ptr = hurd_ihash_find (disk_cache_bptr, block);
+  if (ptr)
+    {
+      int index = bptr_index (ptr);
+
+      /* Being mapped to it right now: not yet.  */
+      if (disk_cache_info[index].flags & DC_UNTOUCHED)
+	ptr = NULL;
+      else
+	{
+	  assert_backtrace (disk_cache_info[index].ref_count + 1
+			    > disk_cache_info[index].ref_count);
+	  disk_cache_info[index].ref_count++;
+	}
+    }
+  pthread_mutex_unlock (&disk_cache_lock);
+  return ptr;
+}
+
 /* Map block and return pointer to it.  */
 void *
 disk_cache_block_ref (block_t block)
