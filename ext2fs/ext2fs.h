@@ -569,6 +569,7 @@ extern void sync_global_ptr (void *bptr, int wait);
 extern void flush_global_ptr (void *ptr, int wait);
 extern void record_indir_poke (struct node *node, void *ptr);
 extern void sync_global (int wait);
+extern void pokel_sync_or_release (struct pokel *pokel, int wait);
 extern void alloc_sync (struct node *np);
 
 #if defined(__USE_EXTERN_INLINES) || defined(EXT2FS_DEFINE_EI)
@@ -661,6 +662,18 @@ sync_global (int wait)
 {
   ext2_debug ("%d", wait);
   pokel_sync (&global_pokel, wait);
+}
+
+/* Write POKEL's blocks home, or with a journal just release them: a
+   commit makes them durable and checkpointing writes them home, so
+   syncing their pages would only have the journal intercept them.  */
+EXT2FS_EI void
+pokel_sync_or_release (struct pokel *pokel, int wait)
+{
+  if (ext2_journal)
+    pokel_flush (pokel);
+  else
+    pokel_sync (pokel, wait);
 }
 
 /* Sync all allocation information and node NP if diskfs_synchronous.
