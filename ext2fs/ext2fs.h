@@ -279,6 +279,7 @@ extern pthread_mutex_t disk_cache_lock;
 extern pthread_cond_t disk_cache_reassociation;
 
 void *disk_cache_block_ref (block_t block);
+void *disk_cache_block_ref_mapped (block_t block);
 void disk_cache_block_ref_ptr (void *ptr);
 void _disk_cache_block_deref (void *ptr);
 #define disk_cache_block_deref(PTR)                             \
