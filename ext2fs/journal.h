@@ -77,10 +77,12 @@ enum journal_state journal_check (struct node *journal_inode);
  * writes it home after the commit.  This preserves the Write-Ahead Log
  * (WAL) ordering and prevents the VM pager from deadlocking the
  * filesystem.  Safe blocks are coalesced and written normally to disk.
+ * DISK_CACHE is true for writes of the disk cache, false for those of a
+ * file pager.
  */
 error_t
 journal_store_write (block_t start_block, size_t length, void *buf,
-		     size_t *amount);
+		     size_t *amount, int disk_cache);
 
 /**
  * A block device filter layer for the VFS pager's read path.
