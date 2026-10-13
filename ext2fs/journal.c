@@ -3436,6 +3436,29 @@ retry:
 	    {
 	      static unsigned warnings;
 	      int external = jb->jb_external;
+	      /* What changed, for finding the edit that was not reserved:
+		 in an inode table block, the offsets give the inode and the
+		 field, in a directory block, the entry.  */
+	      const unsigned char *old =
+		(const unsigned char *) jb->jb_shadow_data;
+	      const unsigned char *new = (const unsigned char *) b_data;
+	      unsigned first = 0, last = block_size - 1, changed = 0;
+	      char what[160];
+
+	      while (old[first] == new[first])
+		first++;
+	      while (old[last] == new[last])
+		last--;
+	      for (unsigned i = first; i <= last; i++)
+		changed += old[i] != new[i];
+	      snprintf (what, sizeof what,
+			"transaction %u commits: %u bytes differ in "
+			"%u-%u%s%s%s",
+			commit->t_tid, changed, first, last,
+			external ? ", directory block" : "",
+			jb->jb_awaiting_data ? ", awaiting data" : "",
+			jb->needs_flush ? ", home write deferred" : "");
+	      JRNL_LOG_DEBUG ("Late edit of block %u while %s", b, what);
 
 	      JRNL_STAT_INC (journal_stat_late_edits);
 	      jb_run = NULL;
@@ -3453,14 +3476,14 @@ retry:
 		    {
 		      warnings++;
 		      JRNL_LOG_WARN ("Block %u changed without a reservation "
-				     "while its transaction commits; it goes "
-				     "into the next one.", b);
+				     "while %s; it goes into the next one.",
+				     b, what);
 		    }
 		}
 	      else
 		JRNL_LOG_WARN ("Block %u changed without a reservation while "
-			       "its transaction commits, and cannot be "
-			       "reserved in the next; the change is lost.", b);
+			       "%s, and cannot be reserved in the next; the "
+			       "change is lost.", b, what);
 	    }
 	}
       else
