@@ -560,7 +560,7 @@ write_all_disknodes (void)
 
       /* Sync the indirect blocks here; they'll all be done before any
 	 inodes.  Waiting for them shouldn't be too bad.  */
-      pokel_sync (&diskfs_node_disknode (node)->indir_pokel, 1);
+      pokel_sync_or_release (&diskfs_node_disknode (node)->indir_pokel, 1);
 
       diskfs_set_node_times (node);
 
