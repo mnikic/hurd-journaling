@@ -33,6 +33,9 @@
 #include <assert-backtrace.h>
 #include <endian.h>
 #include <pthread.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <unistd.h>
 #include <mach.h>
 
 #include <hurd/sigpreempt.h>
@@ -164,6 +167,121 @@ static unsigned long journal_stat_intercepts_dir;	/* TESTING ONLY */
 # define JRNL_STAT_ADD(counter, n) ((void) 0)
 #endif
 
+
+#if JOURNAL_DEBUG
+/* The flight recorder: the latest JRNL_RECORD_LINES messages.  A writer
+   takes the next sequence number, fills that slot, and stores the
+   number in it last, so that a dump skips a slot being written or
+   already reused.  */
+#define JRNL_RECORD_LINES 4096
+#define JRNL_RECORD_LEN 160
+static struct
+{
+  uint32_t seq;			/* Sequence number plus one; 0 if empty.  */
+  char text[JRNL_RECORD_LEN];
+} journal_records[JRNL_RECORD_LINES];
+static uint32_t journal_record_next;
+
+void
+journal_record (const char *fmt, ...)
+{
+  uint32_t seq = __atomic_fetch_add (&journal_record_next, 1,
+				     __ATOMIC_RELAXED);
+  __typeof__ (journal_records[0]) *slot =
+    &journal_records[seq % JRNL_RECORD_LINES];
+  va_list args;
+  int n;
+
+  __atomic_store_n (&slot->seq, 0, __ATOMIC_RELAXED);
+  n = snprintf (slot->text, JRNL_RECORD_LEN, "%lu ",
+		(unsigned long) pthread_self ());
+  if (n < 0 || n >= JRNL_RECORD_LEN)
+    n = 0;
+  va_start (args, fmt);
+  vsnprintf (slot->text + n, JRNL_RECORD_LEN - n, fmt, args);
+  va_end (args);
+  __atomic_store_n (&slot->seq, seq + 1, __ATOMIC_RELEASE);
+}
+
+static void
+journal_write_all (const char *s, size_t len)
+{
+  while (len > 0)
+    {
+      ssize_t n = write (STDERR_FILENO, s, len);
+      if (n <= 0)
+	return;
+      s += n;
+      len -= n;
+    }
+}
+
+/* Print the recorded messages, oldest first.  Only uses write, so that
+   it can run in a signal handler.  */
+void
+journal_dump_log (void)
+{
+  static int dumping;
+  static const char head[] =
+    "ext2fs: journal flight recorder, oldest first (thread message):\n";
+  static const char tail[] = "ext2fs: end of journal flight recorder\n";
+
+  if (__atomic_exchange_n (&dumping, 1, __ATOMIC_ACQUIRE))
+    return;
+
+  uint32_t end = __atomic_load_n (&journal_record_next, __ATOMIC_ACQUIRE);
+  uint32_t seq = end > JRNL_RECORD_LINES ? end - JRNL_RECORD_LINES : 0;
+
+  journal_write_all (head, sizeof head - 1);
+  for (; seq != end; seq++)
+    {
+      __typeof__ (journal_records[0]) *slot =
+	&journal_records[seq % JRNL_RECORD_LINES];
+
+      if (__atomic_load_n (&slot->seq, __ATOMIC_ACQUIRE) != seq + 1)
+	continue;
+      journal_write_all (slot->text, strnlen (slot->text, JRNL_RECORD_LEN));
+      journal_write_all ("\n", 1);
+    }
+  journal_write_all (tail, sizeof tail - 1);
+
+  __atomic_store_n (&dumping, 0, __ATOMIC_RELEASE);
+}
+
+/* A failed assert_backtrace ends in abort, which raises SIGABRT.  The
+   handler is reset before it runs, so abort then kills the translator
+   as usual.  SIGUSR1 only prints, for a translator that hangs.  */
+static void
+journal_dump_on_signal (int sig)
+{
+  (void) sig;
+  journal_dump_log ();
+}
+
+static void
+journal_install_dump_handlers (void)
+{
+  static int installed;
+  struct sigaction sa;
+
+  if (installed)
+    return;
+  installed = 1;
+
+  memset (&sa, 0, sizeof sa);
+  sa.sa_handler = journal_dump_on_signal;
+  sigemptyset (&sa.sa_mask);
+  sa.sa_flags = SA_RESETHAND;
+  sigaction (SIGABRT, &sa, NULL);
+  sa.sa_flags = SA_RESTART;
+  sigaction (SIGUSR1, &sa, NULL);
+}
+#else
+void
+journal_dump_log (void)
+{
+}
+#endif
 
 /* The handle this thread currently holds, and how many starts are open
    on it.  One RPC is one thread, and its metadata updates must all land
@@ -3097,6 +3215,10 @@ journal_create (struct node *journal_inode)
   j->j_pool_memory[JRNL_MAX_FREE_BUFFERS - 1].jb_next = NULL;
   j->j_free_buffers = &j->j_pool_memory[0];
 
+#if JOURNAL_DEBUG
+  journal_install_dump_handlers ();
+#endif
+
   return j;
 }
 
@@ -3899,6 +4021,7 @@ diskfs_journal_shutdown (void)
 
   journal_print_stats (journal);
 
+  journal_dump_log ();
   /* Left set when the log is not empty, so that e2fsck replays it.
      The journal is then kept too, as its transactions are.  */
   if (empty)

@@ -70,6 +70,7 @@ void _ext2_panic (const char * function, const char * fmt, ...)
 
   pthread_mutex_unlock (&printf_lock);
 
+  journal_dump_log ();
   exit (1);
 }
 

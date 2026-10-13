@@ -34,7 +34,7 @@
 #include "ext2fs.h"
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 0		/* Set to enable (very chatty) debug messages. */
+#define JOURNAL_DEBUG 0		/* Set to record debug messages.  */
 #endif
 
 /* Set to count journal events and print them when a journal stops.
@@ -43,12 +43,22 @@
 #define JOURNAL_STATS JOURNAL_DEBUG
 #endif
 
+/* With JOURNAL_DEBUG, debug messages and journal warnings go to a ring of
+   the latest few thousand messages in memory, which is printed when the
+   translator dies of a failed assertion or a panic, and on SIGUSR1.  A
+   debug build thus runs close to full speed, and still tells what led to
+   a failure.  */
 #if JOURNAL_DEBUG
-#define JRNL_LOG_DEBUG(fmt, ...)                                             \
-    do {                                                                     \
-        fprintf(stderr, "[JRNL][DEBUG] " fmt "\n", ##__VA_ARGS__);           \
-        fflush(stderr);                                                      \
-    } while (0)
+void journal_record (const char *fmt, ...)
+  __attribute__ ((format (printf, 1, 2)));
+#define JRNL_LOG_DEBUG(fmt, ...) \
+  journal_record ("[DEBUG] " fmt, ##__VA_ARGS__)
+#undef JRNL_LOG_WARN
+#define JRNL_LOG_WARN(fmt, ...)						\
+  do {									\
+    journal_record ("[WARN] " fmt, ##__VA_ARGS__);			\
+    ext2_warning ("[JOURNAL] " fmt, ##__VA_ARGS__);			\
+  } while (0)
 #else
 #define JRNL_LOG_DEBUG(fmt, ...) do { } while (0)
 #endif

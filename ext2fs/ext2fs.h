@@ -331,6 +331,9 @@ extern void _ext2_error (const char *, const char *, ...)
      __attribute__ ((format (printf, 2, 3)));
 
 #define ext2_panic(fmt, args...) _ext2_panic (__FUNCTION__, fmt , ##args)
+/* Print the journal's recorded debug messages, if this is a debug build of
+   the journal.  */
+extern void journal_dump_log (void);
 extern void _ext2_panic (const char *, const char *, ...)
      __attribute__ ((format (printf, 2, 3))) __attribute__((noreturn));
 
