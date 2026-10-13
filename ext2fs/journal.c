@@ -1466,7 +1466,21 @@ journal_stop_transaction_locked (journal_t *journal,
           * because if they were mutating it they would have to first obtain
           * the journal lock AND also increase the t_active_threads .
           */
-	  void *live_cache_ptr = bptr (curr->jb_blocknr);
+	  /* A reference, as the editor's is gone: the disk cache can have
+	     let the block go since.  It does so only after the page is
+	     evicted, and the pager write of an evicted page puts it in the
+	     shadow, so then the shadow is current and there is nothing to
+	     copy.  The block is not mapped again here: reclaiming a slot
+	     waits for the pagers.  The superblock and the group
+	     descriptors stay mapped, and cannot be referenced.  */
+	  block_t sweep_block = curr->jb_blocknr;
+	  void *cache_ref = NULL;
+	  void *live_cache_ptr;
+	  if (sweep_block >= group_desc_block_end)
+	    live_cache_ptr = cache_ref
+	      = disk_cache_block_ref_mapped (sweep_block);
+	  else
+	    live_cache_ptr = bptr (sweep_block);
 	  /**
           * We execute exactly ONE memory copy per block,
           * capturing the fully settled, tear-free state of the RAM.
@@ -1475,7 +1489,10 @@ journal_stop_transaction_locked (journal_t *journal,
           * WAL so it can overwrite the pager's rushed data during recovery!
           */
 	  pthread_mutex_lock (&journal_sweep_scratch_lock);
-	  memcpy (journal_sweep_scratch, live_cache_ptr, block_size);
+	  if (live_cache_ptr)
+	    memcpy (journal_sweep_scratch, live_cache_ptr, block_size);
+	  if (cache_ref)
+	    disk_cache_block_deref (cache_ref);
 	  /* needs_copy was cleared under the lock when this block was
 	   * listed.  If the block is modified again, journal_get_write_access
 	   * sets it back to 1 and a later sweep recopies. */
@@ -1485,7 +1502,7 @@ journal_stop_transaction_locked (journal_t *journal,
 	     newer bytes: an edit made after our read of them was evicted
 	     with the page, and copying would bring the old ones back.  */
 	  JOURNAL_LOCK (journal);
-	  if (!curr->jb_sweep_raced)
+	  if (live_cache_ptr && !curr->jb_sweep_raced)
 	    memcpy (curr->jb_shadow_data, journal_sweep_scratch, block_size);
 	  curr->jb_sweeping = 0;
 	  curr->jb_sweep_raced = 0;
