@@ -159,13 +159,31 @@ static unsigned long journal_stat_sync_node_pokel;	/* TESTING ONLY */
 static unsigned long journal_stat_sync_global_ptr;	/* TESTING ONLY */
 static unsigned long journal_stat_sync_cache_return;	/* TESTING ONLY */
 static unsigned long journal_stat_intercepts_dir;	/* TESTING ONLY */
+/* Journal buffers in use, each with a block-sized shadow, and the most
+   at any time.  Changed under the journal lock.  */
+static unsigned long journal_stat_buffers;
+static unsigned long journal_stat_peak_buffers;
 # define JRNL_STAT_ADD(counter, n) \
   ((void) __atomic_fetch_add (&(counter), (n), __ATOMIC_RELAXED))
 # define JRNL_STAT_INC(counter) JRNL_STAT_ADD (counter, 1)
 # define JRNL_STAT_GET(counter) __atomic_load_n (&(counter), __ATOMIC_RELAXED)
+# define JRNL_STAT_BUFFER_ALLOC()					\
+  do									\
+    {									\
+      unsigned long n_ = __atomic_add_fetch (&journal_stat_buffers, 1,	\
+					     __ATOMIC_RELAXED);	\
+      if (n_ > JRNL_STAT_GET (journal_stat_peak_buffers))		\
+	__atomic_store_n (&journal_stat_peak_buffers, n_,		\
+			  __ATOMIC_RELAXED);				\
+    }									\
+  while (0)
+# define JRNL_STAT_BUFFER_FREE() \
+  ((void) __atomic_sub_fetch (&journal_stat_buffers, 1, __ATOMIC_RELAXED))
 #else
 # define JRNL_STAT_INC(counter) ((void) 0)
 # define JRNL_STAT_ADD(counter, n) ((void) 0)
+# define JRNL_STAT_BUFFER_ALLOC() ((void) 0)
+# define JRNL_STAT_BUFFER_FREE() ((void) 0)
 #endif
 
 
@@ -823,9 +841,13 @@ journal_alloc_buffer (journal_t *journal)
       jb->jb_escaped = 0;
       jb->jb_awaiting_data = 0;
       jb->jb_external = 0;
+      JRNL_STAT_BUFFER_ALLOC ();
       return jb;
     }
-  return calloc (1, sizeof (journal_buffer_t));
+  jb = calloc (1, sizeof (journal_buffer_t));
+  if (jb)
+    JRNL_STAT_BUFFER_ALLOC ();
+  return jb;
 }
 
 /**
@@ -845,6 +867,7 @@ journal_free_buffer (journal_t *journal, journal_buffer_t *jb)
   if (jb->needs_flush)
     JRNL_LOG_WARN ("Dropping block %u before its deferred home write.",
 		   jb->jb_blocknr);
+  JRNL_STAT_BUFFER_FREE ();
   if (ptr >= start && ptr < end)
     {
       /* It belongs to the permanent pool. Link it back up! */
@@ -3978,7 +4001,8 @@ journal_print_stats (journal_t *journal)
 	   "%lu by checkpoints, %lu forced checkpoints; "
 	   "disk pager writes requested: %lu global pokel, %lu node pokels, "
 	   "%lu sync_global_ptr, %lu disk cache returns; "
-	   "%lu of the intercepts were directory blocks\n",
+	   "%lu of the intercepts were directory blocks; "
+	   "at most %lu journal buffers in use (%lu MB of shadows)\n",
 	   JRNL_STAT_GET (journal_stat_commits),
 	   JRNL_STAT_GET (journal_stat_intercepts),
 	   JRNL_STAT_GET (journal_stat_deferred_writes),
@@ -3994,7 +4018,10 @@ journal_print_stats (journal_t *journal)
 	   JRNL_STAT_GET (journal_stat_sync_node_pokel),
 	   JRNL_STAT_GET (journal_stat_sync_global_ptr),
 	   JRNL_STAT_GET (journal_stat_sync_cache_return),
-	   JRNL_STAT_GET (journal_stat_intercepts_dir));
+	   JRNL_STAT_GET (journal_stat_intercepts_dir),
+	   JRNL_STAT_GET (journal_stat_peak_buffers),
+	   (JRNL_STAT_GET (journal_stat_peak_buffers)
+	    * sizeof (journal_buffer_t)) >> 20);
 }
 #else
 static inline void
