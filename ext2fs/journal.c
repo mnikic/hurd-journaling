@@ -2911,6 +2911,24 @@ journal_ensure_commit_space_locked (journal_t *journal,
 
   if (journal->j_free < needed || journal->j_free < low_water)
     journal_force_checkpoint_locked (journal);
+
+  /* The forced checkpoint stops at its own target, which a very large
+     transaction can exceed.  Empty the log for it.  */
+  if (journal->j_free < needed)
+    journal_flush_checkpoints_locked (journal, UINT32_MAX, 0);
+
+  /* Nothing bounds the size of one transaction: a truncate frees blocks
+     in a single one, and touches a bitmap block for every group it
+     frees from.  Writing a transaction larger than the log would wrap
+     over its own start and corrupt the journal.  Stop before any of it
+     is written: recovery then sees the state before this transaction.  */
+  if (journal->j_free < needed)
+    {
+      JRNL_LOG_WARN ("Transaction %u needs %u log blocks, but the journal "
+		     "has only %u.  Use a larger journal.",
+		     txn->t_tid, needed, journal->j_free);
+      assert_backtrace (journal->j_free >= needed);
+    }
 }
 
 /**
