@@ -81,6 +81,18 @@ diskfs_S_io_write (struct protid *cred,
       diskfs_node_update (np, should_sync);
     }
 
+  /* The metadata is done; the copy below only faults in pages, whose
+     blocks the pager allocates under handles of its own.  A commit waits
+     for every open handle, so holding this one through the copy would
+     hold every commit, and every RPC waiting for the next transaction,
+     behind it.  Release it now unless this write must commit: a commit
+     cannot wait under the node lock.  */
+  if (txn && !should_sync && !diskfs_journal_needs_sync (txn))
+    {
+      diskfs_journal_stop_transaction (txn);
+      txn = NULL;
+    }
+
   nwritten = datalen;
   err = _diskfs_rdwr_internal (np, (char *) data, off, &nwritten, 1, 0);
   if (!err)
