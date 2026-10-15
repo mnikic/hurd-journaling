@@ -79,6 +79,10 @@ pager_memcpy (struct pager *pager, memory_object_t memobj,
 
 	  vm_deallocate (mach_task_self (), window, window_size);
 
+	  /* The kernel gives up a copy that waits for a page when the
+	     thread is interrupted, for instance by hurd_thread_cancel.  */
+	  if (err == MACH_SEND_INTERRUPTED)
+	    err = EINTR;
 	  if (err)
 	    return err;
 
