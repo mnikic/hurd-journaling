@@ -17,6 +17,7 @@
 
 #include <assert-backtrace.h>
 #include <error.h>
+#include <hurd.h>
 #include <mach/mig_errors.h>
 #include <pthread.h>
 #include <string.h>
@@ -165,6 +166,33 @@ mig_reply_setup (
 #undef OutP
 }
 
+/* The host privileged port, if this task has it.  */
+static mach_port_t pager_host_priv = MACH_PORT_NULL;
+
+/* Make the calling thread vm-privileged, if we can.
+
+   When free memory in any segment drops below its minimum, Mach refuses
+   every allocation from unprivileged threads, in all tasks, until all
+   segments are back above their high mark.  Memory comes back mostly by
+   paging out dirty pages to their pagers.  An unprivileged paging thread
+   cannot even receive those requests, as copying a message in can need
+   a page table page, so the whole system stalls until clean pages free
+   enough.  A privileged thread may allocate from the reserve below the
+   minimum, as the default pager does.  thread_wire only works on the
+   calling thread.  */
+static void
+wire_paging_thread (void)
+{
+  mach_port_t self;
+
+  if (pager_host_priv == MACH_PORT_NULL)
+    return;
+
+  self = mach_thread_self ();
+  thread_wire (pager_host_priv, self, TRUE);
+  mach_port_deallocate (mach_task_self (), self);
+}
+
 /* Consumes requests from the queue.  */
 static void *
 worker_func (void *arg)
@@ -173,6 +201,8 @@ worker_func (void *arg)
   struct pager_requests *requests = self->requests;
   struct request *r = NULL;
   mig_reply_header_t reply_msg;
+
+  wire_paging_thread ();
 
   while (1)
     {
@@ -296,6 +326,7 @@ service_paging_requests (void *arg)
   struct pager_requests *requests = arg;
 
   pthread_setname_np (pthread_self (), "paging_requests");
+  wire_paging_thread ();
 
   int demuxer (mach_msg_header_t *inp,
 	       mach_msg_header_t *outp)
@@ -336,6 +367,12 @@ pager_start_workers (struct port_bucket *pager_bucket,
 
   requests->bucket = pager_bucket;
   requests->asleep = 0;
+
+  /* Only privileged tasks get the port; the others just do not wire
+     their paging threads.  The threads read it when they start.  */
+  if (pager_host_priv == MACH_PORT_NULL
+      && get_privileged_ports (&pager_host_priv, NULL))
+    pager_host_priv = MACH_PORT_NULL;
 
   requests->queue_in = malloc (sizeof *requests->queue_in);
   if (requests->queue_in == NULL)
