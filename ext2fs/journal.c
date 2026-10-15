@@ -237,25 +237,65 @@ static struct
 } journal_records[JRNL_RECORD_LINES];
 static uint32_t journal_record_next;
 
-void
-journal_record (const char *fmt, ...)
+static void journal_write_all (const char *s, size_t len);
+
+static void
+journal_vrecord (int live, const char *fmt, va_list args)
 {
   uint32_t seq = __atomic_fetch_add (&journal_record_next, 1,
 				     __ATOMIC_RELAXED);
   __typeof__ (journal_records[0]) *slot =
     &journal_records[seq % JRNL_RECORD_LINES];
-  va_list args;
+  struct timespec now;
   int n;
 
+  clock_gettime (CLOCK_MONOTONIC, &now);
   __atomic_store_n (&slot->seq, 0, __ATOMIC_RELAXED);
-  n = snprintf (slot->text, JRNL_RECORD_LEN, "%lu ",
+  n = snprintf (slot->text, JRNL_RECORD_LEN, "%ld.%03ld %lu ",
+		(long) now.tv_sec, now.tv_nsec / 1000000,
 		(unsigned long) pthread_self ());
   if (n < 0 || n >= JRNL_RECORD_LEN)
     n = 0;
-  va_start (args, fmt);
   vsnprintf (slot->text + n, JRNL_RECORD_LEN - n, fmt, args);
-  va_end (args);
+
+#if JOURNAL_DEBUG_LIVE
+  if (live)
+    {
+      /* One write per line, so that lines from different threads do not
+	 interleave.  */
+      char line[JRNL_RECORD_LEN + 16];
+      int len = snprintf (line, sizeof line, "ext2fs: %s\n", slot->text);
+      if (len > 0)
+	journal_write_all (line, len < (int) sizeof line
+				 ? (size_t) len : sizeof line - 1);
+    }
+#else
+  (void) live;
+#endif
+
   __atomic_store_n (&slot->seq, seq + 1, __ATOMIC_RELEASE);
+}
+
+void
+journal_record (const char *fmt, ...)
+{
+  va_list args;
+
+  va_start (args, fmt);
+  journal_vrecord (1, fmt, args);
+  va_end (args);
+}
+
+/* Like journal_record, but never printed live: for messages about every
+   block a pager writes.  */
+void
+journal_record_quiet (const char *fmt, ...)
+{
+  va_list args;
+
+  va_start (args, fmt);
+  journal_vrecord (0, fmt, args);
+  va_end (args);
 }
 
 static void
@@ -1664,7 +1704,7 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
      block a pager write has claimed.  */
   int exiting = ext2_journal->j_must_exit;
 
-  JRNL_LOG_DEBUG ("Got notification for %zu blocks starting at %u",
+  JRNL_LOG_TRACE ("Got notification for %zu blocks starting at %u",
 		  n_blocks, start_block);
 
   /* Do NOT notify the running transaction here.
@@ -3648,7 +3688,7 @@ retry:
 	journal_test_evict[journal_test_evict_head++ % JRNL_TEST_EVICT_QUEUE]
 	  = b;
       pthread_mutex_unlock (&journal_test_evict_lock);
-      JRNL_LOG_DEBUG ("Intercepted rushed pager write for block %u", b);
+      JRNL_LOG_TRACE ("Intercepted rushed pager write for block %u", b);
       return intercepted;
     }
 
@@ -3827,7 +3867,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
       if (intercepted)
 	{
 	  /* We successfully handled this block in RAM. Move to the next. */
-	  JRNL_LOG_DEBUG ("Intercepted hazard for block %u", b);
+	  JRNL_LOG_TRACE ("Intercepted hazard for block %u", b);
 	  i++;
 	  total_written += block_size;
 	}
@@ -3977,7 +4017,7 @@ journal_overlay_deferred (journal_t *journal, block_t start_block,
 	{
 	  memcpy (out_ptr + offset, jb->jb_shadow_data, copy_len);
 	  JRNL_STAT_INC (journal_stat_overlays);
-	  JRNL_LOG_DEBUG ("Read block %u from its shadow (%zu bytes)",
+	  JRNL_LOG_TRACE ("Read block %u from its shadow (%zu bytes)",
 			  b, copy_len);
 	  continue;
 	}

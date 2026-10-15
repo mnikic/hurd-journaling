@@ -34,7 +34,14 @@
 #include "ext2fs.h"
 
 #ifndef JOURNAL_DEBUG
-#define JOURNAL_DEBUG 0		/* Set to record debug messages.  */
+#define JOURNAL_DEBUG 1		/* Set to record debug messages.  */
+#endif
+
+/* Set to also print every recorded message to stderr as it happens.
+   Slow, and the write can block while the journal lock is held: only for
+   short tests.  */
+#ifndef JOURNAL_DEBUG_LIVE
+#define JOURNAL_DEBUG_LIVE 1
 #endif
 
 /* Set to count journal events and print them when a journal stops.
@@ -51,8 +58,12 @@
 #if JOURNAL_DEBUG
 void journal_record (const char *fmt, ...)
   __attribute__ ((format (printf, 1, 2)));
+void journal_record_quiet (const char *fmt, ...)
+  __attribute__ ((format (printf, 1, 2)));
 #define JRNL_LOG_DEBUG(fmt, ...) \
   journal_record ("[DEBUG] " fmt, ##__VA_ARGS__)
+#define JRNL_LOG_TRACE(fmt, ...) \
+  journal_record_quiet ("[TRACE] " fmt, ##__VA_ARGS__)
 #undef JRNL_LOG_WARN
 #define JRNL_LOG_WARN(fmt, ...)						\
   do {									\
@@ -61,6 +72,7 @@ void journal_record (const char *fmt, ...)
   } while (0)
 #else
 #define JRNL_LOG_DEBUG(fmt, ...) do { } while (0)
+#define JRNL_LOG_TRACE(fmt, ...) do { } while (0)
 #endif
 
 /* Opaque handle for the journal object */
