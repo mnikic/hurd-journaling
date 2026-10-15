@@ -1636,19 +1636,17 @@ diskfs_shutdown_pager (void)
     }
 
 
+  /* As in diskfs_sync_everything, commit the inodes first.  */
   diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
-
   write_all_disknodes ();
-  ports_bucket_iterate (file_pager_bucket, shutdown_one);
-
   diskfs_journal_commit_transaction (txn);
 
-  if (!ext2_journal)
-    {
-      error_t err = store_sync (store);
-      if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
-        ext2_warning ("device flush failed: %s", strerror (err));
-    }
+  ports_bucket_iterate (file_pager_bucket, shutdown_one);
+
+  /* With a journal too: the commit's flush came before the file data.  */
+  error_t err = store_sync (store);
+  if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
+    ext2_warning ("device flush failed: %s", strerror (err));
 
   /* Despite the name of this function, we never actually shutdown the disk
      pager, just make sure it's synced. */
@@ -1667,14 +1665,23 @@ diskfs_sync_everything (int wait)
       return 0;
     }
 
+  /* Commit the inodes before syncing the file pagers.  File data is not
+     journaled, and its blocks were allocated when the pages were
+     unlocked, so the pager writes change no metadata.  Syncing them can
+     take minutes for a large dirty file under memory pressure, and a
+     commit waits for every open handle: holding one through the sync
+     stalled every commit, and every RPC waiting for the next
+     transaction, until it ended.  */
   diskfs_transaction_t *txn = diskfs_journal_start_transaction ();
   write_all_disknodes ();
-  ports_bucket_iterate (file_pager_bucket, sync_one);
   diskfs_journal_commit_transaction (txn);
+
+  ports_bucket_iterate (file_pager_bucket, sync_one);
 
   /* Do things on the the disk pager.  */
   pokel_sync_or_release (&global_pokel, wait);
-  if (wait && !ext2_journal)
+  /* With a journal too: the commit's flush came before the file data.  */
+  if (wait)
     {
       error_t err = store_sync (store);
       if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
