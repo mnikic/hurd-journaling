@@ -3430,9 +3430,14 @@ diskfs_journal_stop_transaction_locked (journal_t *journal,
 {
   journal_stop_transaction_locked (journal, txn);
 
-  /* Semi auto-commit? */
-  if (txn->t_active_threads == 0 && (txn->sync_needed ||
-      (txn->t_buffer_map.size >= journal->j_max_transaction_buffers)))
+  /* Semi auto-commit?  A full transaction asks for a commit even while
+     other threads hold handles: with several pager threads allocating
+     blocks at once the count rarely drops to zero, and the transaction
+     would grow until the next tick, past what the log can hold.
+     kjournald drains it as usual.  */
+  if ((txn->t_active_threads == 0 && txn->sync_needed)
+      || (txn->t_state == T_RUNNING
+	  && txn->t_buffer_map.size >= journal->j_max_transaction_buffers))
     {
       journal->j_commit_requested = 1;
       pthread_cond_signal (&journal->j_flusher_wakeup);
