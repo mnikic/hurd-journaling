@@ -299,22 +299,13 @@ enable_delayed_copies (struct node *node)
 
 /* ---------------------------------------------------------------- */
 
-/* The user must define this function.  Truncate locked node NODE to be SIZE
-   bytes long.  (If NODE is already less than or equal to SIZE bytes
-   long, do nothing.)  If this is a symlink (and diskfs_shortcut_symlink
-   is set) then this should clear the symlink, even if
-   diskfs_create_symlink_hook stores the link target elsewhere.  */
-error_t
-diskfs_truncate (struct node *node, off_t length)
+/* Set the size of locked node NODE to LENGTH, which is not larger than its
+   current size, and free every block past it.  */
+static error_t
+truncate_node (struct node *node, off_t length)
 {
   error_t err;
   off_t offset;
-
-  diskfs_check_readonly ();
-  assert_backtrace (!diskfs_readonly);
-
-  if (length >= node->dn_stat.st_size)
-    return 0;
 
   if (! node->dn_stat.st_blocks
       && !S_ISREG (node->dn_stat.st_mode)
@@ -413,4 +404,35 @@ diskfs_truncate (struct node *node, off_t length)
   /* This informs the journal about the changes. */
   diskfs_node_update (node, diskfs_synchronous);
   return err;
+}
+
+/* The user must define this function.  Truncate locked node NODE to be SIZE
+   bytes long.  (If NODE is already less than or equal to SIZE bytes
+   long, do nothing.)  If this is a symlink (and diskfs_shortcut_symlink
+   is set) then this should clear the symlink, even if
+   diskfs_create_symlink_hook stores the link target elsewhere.  */
+error_t
+diskfs_truncate (struct node *node, off_t length)
+{
+  diskfs_check_readonly ();
+  assert_backtrace (!diskfs_readonly);
+
+  if (length >= node->dn_stat.st_size)
+    return 0;
+
+  return truncate_node (node, length);
+}
+
+/* Free the blocks of locked node NODE past its size.  A truncate that a
+   crash interrupted leaves them behind, with NODE on the orphan list.  */
+error_t
+ext2_truncate_to_size (struct node *node)
+{
+  assert_backtrace (!diskfs_readonly);
+
+  /* Without blocks, i_data may hold a fast symlink or a device number.  */
+  if (! node->dn_stat.st_blocks)
+    return 0;
+
+  return truncate_node (node, node->dn_stat.st_size);
 }

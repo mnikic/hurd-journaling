@@ -191,9 +191,10 @@ diskfs_orphan_del (struct node *np)
 
 /* Recover (clean up) the orphan list at mount time.
 
-   Only inodes with nlink == 0 are truncated and freed.  Entries with
-   nlink != 0 (corruption, or ext3-style truncate orphans, which we do
-   not support yet) are just taken off the list and otherwise left alone.
+   Inodes with nlink == 0 are truncated and freed.  An inode with
+   nlink != 0 is an ext3-style truncate orphan: a truncate that a crash
+   interrupted.  Its blocks past i_size are freed, and it is taken off
+   the list.
 
    The on-disk list is untrusted: each inode number is range-checked and
    the walk is bounded by the total inode count, so a cycle in the chain
@@ -205,6 +206,7 @@ ext2_recover_orphan_list (void)
   __u32 next_orphan;
   __u32 steps = 0;
   int count = 0;
+  int truncated = 0;
   struct ext2_inode *di;
   struct node *np = NULL;
   diskfs_transaction_t *txn;
@@ -274,11 +276,16 @@ ext2_recover_orphan_list (void)
 
       if (np->dn_stat.st_nlink != 0)
 	{
-	  /* Not a deleted file, so diskfs_nput would not drop it and
-	     orphan_del would never run.  Unlink it explicitly; this
-	     scrubs i_dtime, advances s_last_orphan and clears the head.  */
-	  ext2_warning ("orphan inode %lu has nlink > 0; unlinking from list",
-			(unsigned long) inum);
+	  /* Finish the truncate.  Not a deleted file, so diskfs_nput
+	     would not drop it and orphan_del would never run.  Unlink it
+	     explicitly; this scrubs i_dtime, advances s_last_orphan and
+	     clears the head.  */
+	  err = ext2_truncate_to_size (np);
+	  if (err)
+	    ext2_warning ("cannot truncate orphan inode %lu: %s",
+			  (unsigned long) inum, strerror (err));
+	  else
+	    truncated++;
 	  diskfs_orphan_del (np);
 	  diskfs_nput (np);
 	  diskfs_journal_stop_transaction (txn);
@@ -295,11 +302,12 @@ ext2_recover_orphan_list (void)
 
   ram_orphan_head = NULL;
 
-  if (count > 0)
+  if (count > 0 || truncated > 0)
     {
       /* Lets sync it, so that fsck doesn't try to clear the same orphans again. */
       diskfs_set_hypermetadata (1, 0);
-      ext2_warning ("recovered %d orphan inode(s)", count);
+      ext2_warning ("recovered %d orphan inode(s), truncated %d",
+		    count, truncated);
     }
 }
 

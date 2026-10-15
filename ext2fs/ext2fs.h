@@ -733,6 +733,12 @@ alloc_sync (struct node *np)
 #endif /* Use extern inlines.  */
 
 /* ---------------------------------------------------------------- */
+/* truncate.c */
+
+/* Free the blocks of locked node NODE past its size.  */
+error_t ext2_truncate_to_size (struct node *node);
+
+/* ---------------------------------------------------------------- */
 /* getblk.c */
 
 void ext2_discard_prealloc (struct node *node);
