@@ -208,6 +208,10 @@ typedef struct journal_buffer
 				   journal_get_write_access_external, and
 				   the shadow has no image of the block's
 				   current owner yet. */
+  uint8_t jb_editing;		/* Reserved by
+				   journal_get_write_access_external and not
+				   yet marked or released: the page can hold
+				   an edit newer than the shadow.  */
 } journal_buffer_t;
 
 /**
@@ -673,6 +677,7 @@ journal_alloc_buffer (journal_t *journal)
       jb->jb_escaped = 0;
       jb->jb_awaiting_data = 0;
       jb->jb_external = 0;
+      jb->jb_editing = 0;
       return jb;
     }
   return calloc (1, sizeof (journal_buffer_t));
@@ -2113,7 +2118,10 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
 	 cache, whose copy of it is stale.  */
       assert_backtrace (!(hydrate && jb->jb_external));
       if (!hydrate)
-	jb->jb_external = 1;
+	{
+	  jb->jb_external = 1;
+	  jb->jb_editing = 1;
+	}
       if (hydrate)
 	jb->jb_awaiting_data = 0;
       else if (jb->needs_copy)
@@ -2150,6 +2158,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
   new_jb->needs_copy = hydrate;
   new_jb->jb_awaiting_data = !hydrate;
   new_jb->jb_external = !hydrate;
+  new_jb->jb_editing = !hydrate;
   txn->t_outstanding_io++;
   journal_logged_ref_locked (ext2_journal, fs_blocknr);
 out:
@@ -2386,6 +2395,7 @@ journal_mark_dirty_external (diskfs_transaction_t *txn, block_t fs_blocknr,
       memcpy (jb->jb_shadow_data, journal_external_scratch, block_size);
       jb->needs_copy = 0;
       jb->jb_awaiting_data = 0;
+      jb->jb_editing = 0;
     }
   else
     JRNL_LOG_WARN ("mark_dirty_external called on unreserved block %u! "
@@ -2409,6 +2419,8 @@ journal_release_access (diskfs_transaction_t *txn, block_t fs_blocknr)
 
   JOURNAL_LOCK (ext2_journal);
   jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
+  if (jb)
+    jb->jb_editing = 0;
   if (!jb || !jb->jb_awaiting_data)
     goto out;
   if (jb->needs_flush)
@@ -3331,7 +3343,7 @@ retry:
 	/* Not raced: no edit is made during a sweep, and if the page is
 	   gone, its read waits for this write and gets these bytes.  */
 	memcpy (jb->jb_shadow_data, b_data, block_size);
-      else if (resident && !jb->jb_awaiting_data)
+      else if (resident && !jb->jb_awaiting_data && !jb->jb_editing)
 	{
 	  /* An unreserved edit cannot be told apart from an old copy
 	     here; it shows up when the page is evicted.  */
