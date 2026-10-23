@@ -3004,7 +3004,10 @@ journal_commit_running_transaction_locked (journal_t *journal)
       err = EINVAL;
       goto out;
     }
-  if (txn->t_buffer_map.size == 0)
+  /* Frees alone make a transaction worth committing: their revoke
+     records must reach the log, and the blocks stay busy until then.  */
+  if (txn->t_buffer_map.size == 0 && !txn->t_freed_blocks
+      && txn->t_revoke_map.size == 0)
     {
       JRNL_LOG_DEBUG ("Txn %u is empty. Keeping it open.", txn->t_tid);
       goto out;
