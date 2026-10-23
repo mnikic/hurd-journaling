@@ -2813,6 +2813,19 @@ journal_commit_running_transaction_locked (journal_t *journal)
   if (err)
     goto abort_commit;
 
+  /* Into an empty log, the superblock must have the log's start before
+     the commit is durable: from then on TXN's blocks go home, and with
+     s_start 0 recovery would replay nothing and leave TXN half there.  */
+  JOURNAL_LOCK (journal);
+  if (journal->j_tail == 0)
+    {
+      journal->j_tail = txn->t_log_start;
+      err = journal_update_superblock (journal, txn->t_tid);
+      if (err)
+	JRNL_LOG_WARN ("Failed to update superblock. %s", strerror (err));
+    }
+  JOURNAL_UNLOCK (journal);
+
   /* Ensure Commit is persistent */
   flush_to_disk ();
 
@@ -2824,19 +2837,9 @@ journal_commit_running_transaction_locked (journal_t *journal)
   /* Flush any intercepted VM pager blocks to the primary disk */
   journal_flush_intercepted_payloads (journal, txn);
 
-  int need_sb_flush = 0;
   /* IO done, lock again and finalize Metadata */
   JOURNAL_LOCK (journal);
 
-  if (journal->j_tail == 0)
-    {
-      journal->j_tail = txn->t_log_start;
-      err = journal_update_superblock (journal, txn->t_tid);
-      if (err)
-	JRNL_LOG_WARN ("Failed to update superblock. %s", strerror (err));
-      else
-	need_sb_flush = 1;
-    }
   journal->j_last_committed_tid = txn->t_tid;
 
   txn->t_state = T_FINISHED;
@@ -2859,8 +2862,6 @@ journal_commit_running_transaction_locked (journal_t *journal)
   if (journal_bg_checkpoint_needed_locked (journal))
     pthread_cond_signal (&journal->j_flusher_wakeup);
   JOURNAL_UNLOCK (journal);
-  if (need_sb_flush)
-    flush_to_disk ();
 
   journal_forget_freed_blocks (journal, freed_tid, freed_extents);
   JOURNAL_LOCK (journal);
