@@ -1481,12 +1481,17 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
    * written are handled by journal_flush_intercepted_payloads(), which runs AFTER
    * the WAL barrier is crossed (T_COMMITTED) and does its own marking.
    *
-   * The committing transaction and checkpoint list are safe to notify: their
-   * shadow data is frozen and the WAL has been (or is being) committed. */
+   * The same holds for the committing transaction until it is T_COMMITTED:
+   * while it drains (T_LOCKED) it still takes reservations from the handles
+   * open on it, and the same race applies.  Before T_COMMITTED every block
+   * in its map is intercepted, so a home write that finds one there wrote
+   * data from before the reservation.  From T_COMMITTED on its shadows are
+   * frozen and on the log, as are the checkpoint list's, and they are safe
+   * to notify. */
 
   /* Check Committing Transaction */
   diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
-  if (commit)
+  if (commit && commit->t_state == T_COMMITTED)
     journal_notify_txn_locked (commit, start_block, n_blocks);
 
   /* Iterate over checkpoint list */
@@ -2071,13 +2076,9 @@ journal_mark_dirty (diskfs_transaction_t *txn, block_t fs_blocknr)
   else
     jb->needs_copy = 1;
 
-  /* Reset the physical write flag so the Checkpoint thread knows to
-     overwrite the disk with our pristine shadow buffer later. */
-  if (jb->jb_is_written)
-    {
-      jb->jb_is_written = 0;
-      txn->t_outstanding_io++;
-    }
+  /* Only committed transactions are notified of home writes, and a
+     transaction with handles open has not committed.  */
+  assert_backtrace (!jb->jb_is_written);
 
 out:
   JOURNAL_UNLOCK (ext2_journal);
@@ -2129,13 +2130,8 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
 	 * not hold the caller's edit. */
 	jb->jb_awaiting_data = 1;
       jb->needs_copy = hydrate && !jb->jb_external;
-      if (jb->jb_is_written)
-	{
-	  /* The pager rushed this block previously, but VFS is dirtying it again.
-	     Reset the flag so we know to protect it. */
-	  jb->jb_is_written = 0;
-	  txn->t_outstanding_io++;
-	}
+      /* As in journal_mark_dirty.  */
+      assert_backtrace (!jb->jb_is_written);
       goto out;
     }
 
