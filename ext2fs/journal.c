@@ -1395,6 +1395,9 @@ journal_notify_txn_locked (diskfs_transaction_t *txn,
 
       if (jb)
 	{
+	  /* What went home is the page, at least as new as the shadow: a
+	     home write still due after a failed one is not any more.  */
+	  jb->needs_flush = 0;
 	  if (!jb->jb_is_written)
 	    {
 	      jb->jb_is_written = 1;
@@ -3552,6 +3555,36 @@ journal_clear_flushing_locked (block_t start_block, size_t n_blocks)
     }
 }
 
+/* A pager's home write of N_BLOCKS blocks from START_BLOCK failed, and
+   the pages it wrote are gone.  It wrote them home only because no
+   transaction still edited them: the newest copy the journal holds of
+   each, committed and not home yet, is what the page held.  Reads must
+   return it until a home write brings it there (journal_store_read),
+   which the checkpoint does.  */
+static void
+journal_keep_failed_blocks_locked (block_t start_block, size_t n_blocks)
+{
+  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+
+  for (size_t i = 0; i < n_blocks; i++)
+    {
+      block_t b = start_block + i;
+      journal_buffer_t *newest =
+	commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
+
+      if (!newest)
+	for (diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
+	     txn; txn = txn->t_checkpoint_next)
+	  {
+	    journal_buffer_t *jb = journal_map_lookup (&txn->t_buffer_map, b);
+	    if (jb)
+	      newest = jb;
+	  }
+      if (newest && !newest->jb_is_written)
+	newest->needs_flush = 1;
+    }
+}
+
 /**
  * A block device filter layer for the VFS pager's write path.
  * Replaces raw store_write calls to safely intercept deadlock hazards.
@@ -3581,6 +3614,9 @@ journal_store_write (block_t start_block, size_t length, void *buf,
   size_t i = 0;
   size_t total_written = 0;
   int resident = pager_write_keeps_page ();
+  /* A write of this run failed: the pager takes the rest of it as failed
+     too, and their pages are lost.  */
+  int failed = 0;
 
   JOURNAL_LOCK (ext2_journal);
   while (i < n_blocks)
@@ -3596,7 +3632,16 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	  /* We successfully handled this block in RAM. Move to the next. */
 	  JRNL_LOG_DEBUG ("Intercepted hazard for block %u", b);
 	  i++;
-	  total_written += block_size;
+	  if (!failed)
+	    total_written += block_size;
+	}
+      else if (failed)
+	{
+	  /* Nothing more goes home: the copy the journal has is the
+	     block's, and the hazard check may have claimed it.  */
+	  journal_clear_flushing_locked (b, 1);
+	  journal_keep_failed_blocks_locked (b, 1);
+	  i++;
 	}
       else
 	{
@@ -3633,19 +3678,25 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	      journal_notify_blocks_written_locked (b, actual_blocks);
 
 	  if (actual_blocks < flush_count)
-	    journal_clear_flushing_locked (b + actual_blocks,
-					   flush_count - actual_blocks);
+	    {
+	      journal_clear_flushing_locked (b + actual_blocks,
+					     flush_count - actual_blocks);
+	      journal_keep_failed_blocks_locked (b + actual_blocks,
+						 flush_count - actual_blocks);
+	    }
 
 	  total_written += chunk_amount;
 	  i += actual_blocks;
 
-	  /* If we hit an error OR a short write (e.g., EOF on the device),
-	     we must halt the pipeline. We cannot safely continue. */
+	  /* An error or a short write (e.g., EOF on the device): nothing
+	     more of the run goes home, but its blocks a transaction holds
+	     still go into their shadows, as the pages are lost.  */
 	  if (err || actual_blocks < flush_count)
 	    {
 	      if (!err && !final_err)
 		final_err = ENOSPC;	/* It is No Space Left */
-	      break;
+	      failed = 1;
+	      i += flush_count - actual_blocks;
 	    }
 	}
     }
@@ -3679,7 +3730,20 @@ journal_deferred_source_locked (journal_t *journal, block_t b)
   jb = commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
   if (jb && jb->needs_flush)
     return jb;
-  return NULL;
+
+  /* A flush after a commit that failed leaves the flag set in a
+     transaction that has gone on to the checkpoint list, which writes
+     the shadow home later.  Until then the shadow is still the block's
+     latest image: the newest such transaction's.  */
+  journal_buffer_t *found = NULL;
+  for (diskfs_transaction_t *t = journal->j_checkpoint_list; t;
+       t = t->t_checkpoint_next)
+    {
+      jb = journal_map_lookup (&t->t_buffer_map, b);
+      if (jb && jb->needs_flush)
+	found = jb;
+    }
+  return found;
 }
 
 /* Read LEN bytes of block B from its home location into DST.  */
