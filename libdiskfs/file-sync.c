@@ -57,7 +57,7 @@ diskfs_S_file_sync (struct protid *cred,
 	 commit of the transaction waits for it.  Without a journal it is
 	 NULL, and committing it does nothing.  */
       txn = diskfs_journal_start_transaction ();
-      diskfs_journal_commit_transaction (txn);
+      return diskfs_journal_commit_transaction (txn);
     }
   return 0;
 }

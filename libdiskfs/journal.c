@@ -8,8 +8,8 @@
      - diskfs_journal_shutdown
 
    diskfs_journal_start_transaction returns NULL,
-   diskfs_journal_needs_sync returns 0.
-   All others are empty and do nothing.
+   diskfs_journal_commit_transaction and diskfs_journal_needs_sync
+   return 0.  All others are empty and do nothing.
 
    Written by Milos Nikic.
    Copyright (C) 2026 Free Software Foundation, Inc.
@@ -49,10 +49,11 @@ diskfs_journal_stop_transaction (diskfs_transaction_t *tx)
   /* Do nothing */
 }
 
-void __attribute__((weak))
+error_t __attribute__((weak))
 diskfs_journal_commit_transaction (diskfs_transaction_t *tx)
 {
   /* Do nothing */
+  return 0;
 }
 
 void __attribute__((weak))
