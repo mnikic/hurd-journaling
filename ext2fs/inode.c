@@ -436,7 +436,10 @@ write_node (struct node *np)
     {
       struct ext2_inode_info *info = &diskfs_node_disknode (np)->info;
 
-      assert_backtrace (!diskfs_readonly);
+      /* An aborted journal makes the filesystem read-only under nodes
+	 changed before, which file_sync or a drop still writes: into a
+	 transaction that never commits.  */
+      assert_backtrace (!diskfs_readonly || journal_aborted ());
 
       ext2_debug ("writing inode %d to disk", np->cache_id);
 
