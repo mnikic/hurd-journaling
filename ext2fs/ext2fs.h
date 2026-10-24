@@ -690,8 +690,9 @@ alloc_sync (struct node *np)
       /* If the superblock was modified in memory, push it to the disk cache
          now so it gets bundled into this transaction's WAL commit.
          diskfs_set_hypermetadata natively handles the get_write_access ->
-         memcpy -> mark_dirty pipeline! */
-      if (sblock_dirty && ext2_journal)
+         memcpy -> mark_dirty pipeline, and reads sblock_dirty under
+         global_lock, which this cannot read without.  */
+      if (ext2_journal)
         diskfs_set_hypermetadata (0, 0);
 
       if (np)
