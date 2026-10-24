@@ -3238,12 +3238,14 @@ diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
    for top-level VFS RPCs that enforce POSIX fsync/O_SYNC guarantees.
 
    This function consumes TXN. The caller must not use TXN after this call,
-   and it MUST NOT call diskfs_journal_stop_transaction on it. */
-void
+   and it MUST NOT call diskfs_journal_stop_transaction on it.
+
+   Returns 0 once TXN is durable.  */
+error_t
 diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 {
   if (!ext2_journal || !opaque_txn)
-    return;
+    return 0;
 
   diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
   uint32_t tid = txn->t_tid;
@@ -3284,6 +3286,7 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
   journal_wait_on_tid_locked (ext2_journal, tid);
 out:
   JOURNAL_UNLOCK (ext2_journal);
+  return 0;
 }
 
 /**

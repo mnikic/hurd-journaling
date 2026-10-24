@@ -559,8 +559,12 @@ void diskfs_journal_stop_transaction (diskfs_transaction_t *txn);
    operation (e.g., the directory has the O_SYNC flag).
 
    This function consumes TXN. The caller must not use TXN after this call,
-   and it MUST NOT call diskfs_journal_stop_transaction on it. */
-void diskfs_journal_commit_transaction (diskfs_transaction_t *txn);
+   and it MUST NOT call diskfs_journal_stop_transaction on it.
+
+   Returns 0 once the transaction is durable, or an error if its commit,
+   or an earlier one, failed (EIO, say); the journal may then refuse every
+   later commit with that error too.  */
+error_t diskfs_journal_commit_transaction (diskfs_transaction_t *txn);
 
 /* Flags the transaction TXN to require a synchronous commit upon completion.
    This is used by nested filesystem operations that receive a request for
