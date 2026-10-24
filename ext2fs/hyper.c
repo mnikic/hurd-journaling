@@ -390,4 +390,9 @@ diskfs_readonly_changed (int readonly)
   if (!readonly && !ext2_journal
       && (sblock->s_feature_compat & EXT3_FEATURE_COMPAT_HAS_JOURNAL))
     ext2_start_journal ();
+
+  /* A filesystem mounted read-only, as the root is, gets here before
+     anything frees its orphans: the mount leaves them alone.  */
+  if (!readonly)
+    ext2_recover_orphan_list ();
 }
