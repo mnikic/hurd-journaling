@@ -2255,6 +2255,7 @@ diskfs_transaction_t *
 diskfs_journal_start_transaction (void)
 {
   diskfs_transaction_t *txn;
+  journal_t *journal;
 
   if (journal_thread_depth > 0)
     {
@@ -2267,12 +2268,17 @@ diskfs_journal_start_transaction (void)
       return journal_thread_txn;
     }
 
-  if (!ext2_journal || ext2_journal->j_must_exit)
+  /* Read once: a pager thread allocating for a write fault starts a
+     handle with nothing to keep the journal from stopping meanwhile.  A
+     stopped journal is not freed, and keeps j_must_exit set, which the
+     join checks again under its lock.  */
+  journal = __atomic_load_n (&ext2_journal, __ATOMIC_ACQUIRE);
+  if (!journal || journal->j_must_exit)
     return NULL;
 
-  JOURNAL_LOCK (ext2_journal);
-  txn = journal_join_transaction_locked (ext2_journal);
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_LOCK (journal);
+  txn = journal_join_transaction_locked (journal);
+  JOURNAL_UNLOCK (journal);
 
   if (txn)
     {
@@ -3088,7 +3094,7 @@ kjournald_thread (void *arg)
 			  journal->j_transaction_sequence, journal->j_head,
 			  journal->j_first, journal->j_last);
 
-	  error_t err = journal_commit_running_transaction_locked (ext2_journal);
+	  error_t err = journal_commit_running_transaction_locked (journal);
 	  if (err)
 	    JRNL_LOG_WARN ("Background commit failed: %s", strerror (err));
 	}
@@ -3743,7 +3749,11 @@ error_t
 journal_store_write (block_t start_block, size_t length, void *buf,
 		     size_t *amount, int disk_cache)
 {
-  if (!ext2_journal || length == 0)
+  /* One journal throughout, as in journal_store_read.  The journal can
+     stop while this write is in flight, when no transaction holds its
+     blocks: ext2_journal then goes NULL, under the journal's lock.  */
+  journal_t *journal = __atomic_load_n (&ext2_journal, __ATOMIC_ACQUIRE);
+  if (!journal || length == 0)
     {
       /* Journal is disabled. Passthrough directly to the disk. */
       store_offset_t dev_block =
@@ -3761,11 +3771,29 @@ journal_store_write (block_t start_block, size_t length, void *buf,
      too, and their pages are lost.  */
   int failed = 0;
 
-  JOURNAL_LOCK (ext2_journal);
+  JOURNAL_LOCK (journal);
   while (i < n_blocks)
     {
       block_t b = start_block + i;
       char *b_data = in_ptr + (i << log2_block_size);
+
+      if (ext2_journal != journal)
+	{
+	  /* It stopped, with nothing left in it: the rest goes home as
+	     without a journal.  */
+	  size_t rest_amount = 0;
+	  JOURNAL_UNLOCK (journal);
+	  error_t err =
+	    store_write (store,
+			 (store_offset_t) b << log2_dev_blocks_per_fs_block,
+			 b_data, (n_blocks - i) << log2_block_size,
+			 &rest_amount);
+	  JOURNAL_LOCK (journal);
+	  total_written += rest_amount;
+	  if (err && !final_err)
+	    final_err = err;
+	  break;
+	}
 
       int intercepted =
 	journal_handle_write_hazard_locked (b, b_data, disk_cache, resident);
@@ -3806,20 +3834,22 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	    (store_offset_t) b << log2_dev_blocks_per_fs_block;
 	  size_t write_len = flush_count << log2_block_size;
 	  size_t chunk_amount = 0;
-	  JOURNAL_UNLOCK (ext2_journal);
+	  JOURNAL_UNLOCK (journal);
 	  error_t err =
 	    store_write (store, dev_block, b_data, write_len, &chunk_amount);
-	  JOURNAL_LOCK (ext2_journal);
+	  JOURNAL_LOCK (journal);
 	  if (err && !final_err)
 	    final_err = err;
 
 	  /* Convert bytes actually written back into full blocks */
 	  size_t actual_blocks = chunk_amount >> log2_block_size;
 
-	  if (actual_blocks > 0)
+	  /* A stopped journal waited for every claim, so this write had
+	     none, and there is nothing to tell it.  */
+	  if (actual_blocks > 0 && ext2_journal == journal)
 	    journal_notify_blocks_written_locked (b, actual_blocks);
 
-	  if (actual_blocks < flush_count)
+	  if (actual_blocks < flush_count && ext2_journal == journal)
 	    {
 	      journal_clear_flushing_locked (b + actual_blocks,
 					     flush_count - actual_blocks);
@@ -3845,7 +3875,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
   if (amount)
     *amount = total_written;
 
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
   return final_err;
 }
 
@@ -3982,8 +4012,10 @@ journal_store_read (block_t start_block, size_t length, void **buf,
   store_offset_t dev_block =
     (store_offset_t) start_block << log2_dev_blocks_per_fs_block;
   /* Use one journal throughout: a journal_t stays valid after the
-     journal stops, so the overlay can still lock it.  */
-  journal_t *journal = ext2_journal;
+     journal stops, so the overlay can still lock it.  The acquire pairs
+     with the release that publishes it (ext2_start_journal), so that its
+     lock is seen initialized.  */
+  journal_t *journal = __atomic_load_n (&ext2_journal, __ATOMIC_ACQUIRE);
   int deferred = 0;
 
   if (journal)
@@ -4089,7 +4121,11 @@ diskfs_journal_shutdown (void)
   int empty = journal_quiesce_checkpoints ();
 
   journal_t *journal = ext2_journal;
-  ext2_journal = NULL;
+  /* Under the lock: a pager write that holds it and still finds the
+     journal current can finish with it (journal_store_write).  */
+  JOURNAL_LOCK (journal);
+  __atomic_store_n (&ext2_journal, NULL, __ATOMIC_RELEASE);
+  JOURNAL_UNLOCK (journal);
 
   /* Final hardware flush.  It also puts the empty journal superblock on
      disk before the needs_recovery flag is cleared.  */
