@@ -484,7 +484,9 @@ typedef enum
 				   to finish */
   T_FLUSHING,			/* Writing to the journal ring buffer */
   T_COMMITTED,			/* WAL Commit Record is on disk. Safe to write directly to main FS. */
-  T_FINISHED			/* Done, waiting to be checkpointed */
+  T_FINISHED,			/* Done, waiting to be checkpointed */
+  T_ABORTED			/* Its commit failed: kept in memory, never
+				   written home (journal_abort_locked) */
 } transaction_state_t;
 
 typedef struct journal_freed_extent
@@ -588,6 +590,13 @@ typedef struct journal
   uint32_t j_last_committed_tid;	/* Transaction ID of the last committed txn. */
   uint32_t j_released_tid;	/* Last txn whose freed blocks went back
 				   to the allocator. */
+  /* Set when a commit fails (journal_abort_locked), and never cleared:
+     what every commit from j_aborted_tid on returns.  The aborted
+     transaction is kept, as the only copy of pages the pager has
+     handed over.  */
+  error_t j_errno;
+  uint32_t j_aborted_tid;
+  diskfs_transaction_t *j_aborted_transaction;
   pthread_cond_t j_commit_done;	/* Cond. var. while waiting for the tx to be committed. */
 
   int j_must_exit;		/* variable that tells journal thread when to stop. */
@@ -3000,6 +3009,61 @@ journal_ensure_commit_space_locked (journal_t *journal,
     }
 }
 
+/* The commit of TXN failed with ERR, partway through writing it to the
+   log.  As jbd2 does, stop the journal and make the file system
+   read-only: TXN's blocks must not go home without their commit record,
+   and nothing after TXN can commit.
+
+   TXN is kept, not freed: its shadows of pages the pager has written
+   are the only copy of them.  Reads keep finding them, and pager writes
+   of its blocks keep going into them, for as long as the translator
+   runs; read-only, diskfs_shutdown does not even stop the journal.  The
+   running transaction is never committed either, and keeps its own.
+   After a reboot the log replays up to the transaction before TXN, as
+   after a crash.  s_errno in the journal superblock has e2fsck check the
+   whole file system, and keeps ext2fs from mounting it before then.
+
+   MUST be called with JOURNAL_LOCK held.  */
+static void
+journal_abort_locked (journal_t *journal, diskfs_transaction_t *txn,
+		      error_t err)
+{
+  journal_superblock_t *jsb = (journal_superblock_t *) journal->j_sb_buffer;
+
+  txn->t_state = T_ABORTED;
+  journal->j_aborted_transaction = txn;
+  journal->j_aborted_tid = txn->t_tid;
+  journal->j_errno = err;
+  /* For good: only e2fsck can clear the error (journal_check).  */
+  diskfs_hard_readonly = diskfs_readonly = 1;
+
+  ext2_error ("commit of transaction %u failed (%s); journal aborted, "
+	      "file system now read-only", txn->t_tid, strerror (err));
+  jsb->s_errno = htobe32 ((uint32_t) -err);
+  err = journal_write_block (journal, 0, jsb);
+  if (err)
+    JRNL_LOG_WARN ("Failed to record the abort in the journal superblock: "
+		   "%s", strerror (err));
+}
+
+int
+journal_aborted (void)
+{
+  return ext2_journal
+    && __atomic_load_n (&ext2_journal->j_errno, __ATOMIC_RELAXED) != 0;
+}
+
+/* What a commit of transaction TID returns: 0 once it is durable, the
+   error that aborted the journal if TID is the aborted transaction or a
+   later one.  MUST be called with JOURNAL_LOCK held.  */
+static error_t
+journal_commit_error_locked (journal_t *journal, uint32_t tid)
+{
+  if (journal->j_errno && !tid_gt (journal->j_aborted_tid, tid))
+    return journal->j_errno;
+  return 0;
+}
+
 /**
  * Commits the transaction. This function expects
  * journal lock to be held. */
@@ -3029,6 +3093,12 @@ journal_commit_running_transaction_locked (journal_t *journal)
   while (journal->j_committing_transaction != NULL)
     JOURNAL_WAIT (&journal->j_commit_done, journal);
 
+  /* After an abort nothing commits again.  */
+  if (journal->j_errno)
+    {
+      err = journal->j_errno;
+      goto out;
+    }
   txn = journal->j_running_transaction;
   if (!txn)
     {
@@ -3154,15 +3224,16 @@ journal_commit_running_transaction_locked (journal_t *journal)
   goto out;
 abort_commit:
   /* We hit a physical I/O error. We must clear the pipeline slot and wake
-     up any sleeping threads so they don't deadlock, before we free the txn. */
+     up any sleeping threads so they don't deadlock.  Their commits fail
+     too.  */
   JOURNAL_LOCK (journal);
   journal->j_committing_transaction = NULL;
   journal->j_last_committed_tid = txn->t_tid;
   /* The frees did not commit, and older copies of their blocks were not
      forgotten.  The blocks stay busy until the next mount.  */
   journal->j_released_tid = txn->t_tid;
+  journal_abort_locked (journal, txn, err);
   pthread_cond_broadcast (&journal->j_commit_done);
-  journal_free_transaction (txn);
 out:
   return err;
 }
@@ -3273,6 +3344,10 @@ journal_check (struct node *journal_inode)
     JRNL_LOG_WARN ("Bad journal superblock.");
   else if (jsb->s_start != 0)
     /* Whatever its features, only e2fsck can replay it.  */
+    state = JOURNAL_NEEDS_REPLAY;
+  else if (jsb->s_errno != 0)
+    /* The journal was aborted (journal_abort_locked).  e2fsck must check
+       the whole filesystem first; it clears the error.  */
     state = JOURNAL_NEEDS_REPLAY;
   else if (be32toh (jsb->s_header[1]) == JBD2_SUPERBLOCK_V1)
     /* No feature fields, and so no revoke records.  */
@@ -3514,10 +3589,14 @@ diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
    This function consumes TXN. The caller must not use TXN after this call,
    and it MUST NOT call diskfs_journal_stop_transaction on it.
 
-   Returns 0 once TXN is durable.  */
+   Returns 0 once TXN is durable, or the error of a failed commit: of TXN,
+   or of an earlier transaction, after which the journal commits nothing
+   more.  */
 error_t
 diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 {
+  error_t err;
+
   if (!ext2_journal || !opaque_txn)
     return 0;
 
@@ -3544,8 +3623,8 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
      If it is, We "steal" it and become the committer. */
   if (IS_RUNNING_TID (ext2_journal, tid))
     {
-      error_t err = journal_commit_running_transaction_locked (ext2_journal);
-      if (err)
+      err = journal_commit_running_transaction_locked (ext2_journal);
+      if (err && !ext2_journal->j_errno)
 	JRNL_LOG_WARN
 	  ("Commit failed in diskfs_journal_commit_transaction: %s",
 	   strerror (err));
@@ -3559,8 +3638,9 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
      We will wait for them to finish here. */
   journal_wait_on_tid_locked (ext2_journal, tid);
 out:
+  err = journal_commit_error_locked (ext2_journal, tid);
   JOURNAL_UNLOCK (ext2_journal);
-  return 0;
+  return err;
 }
 
 /**
@@ -3578,7 +3658,9 @@ journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache,
   diskfs_transaction_t *run;
   journal_buffer_t *jb_run;
   journal_buffer_t *jb_commit;
+  journal_buffer_t *jb_aborted;
   diskfs_transaction_t *chk;
+  diskfs_transaction_t *aborted = ext2_journal->j_aborted_transaction;
 
 retry:
   commit = ext2_journal->j_committing_transaction;
@@ -3586,6 +3668,10 @@ retry:
 
   jb_run = run ? journal_map_lookup (&run->t_buffer_map, b) : NULL;
   jb_commit = commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
+  /* An aborted transaction's blocks never go home: the page goes into
+     its shadow, which serves reads.  */
+  jb_aborted = aborted ? journal_map_lookup (&aborted->t_buffer_map, b)
+    : NULL;
 
   /* If it's in the committing transaction BUT the WAL barrier is crossed,
      it is safe to write to disk. Remove it from the intercept hazard list. */
@@ -3608,11 +3694,13 @@ retry:
      page can be evicted clean before the sweep reads it: the copy then
      goes into the shadow, which the sweep reads back.  An older copy is
      harmless there, since the page is dirty and the sweep reads it.  */
-  if (jb_run || jb_commit)
+  if (jb_run || jb_commit || jb_aborted)
     {
-      journal_buffer_t *jb = jb_run ? jb_run : jb_commit;
+      journal_buffer_t *jb = jb_run ? jb_run : jb_commit ? jb_commit
+	: jb_aborted;
       int stale = disk_cache && ((jb_run && jb_run->jb_external)
-				 || (jb_commit && jb_commit->jb_external));
+				 || (jb_commit && jb_commit->jb_external)
+				 || (jb_aborted && jb_aborted->jb_external));
 
       /* The disk cache writing a directory block that a transaction holds
 	 writes its stale copy: the live bytes are in the directory's file
@@ -3642,6 +3730,10 @@ retry:
 			      "from its shadow; kept the shadow.", b);
 	    }
 	}
+      else if (!jb_run && !jb_commit)
+	/* Aborted.  It drained before its commit, and an edit since is
+	   reserved in the running transaction: the page is the newer.  */
+	memcpy (jb->jb_shadow_data, b_data, block_size);
       else if (!jb_run && commit->t_state == T_FLUSHING)
 	{
 	  /* The commit is writing this shadow to the log, so it must not
@@ -3799,6 +3891,9 @@ journal_claim_safe_block_locked (block_t b)
 
   /* If it is an active hazard, we cannot claim it for physical coalescing */
   if (jb_run || jb_commit)
+    return 0;
+  diskfs_transaction_t *aborted = ext2_journal->j_aborted_transaction;
+  if (aborted && journal_map_lookup (&aborted->t_buffer_map, b))
     return 0;
 
   /* Stop coalescing if ANY thread is actively flushing this block to disk */
@@ -3992,6 +4087,12 @@ journal_deferred_source_locked (journal_t *journal, block_t b)
   if (jb && jb->needs_flush)
     return jb;
   jb = commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
+  if (jb && jb->needs_flush)
+    return jb;
+
+  /* An aborted commit's shadow is newer than any checkpointed one.  */
+  diskfs_transaction_t *aborted = journal->j_aborted_transaction;
+  jb = aborted ? journal_map_lookup (&aborted->t_buffer_map, b) : NULL;
   if (jb && jb->needs_flush)
     return jb;
 

@@ -387,6 +387,10 @@ journal_mark_dirty (diskfs_transaction_t * txn, block_t fs_blocknr);
 diskfs_transaction_t *
 journal_thread_transaction (void);
 
+/* Whether a failed commit has aborted the journal, making the filesystem
+   read-only.  The journal still takes changes then, in memory only.  */
+int journal_aborted (void);
+
 void ext2_orphan_drop_ram_link (struct node *np);
 
 /* Set the needs_recovery flag directly on disk, outside the journal.  */

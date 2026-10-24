@@ -86,7 +86,9 @@ enum journal_state
 {
   JOURNAL_USABLE,		/* Empty log, features this journal writes.  */
   JOURNAL_NEEDS_REPLAY,		/* The log holds transactions that were never
-				   replayed, or the superblock is unreadable.  */
+				   replayed, the journal was aborted, or the
+				   superblock is unreadable.  e2fsck must run
+				   first.  */
   JOURNAL_UNSUPPORTED		/* Empty log, but a feature this journal does
 				   not write, such as 64-bit tags or
 				   checksums.  */
