@@ -1644,6 +1644,9 @@ journal_notify_txn_locked (diskfs_transaction_t *txn,
 
       if (jb)
 	{
+	  /* What went home is the page, at least as new as the shadow: a
+	     home write still due after a failed one is not any more.  */
+	  jb->needs_flush = 0;
 	  if (!jb->jb_is_written)
 	    {
 	      jb->jb_is_written = 1;
@@ -3988,7 +3991,20 @@ journal_deferred_source_locked (journal_t *journal, block_t b)
   jb = commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
   if (jb && jb->needs_flush)
     return jb;
-  return NULL;
+
+  /* A flush after a commit that failed leaves the flag set in a
+     transaction that has gone on to the checkpoint list, which writes
+     the shadow home later.  Until then the shadow is still the block's
+     latest image: the newest such transaction's.  */
+  journal_buffer_t *found = NULL;
+  for (diskfs_transaction_t *t = journal->j_checkpoint_list; t;
+       t = t->t_checkpoint_next)
+    {
+      jb = journal_map_lookup (&t->t_buffer_map, b);
+      if (jb && jb->needs_flush)
+	found = jb;
+    }
+  return found;
 }
 
 /* Read LEN bytes of block B from its home location into DST.  */
