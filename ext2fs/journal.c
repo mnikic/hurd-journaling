@@ -2301,16 +2301,19 @@ journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
     JOURNAL_WAIT (&journal->j_commit_done, journal);
 }
 
-/* A pager thread never waits.  Neither does a thread whose handle is on
-   the committing transaction, since that commit waits for the handle to
-   drain.  The running transaction's frees wait for its commit, which the
-   caller's handle holds back; kjournald is woken to start that commit as
-   soon as the handle drains.  */
+/* Wait until the frees of the committing transaction, or of one that
+   has committed but not given them back yet, are back with the
+   allocator.  A pager thread never waits.  Neither does a thread whose
+   handle is on the committing transaction, since that commit waits for
+   the handle to drain.  The running transaction's frees wait for its
+   commit, which the caller's handle holds back; kjournald is woken to
+   start that commit as soon as the handle drains.  */
 int
 journal_wait_freed_blocks (diskfs_transaction_t *txn)
 {
   diskfs_transaction_t *commit;
-  int waited = 0;
+  uint32_t tid = 0;
+  int wait = 0;
 
   if (!ext2_journal || journal_thread_is_pager)
     return 0;
@@ -2320,14 +2323,22 @@ journal_wait_freed_blocks (diskfs_transaction_t *txn)
   commit = ext2_journal->j_committing_transaction;
   if (commit && commit != txn)
     {
-      uint32_t tid = commit->t_tid;
-
-      while (tid_gt (tid, ext2_journal->j_released_tid))
-	JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
-      waited = 1;
+      tid = commit->t_tid;
+      wait = 1;
     }
+  else if (tid_gt (ext2_journal->j_last_committed_tid,
+		   ext2_journal->j_released_tid))
+    {
+      /* Committed: its frees come back once journal_forget_freed_blocks
+	 is done, which needs nothing the caller can hold.  */
+      tid = ext2_journal->j_last_committed_tid;
+      wait = 1;
+    }
+  if (wait)
+    while (tid_gt (tid, ext2_journal->j_released_tid))
+      JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
   JOURNAL_UNLOCK (ext2_journal);
-  return waited;
+  return wait;
 }
 
 void
