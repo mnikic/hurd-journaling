@@ -2320,10 +2320,20 @@ journal_thread_transaction (void)
 
   assert_backtrace (!ext2_journal || ext2_journal->j_must_exit
 		    || journal_thread_depth > 0);
+#ifndef NDEBUG
   /* The handle's t_active_threads count keeps commit from moving the
-     transaction past T_LOCKED.  */
-  assert_backtrace (!txn || txn->t_state == T_RUNNING
-		    || txn->t_state == T_LOCKED);
+     transaction past T_LOCKED.  A commit sets T_LOCKED under the journal
+     lock, so read the state under it too.  */
+  if (txn && ext2_journal)
+    {
+      transaction_state_t state;
+
+      JOURNAL_LOCK (ext2_journal);
+      state = txn->t_state;
+      JOURNAL_UNLOCK (ext2_journal);
+      assert_backtrace (state == T_RUNNING || state == T_LOCKED);
+    }
+#endif /* ! NDEBUG */
   return txn;
 }
 
