@@ -15,6 +15,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
+#include <error.h>
 #include "diskfs.h"
 #include "priv.h"
 
@@ -121,6 +122,39 @@ in_chain (const ino_t *chain, size_t n, struct node *np)
   for (size_t i = 0; i < n; i++)
     if (chain[i] == np->cache_id)
       return 1;
+  return 0;
+}
+
+/* Point the ".." of FNP back from TDP to FDP, and give FDP back the link
+   it had: undo step 2 of diskfs_rename_dir.  All three are locked.  */
+static error_t
+undo_dotdot (struct node *fnp, struct node *fdp, struct node *tdp,
+	     struct protid *cred)
+{
+  struct dirstat *ds = alloca (diskfs_dirstat_size);
+  struct node *np;
+  error_t err;
+
+  err = diskfs_lookup (fnp, "..", RENAME | SPEC_DOTDOT, &np, ds, cred);
+  if (err)
+    {
+      diskfs_drop_dirstat (fnp, ds);
+      return err;
+    }
+  assert_backtrace (np == tdp);
+
+  err = diskfs_dirrewrite (fnp, tdp, fdp, "..", ds);
+  diskfs_file_update (fnp, diskfs_synchronous);
+  if (err)
+    return err;
+
+  fdp->dn_stat.st_nlink++;
+  fdp->dn_set_ctime = 1;
+  diskfs_node_update (fdp, diskfs_synchronous);
+  assert_backtrace (tdp->dn_stat.st_nlink > 1);
+  tdp->dn_stat.st_nlink--;
+  tdp->dn_set_ctime = 1;
+  diskfs_node_update (tdp, diskfs_synchronous);
   return 0;
 }
 
@@ -268,14 +302,17 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   if (err && err != ENOENT)
     goto out;
 
+  /* The link counts to raise are checked before anything changes.  */
+  if ((fdp != tdp && tdp->dn_stat.st_nlink == diskfs_link_max - 1)
+      || fnp->dn_stat.st_nlink == diskfs_link_max - 1)
+    {
+      err = EMLINK;
+      goto out;
+    }
+
   /* 2: Set our .. to point to the new parent */
   if (fdp != tdp)
     {
-      if (tdp->dn_stat.st_nlink == diskfs_link_max - 1)
-	{
-	  err = EMLINK;
-	  goto out;
-	}
       tdp->dn_stat.st_nlink++;
       tdp->dn_set_ctime = 1;
       diskfs_node_update (tdp, diskfs_synchronous);
@@ -322,16 +359,6 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 
   /* 3: Increment the link count on the node being moved and rewrite
      tdp. */
-  if (fnp->dn_stat.st_nlink == diskfs_link_max - 1)
-    {
-      pthread_mutex_unlock (&fnp->lock);
-      diskfs_drop_dirstat (tdp, ds);
-      pthread_mutex_unlock (&tdp->lock);
-      if (tnp)
-	diskfs_nput (tnp);
-      diskfs_journal_stop_transaction (txn);
-      return EMLINK;
-    }
   fnp->dn_stat.st_nlink++;
   fnp->dn_set_ctime = 1;
   diskfs_node_update (fnp, diskfs_synchronous);
@@ -346,13 +373,15 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 	  if (tnp->dn_stat.st_nlink == 0)
 	    diskfs_orphan_add (tnp);
 	  tnp->dn_set_ctime = 1;
+	  diskfs_clear_directory (tnp, tdp, tocred);
+	  diskfs_file_update (tnp, diskfs_synchronous);
 	}
-      diskfs_clear_directory (tnp, tdp, tocred);
-      diskfs_file_update (tnp, diskfs_synchronous);
     }
   else
     {
+      /* diskfs_direnter consumes DS, whether it succeeds or not.  */
       err = diskfs_direnter (tdp, toname, fnp, ds, tocred);
+      ds = 0;
       diskfs_file_update (tdp, diskfs_synchronous);
     }
 
@@ -365,6 +394,17 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
       fnp->dn_set_ctime = 1;
       /* fnp is locked, so this is safe */
       diskfs_node_update (fnp, diskfs_synchronous);
+
+      /* FNP stays in FDP: undo step 2, so that its ".." points there
+	 again.  Entering the name can fail for want of a block (ENOSPC);
+	 a rewrite needs none.  */
+      if (fdp != tdp)
+	{
+	  error_t undo = undo_dotdot (fnp, fdp, tdp, fromcred);
+	  if (undo)
+	    error (0, undo, "rename: cannot point \"..\" of directory "
+		   "%llu back", (unsigned long long) fnp->cache_id);
+	}
       goto out;
     }
 
