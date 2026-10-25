@@ -131,6 +131,7 @@ diskfs_cached_lookup_context (ino_t inum, struct node **npp,
   hurd_ihash_locp_t slot;
   struct references result;
 
+ again:
   pthread_rwlock_rdlock (&nodecache_lock);
   np = hurd_ihash_locp_find (&nodecache, (hurd_ihash_key_t) &inum, &slot);
   if (np)
@@ -171,7 +172,8 @@ diskfs_cached_lookup_context (ino_t inum, struct node **npp,
   if (err)
    {
     pthread_rwlock_wrlock (&nodecache_lock);
-    hurd_ihash_remove (&nodecache, (hurd_ihash_key_t) &np->cache_id);
+    hurd_ihash_locp_remove (&nodecache, np->slot);
+    np->slot = NULL;
     unlink_list_node (np);
     pthread_rwlock_unlock (&nodecache_lock);
     /* The cache's reference, as diskfs_try_dropping_softrefs releases it.
@@ -200,6 +202,15 @@ diskfs_cached_lookup_context (ino_t inum, struct node **npp,
   pthread_rwlock_unlock (&nodecache_lock);
  referenced:
   pthread_mutex_lock (&np->lock);
+  if (np->slot == NULL)
+    {
+      /* NP was being read, and the read failed while we waited for its
+	 lock: it is out of the cache, and holds nothing of the inode
+	 (nothing else takes a node out while it has a hard reference).
+	 Let it go, and read the inode ourselves.  */
+      diskfs_nput (np);
+      goto again;
+    }
   if (result.hard == 1)
     diskfs_new_hardrefs (np);
   *npp = np;
