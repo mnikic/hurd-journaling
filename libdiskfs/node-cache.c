@@ -174,6 +174,9 @@ diskfs_cached_lookup_context (ino_t inum, struct node **npp,
     hurd_ihash_remove (&nodecache, (hurd_ihash_key_t) &np->cache_id);
     unlink_list_node (np);
     pthread_rwlock_unlock (&nodecache_lock);
+    /* The cache's reference, as diskfs_try_dropping_softrefs releases it.
+       Ours is still held, so this does not drop NP.  */
+    diskfs_nrele_light (np);
 
     forget_unread_node (np);
     *npp = NULL;
