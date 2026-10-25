@@ -202,7 +202,12 @@ diskfs_cached_lookup_context (ino_t inum, struct node **npp,
   pthread_rwlock_unlock (&nodecache_lock);
  referenced:
   pthread_mutex_lock (&np->lock);
-  if (np->slot == NULL)
+  /* The cache's table writes NP->slot under nodecache_lock, when it
+     moves its entries too.  */
+  pthread_rwlock_rdlock (&nodecache_lock);
+  int gone = np->slot == NULL;
+  pthread_rwlock_unlock (&nodecache_lock);
+  if (gone)
     {
       /* NP was being read, and the read failed while we waited for its
 	 lock: it is out of the cache, and holds nothing of the inode
