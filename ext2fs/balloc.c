@@ -160,6 +160,17 @@ ext2_release_busy_blocks (block_t block, unsigned long count)
   pthread_spin_unlock (&global_lock);
 }
 
+unsigned long
+ext2_busy_blocks (void)
+{
+  unsigned long busy;
+
+  pthread_spin_lock (&global_lock);
+  busy = busy_total;
+  pthread_spin_unlock (&global_lock);
+  return busy;
+}
+
 /* Free COUNT blocks starting at BLOCK.  With BUSY set and a journal, the
    blocks stay busy until the transaction freeing them commits.  When they
    cannot be kept busy, they stay allocated instead: reusing them could put

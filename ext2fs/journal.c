@@ -2341,6 +2341,32 @@ journal_wait_freed_blocks (diskfs_transaction_t *txn)
   return wait;
 }
 
+/* Whether an operation that got ENOSPC should try again, as
+   ext4_should_retry_alloc.  Blocks freed by a transaction that has not
+   committed, or not given them back yet, are busy, and the allocator
+   cannot wait for them under the caller's handle: an operation whose own
+   transaction freed them gets ENOSPC although they come back at the next
+   commit.  The caller has let go of its handle and node locks, so commit
+   the running transaction here and wait for the freed blocks, at most
+   three times an operation (*RETRIES).  */
+int
+diskfs_journal_should_retry_alloc (int *retries)
+{
+  diskfs_transaction_t *txn;
+
+  if (!ext2_journal || journal_thread_is_pager || journal_thread_depth > 0)
+    return 0;
+  if (*retries >= 3 || ext2_busy_blocks () == 0)
+    return 0;
+  (*retries)++;
+
+  txn = diskfs_journal_start_transaction ();
+  if (diskfs_journal_commit_transaction (txn))
+    return 0;
+  journal_wait_freed_blocks (NULL);
+  return 1;
+}
+
 void
 journal_mark_dirty (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
