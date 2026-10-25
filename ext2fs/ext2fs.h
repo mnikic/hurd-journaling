@@ -741,6 +741,10 @@ void ext2_unreserve_blocks (block_t block, unsigned long count);
 /* Make COUNT blocks starting at BLOCK, freed by a transaction that has
    now committed, available to ext2_new_block again.  */
 void ext2_release_busy_blocks (block_t block, unsigned long count);
+
+/* Returns how many freed blocks are busy: waiting for the commit of the
+   transaction that freed them, or for the journal to hand them back.  */
+unsigned long ext2_busy_blocks (void);
 
 /* ---------------------------------------------------------------- */
 

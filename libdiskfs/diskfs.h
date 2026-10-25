@@ -589,6 +589,15 @@ int diskfs_journal_needs_sync (diskfs_transaction_t *txn);
    The default definition does nothing.  */
 void diskfs_journal_shutdown (void);
 
+/* Called by an operation that failed with ENOSPC, once it holds no
+   transaction handle and no node lock.  Blocks the operation freed, or
+   other operations of its transaction, can be kept from reuse until that
+   transaction commits; a journal may then commit and wait for them.
+   Returns non-zero if the operation should be done again: RETRIES, zero
+   at the start of the operation, counts the tries.  The default
+   definition returns 0.  */
+int diskfs_journal_should_retry_alloc (int *retries);
+
 /* Orphan Inode List hooks.
    These are called by libdiskfs when a file is unlinked (nlink drops to
    0) but still held open, and when the inode is finally freed.
