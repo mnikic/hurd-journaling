@@ -34,6 +34,7 @@ diskfs_S_io_write (struct protid *cred,
   mach_msg_type_number_t nwritten;
   int should_sync;
   diskfs_transaction_t *txn;
+  int retries = 0;
 
   if (!cred)
     return EOPNOTSUPP;
@@ -45,6 +46,7 @@ diskfs_S_io_write (struct protid *cred,
   if (!(cred->po->openstat & O_WRITE))
     return EBADF;
   should_sync = (cred->po->openstat & O_FSYNC) || diskfs_synchronous;
+ retry:
   txn = diskfs_journal_start_transaction ();
   pthread_mutex_lock (&np->lock);
 
@@ -109,5 +111,10 @@ diskfs_S_io_write (struct protid *cred,
  out:
   pthread_mutex_unlock (&np->lock);
   diskfs_journal_end_transaction (txn, !err, should_sync);
+  /* Freed blocks can come back once the journal commits.  The write is
+     done again from the start, at the same offset: OFF is no longer -1,
+     so an append goes where it was going to go.  */
+  if (err == ENOSPC && diskfs_journal_should_retry_alloc (&retries))
+    goto retry;
   return err;
 }
