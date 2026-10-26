@@ -1582,16 +1582,10 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
 	  continue;
 	}
 
-      /* Fast-path cleanup for empty transactions lingering at the head */
-      if (txn->t_outstanding_io == 0
-	  && txn == ext2_journal->j_checkpoint_list)
-	{
-	  if (journal_try_advance_tail_locked (ext2_journal))
-	    sb_changed = 1;
-	  txn = ext2_journal->j_checkpoint_list;
-	  continue;
-	}
-
+      /* A head with nothing left to write goes, and those after it with
+	 nothing left either.  One already at 0 here (a commit made it the
+	 head with all its blocks home, and has yet to advance the tail
+	 itself) needs no notice, and has no claim to clear.  */
       if (journal_notify_txn_locked (txn, start_block, n_blocks)
 	  && txn == ext2_journal->j_checkpoint_list)
 	{
