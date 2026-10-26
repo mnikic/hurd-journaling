@@ -165,7 +165,9 @@ undo_dotdot (struct node *fnp, struct node *fdp, struct node *tdp,
    reentrant.  Directories will never be renamed except by this
    routine.  FROMCRED and TOCRED are the users responsible for
    FDP/FNP and TDP respectively.  If EXCL is set, then fail if TONAME
-   already exists inside directory TDP. */
+   already exists inside directory TDP.  Returns EAGAIN, having changed
+   nothing, if FROMNAME no longer names FNP: the caller looks it up
+   again. */
 error_t
 diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
 		   struct node *tdp, const char *toname,
@@ -279,7 +281,17 @@ diskfs_rename_dir (struct node *fdp, struct node *fnp, const char *fromname,
   /* Check permissions to remove FROMNAME and lock FNP.  */
   tmpds = alloca (diskfs_dirstat_size);
   err = diskfs_lookup (fdp, fromname, REMOVE, &tmpnp, tmpds, fromcred);
-  assert_backtrace (!tmpnp || tmpnp == fnp);
+  if (tmpnp && tmpnp != fnp)
+    {
+      /* FROMNAME names another node: the caller looked it up before it
+	 had renamedirlock, and a rename since replaced it.  Nothing has
+	 changed yet; the caller looks it up again.  */
+      diskfs_nput (tmpnp);
+      diskfs_drop_dirstat (fdp, tmpds);
+      err = EAGAIN;
+      fnp = NULL;
+      goto out;
+    }
   if (tmpnp)
     diskfs_nrele (tmpnp);
   diskfs_drop_dirstat (fdp, tmpds);
