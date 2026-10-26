@@ -362,7 +362,13 @@ typedef struct journal
   diskfs_transaction_t *j_aborted_transaction;
   pthread_cond_t j_commit_done;	/* Cond. var. while waiting for the tx to be committed. */
 
-  int j_must_exit;		/* variable that tells journal thread when to stop. */
+  /* The journal is stopping, set by diskfs_journal_shutdown under the
+     lock and never cleared: no new handle starts, kjournald exits, no
+     background commit, checkpoint or tail write runs, and the checkpoint
+     list belongs to journal_quiesce_checkpoints.  A call made on a handle
+     already open does not look at it: the stop's final commit waits for
+     that handle, and carries what it reserves.  */
+  int j_must_exit;
   pthread_t j_kjournald;	/* The journal thread, joined when the
 				   journal stops.  */
   int j_kjournald_started;
@@ -1143,6 +1149,28 @@ journal_get_oldest_transaction_locked (journal_t *journal)
   return NULL;
 }
 
+/* The journal, locked, or NULL if there is none or it stopped.  A call
+   made on an open handle needs no j_must_exit check: the stop's final
+   commit waits for the handle, and carries what it reserves.  The handle
+   then keeps ext2_journal set too, unless the stop gave up waiting for it
+   (journal_quiesce_checkpoints timed out): ext2_journal is cleared under
+   the journal's lock with the handle still open, and the journal kept.
+   So it is read once, and checked again under the lock, which it stays
+   the same under.  */
+static journal_t *
+journal_lock_current (void)
+{
+  journal_t *journal = __atomic_load_n (&ext2_journal, __ATOMIC_ACQUIRE);
+
+  if (!journal)
+    return NULL;
+  JOURNAL_LOCK (journal);
+  if (ext2_journal == journal)
+    return journal;
+  JOURNAL_UNLOCK (journal);
+  return NULL;
+}
+
 /**
  * Records a range of deleted blocks so they can be unpinned from older
  * checkpoint lists AFTER this transaction safely commits.  Returns 1 if
@@ -1154,6 +1182,8 @@ int
 journal_record_freed_blocks (diskfs_transaction_t *txn, block_t start,
 			     unsigned long count)
 {
+  journal_t *journal;
+
   if (!ext2_journal || !txn)
     return 0;
 
@@ -1168,13 +1198,18 @@ journal_record_freed_blocks (diskfs_transaction_t *txn, block_t start,
   ext->fe_start = start;
   ext->fe_count = count;
 
-  JOURNAL_LOCK (ext2_journal);
-  if (!txn || (txn->t_state != T_RUNNING && txn->t_state != T_LOCKED))
+  journal = journal_lock_current ();
+  if (!journal)
+    {
+      free (ext);
+      return 0;
+    }
+  if (txn->t_state != T_RUNNING && txn->t_state != T_LOCKED)
     {
       JRNL_LOG_DEBUG ("Cannot record freed blocks, no running transaction.");
       /* The transaction was committed by another thread before we locked!
          We just drop the recording, since the block is already forgotten. */
-      JOURNAL_UNLOCK (ext2_journal);
+      JOURNAL_UNLOCK (journal);
       free (ext);
       return 0;
     }
@@ -1182,13 +1217,13 @@ journal_record_freed_blocks (diskfs_transaction_t *txn, block_t start,
      recovery does not write that copy over the block's next owner.  Data
      blocks are never in the log and need none.  */
   for (unsigned long i = 0; i < count; i++)
-    if (journal_logged_locked (ext2_journal, start + i)
+    if (journal_logged_locked (journal, start + i)
 	&& journal_revoke_locked (txn, start + i))
       {
 	/* The caller keeps the range allocated.  The records added so far
 	   only revoke blocks nothing points to any more.  */
 	JRNL_LOG_WARN ("ENOMEM revoking freed blocks %u[%lu].", start, count);
-	JOURNAL_UNLOCK (ext2_journal);
+	JOURNAL_UNLOCK (journal);
 	free (ext);
 	return 0;
       }
@@ -1196,7 +1231,7 @@ journal_record_freed_blocks (diskfs_transaction_t *txn, block_t start,
   ext->fe_next = txn->t_freed_blocks;
   txn->t_freed_blocks = ext;
 
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
   return 1;
 }
 
@@ -2110,8 +2145,10 @@ diskfs_journal_should_retry_alloc (int *retries)
     return 0;
   (*retries)++;
 
+  /* None while the journal stops: its final commit is the caller's
+     last chance, which it waits for elsewhere.  */
   txn = diskfs_journal_start_transaction ();
-  if (diskfs_journal_commit_transaction (txn))
+  if (!txn || diskfs_journal_commit_transaction (txn))
     return 0;
   journal_wait_freed_blocks (NULL);
   return 1;
@@ -2120,10 +2157,11 @@ diskfs_journal_should_retry_alloc (int *retries)
 void
 journal_mark_dirty (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
-  if (!ext2_journal || !txn)
+  journal_t *journal;
+
+  if (!txn || !(journal = journal_lock_current ()))
     return;
 
-  JOURNAL_LOCK (ext2_journal);
   journal_buffer_t *jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
   if (!jb)
     {
@@ -2151,7 +2189,7 @@ journal_mark_dirty (diskfs_transaction_t *txn, block_t fs_blocknr)
   assert_backtrace (!jb->jb_is_written);
 
 out:
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
 }
 
 /**
@@ -2352,6 +2390,7 @@ error_t
 journal_get_write_access (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
   error_t err = 0;
+  journal_t *journal;
   if (!ext2_journal)
     goto out;
 
@@ -2363,13 +2402,15 @@ journal_get_write_access (diskfs_transaction_t *txn, block_t fs_blocknr)
       goto out;
     }
 
-  JOURNAL_LOCK (ext2_journal);
+  journal = journal_lock_current ();
+  if (!journal)
+    goto out;
   err = journal_get_write_access_locked (txn, fs_blocknr, 1);
   if (err)
     JRNL_LOG_WARN
       ("Didn't manage to get journal write access for block %u. (%s).",
        fs_blocknr, strerror (err));
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
 
 out:
   return err;
@@ -2424,17 +2465,17 @@ journal_get_write_access_external (diskfs_transaction_t *txn,
 				   block_t fs_blocknr)
 {
   error_t err;
+  journal_t *journal;
 
-  if (!ext2_journal || !txn)
+  if (!txn || !(journal = journal_lock_current ()))
     return 0;
 
-  JOURNAL_LOCK (ext2_journal);
   err = journal_get_write_access_locked (txn, fs_blocknr, 0);
   if (err)
     JRNL_LOG_WARN
       ("Didn't manage to get journal write access for block %u. (%s).",
        fs_blocknr, strerror (err));
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
   return err;
 }
 
@@ -2448,6 +2489,7 @@ journal_mark_dirty_external (diskfs_transaction_t *txn, block_t fs_blocknr,
 			     const void *data)
 {
   journal_buffer_t *jb;
+  journal_t *journal;
   error_t err;
 
   if (!ext2_journal || !txn)
@@ -2463,7 +2505,12 @@ journal_mark_dirty_external (diskfs_transaction_t *txn, block_t fs_blocknr,
       return EIO;
     }
 
-  JOURNAL_LOCK (ext2_journal);
+  journal = journal_lock_current ();
+  if (!journal)
+    {
+      pthread_mutex_unlock (&journal_external_scratch_lock);
+      return 0;
+    }
   jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
   if (jb)
     {
@@ -2482,7 +2529,7 @@ journal_mark_dirty_external (diskfs_transaction_t *txn, block_t fs_blocknr,
   else
     JRNL_LOG_WARN ("mark_dirty_external called on unreserved block %u! "
 		   "Missing get_write_access_external?", fs_blocknr);
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
   pthread_mutex_unlock (&journal_external_scratch_lock);
   return 0;
 }
@@ -2495,11 +2542,11 @@ void
 journal_release_access (diskfs_transaction_t *txn, block_t fs_blocknr)
 {
   journal_buffer_t *jb;
+  journal_t *journal;
 
-  if (!ext2_journal || !txn)
+  if (!txn || !(journal = journal_lock_current ()))
     return;
 
-  JOURNAL_LOCK (ext2_journal);
   jb = journal_map_lookup (&txn->t_buffer_map, fs_blocknr);
   if (jb)
     jb->jb_editing = 0;
@@ -2522,10 +2569,10 @@ journal_release_access (diskfs_transaction_t *txn, block_t fs_blocknr)
   journal_map_remove (&txn->t_buffer_map, fs_blocknr);
   if (!jb->jb_is_written && txn->t_outstanding_io > 0)
     txn->t_outstanding_io--;
-  journal_logged_unref_locked (ext2_journal, fs_blocknr);
-  journal_free_buffer (ext2_journal, jb);
+  journal_logged_unref_locked (journal, fs_blocknr);
+  journal_free_buffer (journal, jb);
 out:
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
 }
 
 /* Two flags.  journal_thread_sync tells this thread's RPC tail to commit
@@ -3388,12 +3435,11 @@ diskfs_journal_stop_transaction (diskfs_transaction_t *txn)
   if (!journal_thread_release (txn))
     return;
 
-  if (!ext2_journal)
+  journal_t *journal = journal_lock_current ();
+  if (!journal)
     return;
-
-  JOURNAL_LOCK (ext2_journal);
-  diskfs_journal_stop_transaction_locked (ext2_journal, txn);
-  JOURNAL_UNLOCK (ext2_journal);
+  diskfs_journal_stop_transaction_locked (journal, txn);
+  JOURNAL_UNLOCK (journal);
 }
 
 /* Ends the caller's participation in the transaction TXN and strictly
@@ -4150,7 +4196,8 @@ diskfs_journal_shutdown (void)
     return;
 
   JOURNAL_LOCK (ext2_journal);
-  ext2_journal->j_must_exit = 1;    /* Signal kjournald so it doesn't wake up */
+  /* No new handle from here on; kjournald exits when it wakes.  */
+  ext2_journal->j_must_exit = 1;
   pthread_cond_broadcast (&ext2_journal->j_running_wait); /* Wake waiting starters */
   JOURNAL_UNLOCK (ext2_journal);
 
