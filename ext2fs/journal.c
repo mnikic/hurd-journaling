@@ -972,18 +972,38 @@ journal_load_superblock (journal_t *journal)
   return 0;
 }
 
-/* Returns the free space in the log with the tail at TAIL; a TAIL of 0
-   means the log is empty.  */
+/**
+ * Peeks at the next block in the ring buffer without allocating it.
+ * Caller MUST hold JOURNAL_LOCK or guarantee exclusive access.
+ */
+static inline uint32_t
+journal_next_block_would_be (const journal_t *journal)
+{
+  uint32_t next = journal->j_head + 1;
+  if (next > journal->j_last)
+    next = journal->j_first;
+  return next;
+}
+
+/* Returns the free space in the log with the tail at TAIL: the blocks
+   from the one after the head, the last written, up to the one before
+   TAIL.  A TAIL of 0 means the log is empty, and so does a TAIL just after
+   the head: a transaction placed there and not written yet, the oldest
+   the log holds.  The log is never full, as
+   journal_ensure_commit_space_locked keeps a margin.  */
 static uint32_t
 journal_free_for_tail (const journal_t *journal, uint32_t tail)
 {
   uint32_t capacity = journal->j_last - journal->j_first + 1;
+  uint32_t used;
 
-  if (tail == 0)
+  if (tail == 0 || tail == journal_next_block_would_be (journal))
     return capacity;
   if (journal->j_head >= tail)
-    return capacity - (journal->j_head - tail);
-  return tail - journal->j_head;
+    used = journal->j_head - tail + 1;
+  else
+    used = capacity - (tail - journal->j_head - 1);
+  return capacity - used;
 }
 
 /* Count one more live transaction holding a copy of BLOCK.
@@ -2033,19 +2053,6 @@ journal_bg_checkpoint_locked (journal_t *journal)
 				    1);
   JRNL_LOG_DEBUG ("[CHECKPOINT] Background checkpoint done (Free: %u).",
 		  journal->j_free);
-}
-
-/**
- * Peeks at the next block in the ring buffer without allocating it.
- * Caller MUST hold JOURNAL_LOCK or guarantee exclusive access.
- */
-static inline uint32_t
-journal_next_block_would_be (const journal_t *journal)
-{
-  uint32_t next = journal->j_head + 1;
-  if (next > journal->j_last)
-    next = journal->j_first;
-  return next;
 }
 
 static inline uint32_t
