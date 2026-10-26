@@ -3556,9 +3556,9 @@ retry:
 	  /* The commit is writing this shadow to the log, so it must not
 	     change.  The page differs from it only by an edit made since
 	     the drain without a reservation in the running transaction,
-	     such as the one trunc_indirect makes just before it reserves
-	     the block.  That edit belongs to the running transaction:
-	     reserve the block there, and keep the page in its shadow.  */
+	     which every edit should take before it writes the block.
+	     That edit belongs to the running transaction: reserve the
+	     block there, and keep the page in its shadow.  */
 	  if (memcmp (jb->jb_shadow_data, b_data, block_size) != 0)
 	    {
 	      static unsigned warnings;
