@@ -1792,6 +1792,22 @@ journal_is_block_in_newer_transaction_locked (journal_t *journal,
   return 0;
 }
 
+/* Whether a checkpoint is writing home an older copy of block B: a
+   transaction in the checkpoint list has it claimed.  MUST be called with
+   JOURNAL_LOCK held.  */
+static int
+journal_older_copy_flushing_locked (journal_t *journal, block_t b)
+{
+  for (diskfs_transaction_t *t = journal->j_checkpoint_list; t;
+       t = t->t_checkpoint_next)
+    {
+      journal_buffer_t *jb = journal_map_lookup (&t->t_buffer_map, b);
+      if (jb && jb->jb_is_flushing)
+	return 1;
+    }
+  return 0;
+}
+
 /* Write home the blocks of TXN whose pager writes were taken into their
    shadows (needs_flush).  Executes outside the journal lock, which it
    takes per block.  Called right after TXN is committed to the log.  */
@@ -1807,6 +1823,13 @@ journal_flush_intercepted_payloads (journal_t *journal,
       int flush = 0;
 
       JOURNAL_LOCK (journal);
+      /* A checkpoint can be writing an older copy of the block: it
+	 checked for a newer one while TXN was not committed yet, and must
+	 land first, or it would land over this one, and both count as
+	 written.  The pager waits for such a claim too.  */
+      while (jb->needs_flush
+	     && journal_older_copy_flushing_locked (journal, jb->jb_blocknr))
+	JOURNAL_WAIT (&journal->j_flush_wait, journal);
       if (jb->needs_flush)
 	{
 	  flush = 1;
