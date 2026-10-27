@@ -4125,6 +4125,20 @@ journal_store_read (block_t start_block, size_t length, void **buf,
   return err;
 }
 
+/* Wake kjournald, which saw j_must_exit or will when it wakes, and wait
+   for it to end.  */
+static void
+journal_stop_kjournald (journal_t *journal)
+{
+  if (!journal->j_kjournald_started)
+    return;
+  JOURNAL_LOCK (journal);
+  pthread_cond_signal (&journal->j_flusher_wakeup);
+  JOURNAL_UNLOCK (journal);
+  pthread_join (journal->j_kjournald, NULL);
+  journal->j_kjournald_started = 0;
+}
+
 /* Free what JOURNAL holds, once journal_quiesce_checkpoints has emptied
    it and ext2_journal no longer points to it.  The journal_t itself, with
    its lock and condition variables, is kept: a pager thread may have read
@@ -4137,15 +4151,7 @@ journal_free_resources (journal_t *journal)
 {
   struct node *jnode = journal->map.inode;
 
-  /* kjournald saw j_must_exit, or will when it wakes.  */
-  if (journal->j_kjournald_started)
-    {
-      JOURNAL_LOCK (journal);
-      pthread_cond_signal (&journal->j_flusher_wakeup);
-      JOURNAL_UNLOCK (journal);
-      pthread_join (journal->j_kjournald, NULL);
-      journal->j_kjournald_started = 0;
-    }
+  journal_stop_kjournald (journal);
 
   JOURNAL_LOCK (journal);
 
@@ -4222,10 +4228,13 @@ diskfs_journal_shutdown (void)
     ext2_warning ("device flush failed: %s", strerror (err));
 
   /* Left set when the log is not empty, so that e2fsck replays it.
-     The journal is then kept too, as its transactions are.  */
+     The journal is then kept too, as its transactions are; kjournald
+     ends either way.  */
   if (empty)
     {
       ext2_clear_needs_recovery ();
       journal_free_resources (journal);
     }
+  else
+    journal_stop_kjournald (journal);
 }
