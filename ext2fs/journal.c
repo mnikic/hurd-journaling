@@ -2946,6 +2946,19 @@ journal_commit_error_locked (journal_t *journal, uint32_t tid)
   return 0;
 }
 
+/* Whether TXN has nothing to commit.  Frees alone make a transaction
+   worth committing: their revoke records must reach the log, and the
+   blocks stay busy until then.  */
+static int
+journal_txn_empty (diskfs_transaction_t *txn)
+{
+  if (txn->t_buffer_map.size || txn->t_freed_blocks
+      || txn->t_revoke_map.size)
+    return 0;
+  JRNL_LOG_DEBUG ("Txn %u is empty. Keeping it open.", txn->t_tid);
+  return 1;
+}
+
 /**
  * Commits the transaction. This function expects
  * journal lock to be held. */
@@ -2963,14 +2976,8 @@ journal_commit_running_transaction_locked (journal_t *journal)
       err = EINVAL;
       goto out;
     }
-  /* Frees alone make a transaction worth committing: their revoke
-     records must reach the log, and the blocks stay busy until then.  */
-  if (txn->t_buffer_map.size == 0 && !txn->t_freed_blocks
-      && txn->t_revoke_map.size == 0)
-    {
-      JRNL_LOG_DEBUG ("Txn %u is empty. Keeping it open.", txn->t_tid);
-      goto out;
-    }
+  if (journal_txn_empty (txn))
+    goto out;
 
   while (journal->j_committing_transaction != NULL)
     JOURNAL_WAIT (&journal->j_commit_done, journal);
@@ -2981,14 +2988,13 @@ journal_commit_running_transaction_locked (journal_t *journal)
       err = journal->j_errno;
       goto out;
     }
+  /* The wait dropped the lock: the transaction checked above can have
+     been committed by another thread, and its successor is empty.  On
+     shutdown, committing that one would put it on the checkpoint list
+     after the stop's quiesce cleared it.  */
   txn = journal->j_running_transaction;
-  if (!txn)
-    {
-      /* Nothing to do, unlock and go back. We won't
-       * even broadcast commit_done, because we haven't
-       * done anything really. */
-      goto out;
-    }
+  if (!txn || journal_txn_empty (txn))
+    goto out;
 
   journal->j_committing_transaction = txn;
 
