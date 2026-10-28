@@ -524,10 +524,8 @@ journal_map_insert (journal_block_map_t *map, block_t blocknr,
 
       if (bucket->blocknr == blocknr)
 	{
-	  /* In our architecture, callers must use lookup() first.
-	     If we hit this, it is a severe logic error. */
-	  JRNL_LOG_WARN ("Logic bug: Duplicate block %u inserted into map!",
-			 blocknr);
+	  /* Callers look the block up first.  */
+	  assert_backtrace (!"block inserted twice into a journal map");
 	  return EEXIST;
 	}
 
@@ -1101,7 +1099,7 @@ journal_revoke_blocks (const diskfs_transaction_t *txn)
  * Called only when checkpointing is 100% complete.
  */
 static void
-journal_free_transaction (diskfs_transaction_t *txn)
+journal_free_transaction (journal_t *journal, diskfs_transaction_t *txn)
 {
   if (!txn)
     return;
@@ -1119,9 +1117,9 @@ journal_free_transaction (diskfs_transaction_t *txn)
   journal_buffer_t *jb;
   while ((jb = journal_map_iterate (&txn->t_buffer_map, &iter)) != NULL)
     {
-      journal_logged_unref_locked (ext2_journal, jb->jb_blocknr);
+      journal_logged_unref_locked (journal, jb->jb_blocknr);
       /* The slab allocator handles linking it back into the free pool */
-      journal_free_buffer (ext2_journal, jb);
+      journal_free_buffer (journal, jb);
     }
 
   journal_map_destroy (&txn->t_buffer_map);
@@ -1152,6 +1150,13 @@ journal_update_superblock (journal_t *journal, uint32_t sequence,
   if (!err)
     journal->j_disk_tail = tail;
   return err;
+}
+
+/* Whether tid T1 is later than T2, as the tids wrap.  */
+static inline int
+tid_gt (uint32_t t1, uint32_t t2)
+{
+  return (int32_t) (t1 - t2) > 0;
 }
 
 static diskfs_transaction_t *
@@ -1431,7 +1436,7 @@ journal_stop_transaction_locked (journal_t *journal,
  * Returns 1 if the transaction's counter reached zero, 0 otherwise.
  */
 static int
-journal_notify_txn_locked (diskfs_transaction_t *txn,
+journal_notify_txn_locked (journal_t *journal, diskfs_transaction_t *txn,
 			   block_t start_block, size_t n_blocks)
 {
   /* Process all blocks to ensure jb_is_flushing is safely cleared everywhere */
@@ -1460,7 +1465,7 @@ journal_notify_txn_locked (diskfs_transaction_t *txn,
 	  if (jb->jb_is_flushing)
 	    {
 	      jb->jb_is_flushing = 0;
-	      pthread_cond_broadcast (&ext2_journal->j_flush_wait);
+	      pthread_cond_broadcast (&journal->j_flush_wait);
 	    }
 	}
     }
@@ -1498,7 +1503,7 @@ journal_write_tail_locked (journal_t *journal)
 
   oldest = journal_get_oldest_transaction_locked (journal);
   for (txn = journal->j_retired_list; txn; txn = txn->t_checkpoint_next)
-    if (!oldest || (int32_t) (txn->t_tid - oldest->t_tid) < 0)
+    if (!oldest || tid_gt (oldest->t_tid, txn->t_tid))
       oldest = txn;
   uint32_t tail = oldest ? oldest->t_log_start : 0;
   err = journal_update_superblock (journal, oldest ? oldest->t_tid
@@ -1511,7 +1516,7 @@ journal_write_tail_locked (journal_t *journal)
       while (retired)
 	{
 	  txn = retired->t_checkpoint_next;
-	  journal_free_transaction (retired);
+	  journal_free_transaction (journal, retired);
 	  retired = txn;
 	}
       journal->j_free = journal_free_for_tail (journal, tail);
@@ -1544,10 +1549,10 @@ journal_tail_moved_locked (journal_t *journal)
  * that moves is written by kjournald, after a flush.
  */
 static void
-journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
+journal_notify_blocks_written_locked (journal_t *journal, block_t start_block, size_t n_blocks)
 {
   int sb_changed = 0;
-  if (!ext2_journal || n_blocks == 0)
+  if (n_blocks == 0)
     return;
 
   /* On shutdown journal_quiesce_checkpoints owns the checkpoint list and
@@ -1555,7 +1560,7 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
      free a transaction.  The blocks are still marked written and their
      jb_is_flushing claims released: quiesce waits on j_flush_wait for any
      block a pager write has claimed.  */
-  int exiting = ext2_journal->j_must_exit;
+  int exiting = journal->j_must_exit;
 
   JRNL_LOG_DEBUG ("Got notification for %zu blocks starting at %u",
 		  n_blocks, start_block);
@@ -1587,17 +1592,17 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
    * to notify. */
 
   /* Check Committing Transaction */
-  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+  diskfs_transaction_t *commit = journal->j_committing_transaction;
   if (commit && commit->t_state == T_COMMITTED)
-    journal_notify_txn_locked (commit, start_block, n_blocks);
+    journal_notify_txn_locked (journal, commit, start_block, n_blocks);
 
   /* Iterate over checkpoint list */
-  diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
+  diskfs_transaction_t *txn = journal->j_checkpoint_list;
   while (txn)
     {
       if (exiting)
 	{
-	  journal_notify_txn_locked (txn, start_block, n_blocks);
+	  journal_notify_txn_locked (journal, txn, start_block, n_blocks);
 	  txn = txn->t_checkpoint_next;
 	  continue;
 	}
@@ -1606,26 +1611,19 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
 	 nothing left either.  One already at 0 here (a commit made it the
 	 head with all its blocks home, and has yet to advance the tail
 	 itself) needs no notice, and has no claim to clear.  */
-      if (journal_notify_txn_locked (txn, start_block, n_blocks)
-	  && txn == ext2_journal->j_checkpoint_list)
+      if (journal_notify_txn_locked (journal, txn, start_block, n_blocks)
+	  && txn == journal->j_checkpoint_list)
 	{
-	  if (journal_try_advance_tail_locked (ext2_journal))
+	  if (journal_try_advance_tail_locked (journal))
 	    sb_changed = 1;
-	  txn = ext2_journal->j_checkpoint_list;
+	  txn = journal->j_checkpoint_list;
 	  continue;
 	}
 
       txn = txn->t_checkpoint_next;
     }
   if (sb_changed)
-    journal_tail_moved_locked (ext2_journal);
-}
-
-/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
-static inline int
-tid_gt (uint32_t t1, uint32_t t2)
-{
-  return (int32_t) (t1 - t2) > 0;
+    journal_tail_moved_locked (journal);
 }
 
 /**
@@ -1647,7 +1645,7 @@ journal_forget_freed_blocks (journal_t *journal, uint32_t freed_tid,
     {
     restart:
       for (diskfs_transaction_t *txn = journal->j_checkpoint_list;
-	   txn && (int32_t) (txn->t_tid - freed_tid) <= 0;
+	   txn && !tid_gt (txn->t_tid, freed_tid);
 	   txn = txn->t_checkpoint_next)
 	for (unsigned long i = 0; i < ext->fe_count; i++)
 	  {
@@ -1661,11 +1659,10 @@ journal_forget_freed_blocks (journal_t *journal, uint32_t freed_tid,
 		/* A write of the old contents is in flight.  It must land
 		   before the block has a new owner.  The wait drops the
 		   lock, and the checkpoint list can change meanwhile.  */
-		pthread_cond_wait (&journal->j_flush_wait,
-				   &journal->j_state_lock);
+		JOURNAL_WAIT (&journal->j_flush_wait, journal);
 		goto restart;
 	      }
-	    journal_notify_txn_locked (txn, b, 1);
+	    journal_notify_txn_locked (journal, txn, b, 1);
 	  }
     }
 
@@ -1744,7 +1741,7 @@ journal_clear_checkpoint_list_locked (journal_t *journal)
   while (txn)
     {
       diskfs_transaction_t *next = txn->t_checkpoint_next;
-      journal_free_transaction (txn);
+      journal_free_transaction (journal, txn);
       txn = next;
     }
   journal->j_checkpoint_list = NULL;
@@ -1869,7 +1866,7 @@ journal_flush_intercepted_payloads (journal_t *journal,
 	  if (!err)
 	    {
 	      jb->needs_flush = 0;
-	      journal_notify_blocks_written_locked (jb->jb_blocknr, 1);
+	      journal_notify_blocks_written_locked (journal, jb->jb_blocknr, 1);
 	    }
 
 	  JOURNAL_UNLOCK (journal);
@@ -1902,7 +1899,6 @@ static int
 journal_flush_checkpoints_locked (journal_t *journal, uint32_t target_free,
 				  int background)
 {
-  int sb_changed = 0;
   int global_io_error = 0;
 
   while (journal->j_checkpointing)
@@ -1934,8 +1930,7 @@ journal_flush_checkpoints_locked (journal_t *journal, uint32_t target_free,
 	    {
 	      if (jb->jb_is_flushing)
 		{
-		  pthread_cond_wait (&journal->j_flush_wait,
-				     &journal->j_state_lock);
+		  JOURNAL_WAIT (&journal->j_flush_wait, journal);
 		  goto retry_block;
 		}
 
@@ -1994,31 +1989,21 @@ journal_flush_checkpoints_locked (journal_t *journal, uint32_t target_free,
 
       txn->t_outstanding_io--;
 
-      /* All blocks are physically on disk. Reclaim the space! */
-      if (!io_error)
-	{
-	  if (journal_try_advance_tail_locked (journal))
-	    {
-	      sb_changed = 1;
-	    }
-	  else
-	    {
-	      JRNL_LOG_WARN
-		("Logic bug: Failed to advance tail after active checkpoint!");
-	      break;
-	    }
-	}
-      else
+      /* All blocks are physically on disk. Reclaim the space!  TXN is
+	 the head, and pinned until just above, so nothing else retired
+	 it, and every block of it is written.  */
+      if (io_error)
 	{
 	  global_io_error = 1;
 	  break;		/* Stop checkpointing on device failure */
 	}
+      if (!journal_try_advance_tail_locked (journal))
+	assert_backtrace (!"a checkpointed transaction could not retire");
     }
 
   /* Also write it when an earlier superblock write failed and left
      transactions retired, or one moved by a home write waits, so that
      their log space comes back.  */
-  (void) sb_changed;
   journal_write_tail_locked (journal);
 
   journal->j_checkpointing = 0;
@@ -2224,7 +2209,7 @@ out:
  * cache, and journal_mark_dirty_external supplies the copy.
  */
 static error_t
-journal_get_write_access_locked (diskfs_transaction_t *txn,
+journal_get_write_access_locked (journal_t *journal, diskfs_transaction_t *txn,
 				 block_t fs_blocknr, int hydrate)
 {
   journal_buffer_t *jb;
@@ -2268,7 +2253,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
       goto out;
     }
 
-  new_jb = journal_alloc_buffer (ext2_journal);
+  new_jb = journal_alloc_buffer (journal);
   if (!new_jb)
     {
       err = ENOMEM;
@@ -2279,7 +2264,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
   err = journal_map_insert (&txn->t_buffer_map, fs_blocknr, new_jb);
   if (err)
     {
-      journal_free_buffer (ext2_journal, new_jb);
+      journal_free_buffer (journal, new_jb);
       goto out;
     }
 
@@ -2289,7 +2274,7 @@ journal_get_write_access_locked (diskfs_transaction_t *txn,
   new_jb->jb_external = !hydrate;
   new_jb->jb_editing = !hydrate;
   txn->t_outstanding_io++;
-  journal_logged_ref_locked (ext2_journal, fs_blocknr);
+  journal_logged_ref_locked (journal, fs_blocknr);
 out:
   return err;
 }
@@ -2430,7 +2415,7 @@ journal_get_write_access (diskfs_transaction_t *txn, block_t fs_blocknr)
   journal = journal_lock_current ();
   if (!journal)
     goto out;
-  err = journal_get_write_access_locked (txn, fs_blocknr, 1);
+  err = journal_get_write_access_locked (journal, txn, fs_blocknr, 1);
   if (err)
     JRNL_LOG_WARN
       ("Didn't manage to get journal write access for block %u. (%s).",
@@ -2494,7 +2479,7 @@ journal_get_write_access_external (diskfs_transaction_t *txn,
   if (!txn || !(journal = journal_lock_current ()))
     return 0;
 
-  err = journal_get_write_access_locked (txn, fs_blocknr, 0);
+  err = journal_get_write_access_locked (journal, txn, fs_blocknr, 0);
   if (err)
     JRNL_LOG_WARN
       ("Didn't manage to get journal write access for block %u. (%s).",
@@ -3384,6 +3369,9 @@ journal_quiesce_checkpoints (journal_t *journal)
   JRNL_LOG_DEBUG ("Journal in quiesce checkpoints.");
   JOURNAL_LOCK (journal);
 
+  /* Its error is not needed: a failed commit aborts the journal and
+     keeps the transaction as j_aborted_transaction, out of the
+     checkpoint list.  */
   journal_commit_running_transaction_locked (journal);
   /* Set a 10-second deadline for the active commit to finish. */
   struct timespec ts;
@@ -3398,9 +3386,10 @@ journal_quiesce_checkpoints (journal_t *journal)
 				  &journal->j_state_lock, CLOCK_MONOTONIC, &ts);
   if (err)
     {
-      /* If we hit ETIMEDOUT, a VFS thread likely leaked a t_active_threads refcount
-         due to a signal interruption or crash. We MUST bail out without
-         clearing the checkpoint list so the WAL replays on next boot! */
+      /* A handle is still open on the committing transaction, as an RPC
+	 stuck waiting for something else would hold it.  Leave the
+	 checkpoint list and the log as they are, for a replay at the
+	 next mount.  */
       JRNL_LOG_WARN
 	("Quiesce timed out! Transaction deadlocked. Leaving journal dirty.");
       JOURNAL_UNLOCK (journal);
@@ -3550,7 +3539,7 @@ out:
  * MUST be called with JOURNAL_LOCK held.
  */
 static int
-journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache,
+journal_handle_write_hazard_locked (journal_t *journal, block_t b, char *b_data, int disk_cache,
 				    int resident)
 {
   int intercepted = 0;
@@ -3560,11 +3549,11 @@ journal_handle_write_hazard_locked (block_t b, char *b_data, int disk_cache,
   journal_buffer_t *jb_commit;
   journal_buffer_t *jb_aborted;
   diskfs_transaction_t *chk;
-  diskfs_transaction_t *aborted = ext2_journal->j_aborted_transaction;
+  diskfs_transaction_t *aborted = journal->j_aborted_transaction;
 
 retry:
-  commit = ext2_journal->j_committing_transaction;
-  run = ext2_journal->j_running_transaction;
+  commit = journal->j_committing_transaction;
+  run = journal->j_running_transaction;
 
   jb_run = run ? journal_map_lookup (&run->t_buffer_map, b) : NULL;
   jb_commit = commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
@@ -3647,7 +3636,7 @@ retry:
 	      int external = jb->jb_external;
 
 	      jb_run = NULL;
-	      if (run && !journal_get_write_access_locked (run, b, !external))
+	      if (run && !journal_get_write_access_locked (journal, run, b, !external))
 		jb_run = journal_map_lookup (&run->t_buffer_map, b);
 	      if (jb_run)
 		{
@@ -3701,8 +3690,7 @@ retry:
 	{
 	  if (jb_com_real->jb_is_flushing)
 	    {
-	      pthread_cond_wait (&ext2_journal->j_flush_wait,
-				 &ext2_journal->j_state_lock);
+	      JOURNAL_WAIT (&journal->j_flush_wait, journal);
 	      goto retry;
 	    }
 	  else if (!jb_com_real->jb_is_written)
@@ -3710,7 +3698,7 @@ retry:
 	}
     }
 
-  chk = ext2_journal->j_checkpoint_list;
+  chk = journal->j_checkpoint_list;
   while (chk)
     {
       journal_buffer_t *jb_chk = journal_map_lookup (&chk->t_buffer_map, b);
@@ -3718,8 +3706,7 @@ retry:
 	{
 	  if (jb_chk->jb_is_flushing)
 	    {
-	      pthread_cond_wait (&ext2_journal->j_flush_wait,
-				 &ext2_journal->j_state_lock);
+	      JOURNAL_WAIT (&journal->j_flush_wait, journal);
 	      goto retry;
 	    }
 	  else if (!jb_chk->jb_is_written)
@@ -3741,10 +3728,10 @@ retry:
  * MUST be called with JOURNAL_LOCK held.
  */
 static int
-journal_claim_safe_block_locked (block_t b)
+journal_claim_safe_block_locked (journal_t *journal, block_t b)
 {
-  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
-  diskfs_transaction_t *run = ext2_journal->j_running_transaction;
+  diskfs_transaction_t *commit = journal->j_committing_transaction;
+  diskfs_transaction_t *run = journal->j_running_transaction;
 
   journal_buffer_t *jb_run =
     run ? journal_map_lookup (&run->t_buffer_map, b) : NULL;
@@ -3758,7 +3745,7 @@ journal_claim_safe_block_locked (block_t b)
   /* If it is an active hazard, we cannot claim it for physical coalescing */
   if (jb_run || jb_commit)
     return 0;
-  diskfs_transaction_t *aborted = ext2_journal->j_aborted_transaction;
+  diskfs_transaction_t *aborted = journal->j_aborted_transaction;
   if (aborted && journal_map_lookup (&aborted->t_buffer_map, b))
     return 0;
 
@@ -3768,7 +3755,7 @@ journal_claim_safe_block_locked (block_t b)
   if (jb_commit_flush && jb_commit_flush->jb_is_flushing)
     return 0;
 
-  diskfs_transaction_t *chk = ext2_journal->j_checkpoint_list;
+  diskfs_transaction_t *chk = journal->j_checkpoint_list;
   while (chk)
     {
       journal_buffer_t *jb_chk = journal_map_lookup (&chk->t_buffer_map, b);
@@ -3784,7 +3771,7 @@ journal_claim_safe_block_locked (block_t b)
 	jb_commit_flush->jb_is_flushing = 1;
     }
 
-  chk = ext2_journal->j_checkpoint_list;
+  chk = journal->j_checkpoint_list;
   while (chk)
     {
       journal_buffer_t *jb_chk = journal_map_lookup (&chk->t_buffer_map, b);
@@ -3797,31 +3784,31 @@ journal_claim_safe_block_locked (block_t b)
 }
 
 static void
-journal_clear_flushing_locked (block_t start_block, size_t n_blocks)
+journal_clear_flushing_locked (journal_t *journal, block_t start_block, size_t n_blocks)
 {
   for (size_t i = 0; i < n_blocks; i++)
     {
       block_t b = start_block + i;
-      diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
+      diskfs_transaction_t *txn = journal->j_checkpoint_list;
       while (txn)
 	{
 	  journal_buffer_t *jb = journal_map_lookup (&txn->t_buffer_map, b);
 	  if (jb && jb->jb_is_flushing)
 	    {
 	      jb->jb_is_flushing = 0;
-	      pthread_cond_broadcast (&ext2_journal->j_flush_wait);
+	      pthread_cond_broadcast (&journal->j_flush_wait);
 	    }
 	  txn = txn->t_checkpoint_next;
 	}
 
-      txn = ext2_journal->j_committing_transaction;
+      txn = journal->j_committing_transaction;
       if (txn)
 	{
 	  journal_buffer_t *jb = journal_map_lookup (&txn->t_buffer_map, b);
 	  if (jb && jb->jb_is_flushing)
 	    {
 	      jb->jb_is_flushing = 0;
-	      pthread_cond_broadcast (&ext2_journal->j_flush_wait);
+	      pthread_cond_broadcast (&journal->j_flush_wait);
 	    }
 	}
     }
@@ -3834,9 +3821,9 @@ journal_clear_flushing_locked (block_t start_block, size_t n_blocks)
    return it until a home write brings it there (journal_store_read),
    which the checkpoint does.  */
 static void
-journal_keep_failed_blocks_locked (block_t start_block, size_t n_blocks)
+journal_keep_failed_blocks_locked (journal_t *journal, block_t start_block, size_t n_blocks)
 {
-  diskfs_transaction_t *commit = ext2_journal->j_committing_transaction;
+  diskfs_transaction_t *commit = journal->j_committing_transaction;
 
   for (size_t i = 0; i < n_blocks; i++)
     {
@@ -3845,7 +3832,7 @@ journal_keep_failed_blocks_locked (block_t start_block, size_t n_blocks)
 	commit ? journal_map_lookup (&commit->t_buffer_map, b) : NULL;
 
       if (!newest)
-	for (diskfs_transaction_t *txn = ext2_journal->j_checkpoint_list;
+	for (diskfs_transaction_t *txn = journal->j_checkpoint_list;
 	     txn; txn = txn->t_checkpoint_next)
 	  {
 	    journal_buffer_t *jb = journal_map_lookup (&txn->t_buffer_map, b);
@@ -3918,7 +3905,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	}
 
       int intercepted =
-	journal_handle_write_hazard_locked (b, b_data, disk_cache, resident);
+	journal_handle_write_hazard_locked (journal, b, b_data, disk_cache, resident);
 
       if (intercepted)
 	{
@@ -3932,8 +3919,8 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	{
 	  /* Nothing more goes home: the copy the journal has is the
 	     block's, and the hazard check may have claimed it.  */
-	  journal_clear_flushing_locked (b, 1);
-	  journal_keep_failed_blocks_locked (b, 1);
+	  journal_clear_flushing_locked (journal, b, 1);
+	  journal_keep_failed_blocks_locked (journal, b, 1);
 	  i++;
 	}
       else
@@ -3946,7 +3933,7 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	    {
 	      block_t next_b = start_block + i + flush_count;
 
-	      if (!journal_claim_safe_block_locked (next_b))
+	      if (!journal_claim_safe_block_locked (journal, next_b))
 		break;
 
 	      flush_count++;
@@ -3969,13 +3956,13 @@ journal_store_write (block_t start_block, size_t length, void *buf,
 	  /* A stopped journal waited for every claim, so this write had
 	     none, and there is nothing to tell it.  */
 	  if (actual_blocks > 0 && ext2_journal == journal)
-	    journal_notify_blocks_written_locked (b, actual_blocks);
+	    journal_notify_blocks_written_locked (journal, b, actual_blocks);
 
 	  if (actual_blocks < flush_count && ext2_journal == journal)
 	    {
-	      journal_clear_flushing_locked (b + actual_blocks,
+	      journal_clear_flushing_locked (journal, b + actual_blocks,
 					     flush_count - actual_blocks);
-	      journal_keep_failed_blocks_locked (b + actual_blocks,
+	      journal_keep_failed_blocks_locked (journal, b + actual_blocks,
 						 flush_count - actual_blocks);
 	    }
 
@@ -4205,7 +4192,7 @@ journal_free_resources (journal_t *journal)
       return;
     }
   journal->j_running_transaction = NULL;
-  journal_free_transaction (running);
+  journal_free_transaction (journal, running);
 
   journal_map_destroy (&journal->j_logged);
   /* Every buffer is back in the pool.  */
