@@ -277,6 +277,12 @@ try_lookup (struct protid *dircred,
 
 	  if (err != ENOENT)
 	    {
+	      /* DNP is still unlocked: only its reference goes.  */
+	      if (np != dnp)
+		{
+		  diskfs_nrele (dnp);
+		  dnp = 0;
+		}
 	      *retry_port_type = MACH_MSG_TYPE_MOVE_SEND;
 	      if (!err)
 		{
