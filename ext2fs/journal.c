@@ -738,9 +738,9 @@ static void
 flush_to_disk (void)
 {
   error_t err = store_sync (store);
-  /* Ignore EOPNOTSUPP (drivers), but warn on real I/O errors */
-  if (err && err != EOPNOTSUPP)
-    JRNL_LOG_WARN ("Device flush failed: %s", strerror (err));
+  /* Warn on real I/O errors */
+  if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
+    ext2_warning ("device flush failed: %s", strerror (err));
 }
 
 static void
@@ -1621,6 +1621,13 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
     journal_tail_moved_locked (ext2_journal);
 }
 
+/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
+static inline int
+tid_gt (uint32_t t1, uint32_t t2)
+{
+  return (int32_t) (t1 - t2) > 0;
+}
+
 /**
  * Consumes the freed blocks list of transaction FREED_TID once it has
  * committed.  The copies of those blocks in FREED_TID and in older
@@ -1629,8 +1636,6 @@ journal_notify_blocks_written_locked (block_t start_block, size_t n_blocks)
  * busy until here, so no copy can belong to a new owner yet.  The blocks
  * then go back to the allocator.
  */
-static inline int tid_gt (uint32_t t1, uint32_t t2);
-
 static void
 journal_forget_freed_blocks (journal_t *journal, uint32_t freed_tid,
 			     journal_freed_extent_t *freed)
@@ -2092,13 +2097,6 @@ journal_next_log_block_safe (journal_t *journal)
   return block;
 }
 
-/* Helper: Returns 1 if t1 > t2 (handling wrapping), 0 otherwise */
-static inline int
-tid_gt (uint32_t t1, uint32_t t2)
-{
-  return (int32_t) (t1 - t2) > 0;
-}
-
 static inline void
 journal_wait_on_tid_locked (journal_t *journal, uint32_t target_tid)
 {
@@ -2118,32 +2116,35 @@ int
 journal_wait_freed_blocks (diskfs_transaction_t *txn)
 {
   diskfs_transaction_t *commit;
+  journal_t *journal;
   uint32_t tid = 0;
   int wait = 0;
 
-  if (!ext2_journal || journal_thread_is_pager)
+  if (journal_thread_is_pager)
+    return 0;
+  /* Called with no handle too (diskfs_journal_should_retry_alloc).  */
+  journal = journal_lock_current ();
+  if (!journal)
     return 0;
 
-  JOURNAL_LOCK (ext2_journal);
-  pthread_cond_signal (&ext2_journal->j_flusher_wakeup);
-  commit = ext2_journal->j_committing_transaction;
+  pthread_cond_signal (&journal->j_flusher_wakeup);
+  commit = journal->j_committing_transaction;
   if (commit && commit != txn)
     {
       tid = commit->t_tid;
       wait = 1;
     }
-  else if (tid_gt (ext2_journal->j_last_committed_tid,
-		   ext2_journal->j_released_tid))
+  else if (tid_gt (journal->j_last_committed_tid, journal->j_released_tid))
     {
       /* Committed: its frees come back once journal_forget_freed_blocks
 	 is done, which needs nothing the caller can hold.  */
-      tid = ext2_journal->j_last_committed_tid;
+      tid = journal->j_last_committed_tid;
       wait = 1;
     }
   if (wait)
-    while (tid_gt (tid, ext2_journal->j_released_tid))
-      JOURNAL_WAIT (&ext2_journal->j_commit_done, ext2_journal);
-  JOURNAL_UNLOCK (ext2_journal);
+    while (tid_gt (tid, journal->j_released_tid))
+      JOURNAL_WAIT (&journal->j_commit_done, journal);
+  JOURNAL_UNLOCK (journal);
   return wait;
 }
 
@@ -2466,13 +2467,12 @@ journal_thread_transaction (void)
   /* The handle's t_active_threads count keeps commit from moving the
      transaction past T_LOCKED.  A commit sets T_LOCKED under the journal
      lock, so read the state under it too.  */
-  if (txn && ext2_journal)
+  journal_t *journal;
+  if (txn && (journal = journal_lock_current ()))
     {
-      transaction_state_t state;
+      transaction_state_t state = txn->t_state;
 
-      JOURNAL_LOCK (ext2_journal);
-      state = txn->t_state;
-      JOURNAL_UNLOCK (ext2_journal);
+      JOURNAL_UNLOCK (journal);
       assert_backtrace (state == T_RUNNING || state == T_LOCKED);
     }
 #endif /* ! NDEBUG */
@@ -2969,7 +2969,7 @@ journal_commit_running_transaction_locked (journal_t *journal)
   uint32_t commit_loc;
   diskfs_transaction_t *txn;
 
-  txn = ext2_journal->j_running_transaction;
+  txn = journal->j_running_transaction;
 
   if (!txn || txn->t_state != T_RUNNING)
     {
@@ -3379,12 +3379,12 @@ journal_create (struct node *journal_inode)
  * Returns 1 if the journal superblock on disk now has an empty log.
  */
 static int
-journal_quiesce_checkpoints (void)
+journal_quiesce_checkpoints (journal_t *journal)
 {
   JRNL_LOG_DEBUG ("Journal in quiesce checkpoints.");
-  JOURNAL_LOCK (ext2_journal);
+  JOURNAL_LOCK (journal);
 
-  journal_commit_running_transaction_locked (ext2_journal);
+  journal_commit_running_transaction_locked (journal);
   /* Set a 10-second deadline for the active commit to finish. */
   struct timespec ts;
   clock_gettime (CLOCK_MONOTONIC, &ts);
@@ -3393,9 +3393,9 @@ journal_quiesce_checkpoints (void)
   int err = 0;
 
   /* Wait for any active commit to finish writing to the log */
-  while (ext2_journal->j_committing_transaction != NULL && err == 0)
-    err = pthread_cond_clockwait (&ext2_journal->j_commit_done,
-				  &ext2_journal->j_state_lock, CLOCK_MONOTONIC, &ts);
+  while (journal->j_committing_transaction != NULL && err == 0)
+    err = pthread_cond_clockwait (&journal->j_commit_done,
+				  &journal->j_state_lock, CLOCK_MONOTONIC, &ts);
   if (err)
     {
       /* If we hit ETIMEDOUT, a VFS thread likely leaked a t_active_threads refcount
@@ -3403,27 +3403,27 @@ journal_quiesce_checkpoints (void)
          clearing the checkpoint list so the WAL replays on next boot! */
       JRNL_LOG_WARN
 	("Quiesce timed out! Transaction deadlocked. Leaving journal dirty.");
-      JOURNAL_UNLOCK (ext2_journal);
+      JOURNAL_UNLOCK (journal);
       return 0;
     }
 
   /* Write ALL shadow data from every checkpoint transaction to the main disk. */
   /* Pass UINT32_MAX to guarantee we drain the entire checkpoint list */
   int io_error =
-    journal_flush_checkpoints_locked (ext2_journal, UINT32_MAX, 0);
+    journal_flush_checkpoints_locked (journal, UINT32_MAX, 0);
 
   if (io_error)
     {
       JRNL_LOG_WARN ("[QUIESCE] I/O error during final checkpoint. "
 		     "Leaving journal dirty for WAL replay.");
-      JOURNAL_UNLOCK (ext2_journal);
+      JOURNAL_UNLOCK (journal);
       return 0;
     }
 
   /* Now safe to clear the list and write s_start = 0 to the JBD2 superblock */
-  err = journal_clear_checkpoint_list_locked (ext2_journal);
+  err = journal_clear_checkpoint_list_locked (journal);
 
-  JOURNAL_UNLOCK (ext2_journal);
+  JOURNAL_UNLOCK (journal);
   return !err;
 }
 
@@ -3490,8 +3490,9 @@ error_t
 diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 {
   error_t err;
+  journal_t *journal;
 
-  if (!ext2_journal || !opaque_txn)
+  if (!opaque_txn)
     return 0;
 
   diskfs_transaction_t *txn = (diskfs_transaction_t *) opaque_txn;
@@ -3505,35 +3506,40 @@ diskfs_journal_commit_transaction (diskfs_transaction_t *opaque_txn)
 
   JRNL_LOG_DEBUG ("Committing tx id: %u.", txn->t_tid);
 
-  JOURNAL_LOCK (ext2_journal);
+  /* Once the handle is released below, the stop no longer waits for
+     this thread and can clear ext2_journal while the waits drop the
+     lock: use the journal read here throughout.  */
+  journal = journal_lock_current ();
+  if (!journal)
+    return 0;
 
   /* Decrement the refcount while holding the lock. */
-  journal_stop_transaction_locked (ext2_journal, txn);
+  journal_stop_transaction_locked (journal, txn);
 
   if (txn->t_buffer_map.size == 0)
     JRNL_LOG_DEBUG ("In diskfs_commit, something with no buffers. txn Id: %u",
 		    tid);
   /* Check if the transaction is currently RUNNING.
      If it is, We "steal" it and become the committer. */
-  if (IS_RUNNING_TID (ext2_journal, tid))
+  if (IS_RUNNING_TID (journal, tid))
     {
-      err = journal_commit_running_transaction_locked (ext2_journal);
-      if (err && !ext2_journal->j_errno)
+      err = journal_commit_running_transaction_locked (journal);
+      if (err && !journal->j_errno)
 	JRNL_LOG_WARN
 	  ("Commit failed in diskfs_journal_commit_transaction: %s",
 	   strerror (err));
       /* An empty transaction stays open without waiting, while the
 	 caller's earlier changes can be in the one kjournald is
 	 committing.  The caller asked for them to be durable too.  */
-      journal_wait_on_tid_locked (ext2_journal, tid - 1);
+      journal_wait_on_tid_locked (journal, tid - 1);
       goto out;
     }
   /* We missed it. Someone else (kjournald) stole it.
      We will wait for them to finish here. */
-  journal_wait_on_tid_locked (ext2_journal, tid);
+  journal_wait_on_tid_locked (journal, tid);
 out:
-  err = journal_commit_error_locked (ext2_journal, tid);
-  JOURNAL_UNLOCK (ext2_journal);
+  err = journal_commit_error_locked (journal, tid);
+  JOURNAL_UNLOCK (journal);
   return err;
 }
 
@@ -4228,22 +4234,23 @@ journal_free_resources (journal_t *journal)
 void
 diskfs_journal_shutdown (void)
 {
-  if (!ext2_journal)
+  /* Only the stop clears ext2_journal, so it stays JOURNAL here.  */
+  journal_t *journal = ext2_journal;
+  if (!journal)
     return;
 
-  JOURNAL_LOCK (ext2_journal);
+  JOURNAL_LOCK (journal);
   /* No new handle from here on; kjournald exits when it wakes.  */
-  ext2_journal->j_must_exit = 1;
-  pthread_cond_broadcast (&ext2_journal->j_running_wait); /* Wake waiting starters */
-  JOURNAL_UNLOCK (ext2_journal);
+  journal->j_must_exit = 1;
+  pthread_cond_broadcast (&journal->j_running_wait); /* Wake waiting starters */
+  JOURNAL_UNLOCK (journal);
 
   /* Sync the disk pager to ensure all shadow data is on disk.  */
   sync_global (1);
 
   /* Checkpoint all remaining transactions and mark the journal clean.  */
-  int empty = journal_quiesce_checkpoints ();
+  int empty = journal_quiesce_checkpoints (journal);
 
-  journal_t *journal = ext2_journal;
   /* Under the lock: a pager write that holds it and still finds the
      journal current can finish with it (journal_store_write).  */
   JOURNAL_LOCK (journal);
@@ -4252,9 +4259,7 @@ diskfs_journal_shutdown (void)
 
   /* Final hardware flush.  It also puts the empty journal superblock on
      disk before the needs_recovery flag is cleared.  */
-  error_t err = store_sync (store);
-  if (err && err != EOPNOTSUPP && err != D_INVALID_OPERATION)
-    ext2_warning ("device flush failed: %s", strerror (err));
+  flush_to_disk ();
 
   /* Left set when the log is not empty, so that e2fsck replays it.
      The journal is then kept too, as its transactions are; kjournald
