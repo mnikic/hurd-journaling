@@ -193,7 +193,10 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
   memobj = diskfs_get_filemap (dp, prot);
 
   if (memobj == MACH_PORT_NULL)
-    return errno;
+    {
+      err = errno;
+      goto drop_dotdot;
+    }
 
   buf = 0;
   /* We allow extra space in case we have to do an EXTEND. */
@@ -202,7 +205,7 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
 		&buf, buflen, 0, 1, memobj, 0, 0, prot, prot, 0);
   mach_port_deallocate (mach_task_self (), memobj);
   if (err)
-    return err;
+    goto drop_dotdot;
 
   inum = 0;
 
@@ -229,7 +232,7 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
       if (err != ENOENT)
 	{
 	  munmap ((caddr_t) buf, buflen);
-	  return err;
+	  goto drop_dotdot;
 	}
 
       blockaddr += DIRBLKSIZ;
@@ -286,6 +289,7 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
 	      /* Drop what we *thought* was .. (but isn't any more) and
 		 try *again*. */
 	      diskfs_nput (np);
+	      np = 0;
 	      pthread_mutex_unlock (&dp->lock);
 	      err = diskfs_cached_lookup (inum, &np);
 	      pthread_mutex_lock (&dp->lock);
@@ -361,7 +365,8 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
   if (np)
     {
       assert_backtrace (npp);
-      if (err)
+      /* The parent a first scan found, when the second found no "..".  */
+      if (err || !inum)
 	{
 	  if (!spec_dotdot)
 	    {
@@ -384,6 +389,13 @@ diskfs_lookup_hard (struct node *dp, const char *name, lookup_flags_t l_flags,
     }
 
   return err ? : inum ? 0 : ENOENT;
+
+  /* A second scan for "..", made with the parent NP that the first one
+     found locked, failed before its end: let go of the parent.  */
+ drop_dotdot:
+  if (np)
+    diskfs_nput (np);
+  return err;
 }
 
 /* Scan block at address BLKADDR (of node DP; block index IDX), for
